@@ -93,6 +93,8 @@ class Workspaces:
         events: The event types clients may publish. Others are rejected even if they are
             registered, so clients cannot publish arbitrary types. ``None`` accepts every
             registered type. reflexr's own events can never be published.
+        emitted: Event types only runs may publish, such as an incident a triage agent opens.
+            Clients, over REST, the WebSocket or MCP, are refused them.
         rules: The rules every workspace evaluates. Each is checked against the event types
             and predicates when the workspaces are created, so a mistake fails at startup.
         predicates: The Python predicates rules refer to, by name. They must be pure.
@@ -113,6 +115,7 @@ class Workspaces:
         storage: Storage,
         *,
         events: Iterable[type[Event]] | None = None,
+        emitted: Iterable[type[Event]] = (),
         rules: Iterable[Rule] = (),
         predicates: Predicates | None = None,
         schedules: Iterable[Schedule] = (),
@@ -122,12 +125,14 @@ class Workspaces:
         meter_provider: MeterProvider | None = None,
     ) -> None:
         accepted = None if events is None else {t.event_type: t for t in events}
+        from_runs = {t.event_type: t for t in emitted}
+        known = {**(event_types() if accepted is None else accepted), **from_runs}
         chosen = dict(predicates or {})
         named: dict[RuleName, Rule] = {}
         for rule in rules:
             if rule.name in named:
                 raise ValueError(f"two rules are named {rule.name!r}")
-            rule.check(events=accepted or event_types(), predicates=chosen)
+            rule.check(events=known, predicates=chosen)
             named[rule.name] = rule
         timetables: dict[str, Schedule] = {}
         for schedule in schedules:
@@ -137,6 +142,7 @@ class Workspaces:
         self._context = _Context(
             storage=storage,
             types=None if accepted is None else frozenset(accepted),
+            emitted=frozenset(from_runs),
             rules=named,
             predicates=chosen,
             schedules=timetables,
@@ -195,6 +201,7 @@ class Workspaces:
 class _Context:
     storage: Storage
     types: frozenset[str] | None
+    emitted: frozenset[str]
     rules: Mapping[RuleName, Rule]
     predicates: Predicates
     schedules: Mapping[str, Schedule]
@@ -556,9 +563,14 @@ class Workspace:
             raise NotFound("event type", event.unknown_type)
         if isinstance(event, SYSTEM_EVENTS):
             raise Forbidden(f"{type_of(event)} events are recorded by reflexr, not published")
+        name = type_of(event)
+        if name in self._context.emitted:
+            if self._cause is None:
+                raise Forbidden(f"{name} events are published by runs, not clients")
+            return
         types = self._context.types
-        if types is not None and type_of(event) not in types:
-            raise NotFound("event type", type_of(event))
+        if types is not None and name not in types:
+            raise NotFound("event type", name)
 
     async def _chain(self, transaction: Transaction, correlation_id: str | None) -> str | None:
         if correlation_id is None:

@@ -69,17 +69,19 @@ class Reaction[D]:
         self.run = await self.workspace.checkpoint_run(
             self.run.id, attempt=self.run.attempts, step=step, state=state
         )
+        self._emitted = 0  # events after a checkpoint are numbered afresh, in its segment
 
     async def emit(self, event: Event) -> Published:
         """Publish an event caused by this run.
 
-        Its id is derived from the run and how many events the attempt emitted before it, so a
-        retried attempt that emits the same events again adds nothing to the log.
+        Its id is derived from the run, its last checkpoint, and how many events it emitted
+        since, so a retried attempt that emits the same events again adds nothing to the log,
+        and a graph resumed after a checkpoint never reuses an earlier event's id.
 
         Raises:
             DepthExceeded: If the event would extend the causal chain beyond the limit.
         """
-        event_id = derived_event_id(self.run.id, self._emitted)
+        event_id = derived_event_id(self.run.id, self._emitted, segment=self.run.checkpoints)
         self._emitted += 1
         return await self.workspace.publish(event, id=event_id)
 

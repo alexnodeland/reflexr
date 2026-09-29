@@ -837,6 +837,11 @@
           "$ref": "#/$defs/JsonValue",
           "default": null
         },
+        "checkpoints": {
+          "default": 0,
+          "title": "Checkpoints",
+          "type": "integer"
+        },
         "correlation_id": {
           "title": "Correlation Id",
           "type": "string"

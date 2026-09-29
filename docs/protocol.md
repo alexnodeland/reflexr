@@ -82,7 +82,7 @@ reflexr's own events, alongside the application's:
 | `rule_fired` | `rule`, `scope`, `firing_id`, `matched` (the `seq`s of the matched envelopes) |
 | `rule_errored` | `rule`, `seq`, `error` |
 | `rule_reset` | `rule`, `generation`, `reason` (`changed` or `replayed`), `from_seq`, `silent_through` |
-| `run_started` | `run_id`, `rule`, `scope`, `attempt` |
+| `run_started` | `run_id`, `rule`, `scope`, `scope_key`, `attempt` |
 | `run_progressed` | `run_id`, `step` (a graph step completed and was checkpointed) |
 | `run_retrying` | `run_id`, `attempt`, `error`, `next_attempt_at`, `reason?` (a stable code, such as `timeout`) |
 | `run_succeeded` | `run_id`, `output?` |

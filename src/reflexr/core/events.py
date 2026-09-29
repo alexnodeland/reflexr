@@ -238,6 +238,9 @@ class RunStarted(Event, name="run_started"):
 
     run_id: RunId
     rule: RuleName
+    scope: dict[str, JsonValue] = {}
+    """The values of the rule's scope fields, as on ``rule_fired``."""
+
     scope_key: ScopeKey
     attempt: int
 
