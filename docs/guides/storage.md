@@ -97,6 +97,7 @@ The storage does not own the engine: dispose of it when the application stops, w
     ```
 
 - **Records are JSON.** Envelopes, runs, rule progress, scope states and dead letters are stored as the JSON of their Pydantic models, beside the columns that queries filter and order by. An event whose type the process does not know comes back as an `UnknownEvent`. Adding a field with a default to an event type needs no migration.
+- **Reads of the log filter in the database.** An event's type has a column of its own, indexed with its workspace and `seq`, so reading some types reads only their envelopes, and a read of the last so many reads the log backwards from the end.
 - **Timestamps in columns are UTC.** They are stored and read back in UTC, because SQLite compares timestamps as text. Timestamps inside the JSON round-trip exactly as given.
 - **Leases are rows,** taken with a conditional `UPDATE` or else an `INSERT`, and they expire by the storage's clock. `SqlStorage(engine, clock=...)` takes a clock, as `InMemoryStorage` does.
 
@@ -105,7 +106,7 @@ Every table's name starts with `reflexr_`, and every primary key starts with the
 | Table | Holds |
 |---|---|
 | `reflexr_workspaces` | One row per workspace: the head of its log, and the lock transactions take |
-| `reflexr_events` | The log, by `seq`, with each event id unique within its workspace |
+| `reflexr_events` | The log, by `seq`, with each event id unique within its workspace and each event's type beside it |
 | `reflexr_rule_progress` | Each rule's cursor, generation, definition and deadlines |
 | `reflexr_scope_states` | What each rule remembers about each scope |
 | `reflexr_runs` | Runs, with their status, attempts, checkpoint and output |
@@ -157,6 +158,7 @@ Everything is scoped to a `WorkspaceRef`, a tenant and a workspace: the unit of 
     ```
 
 - **Within a transaction,** the host also loads and saves rule progress and scope states (and clears a rule's states when it is reset), saves runs, lists a scope's unfinished runs in firing order, dead-letters evaluation errors, and records schedule ticks.
+- **`read(ref, after_seq=, before_seq=, types=, limit=, last=)` reads a window of the log,** the envelopes with `after_seq < seq < before_seq`, oldest first. `types` keeps those of some event types, `limit` the first so many that match, and `last` the last so many, still oldest first. Filter in the store rather than after reading, so that a tail read of a long log reads only its tail. `Workspace.read` checks the arguments first, so a storage never gets both `limit` and `last`, or a negative number.
 - **`subscribe(ref, after_seq=...)` replays, then follows.** One iterator yields the stored envelopes after `after_seq` and then each new one as it commits, so nothing falls between catching up and following along. The WebSocket stream, MCP notifications and the feedback mirror all read the log this way.
 - **Discovery spans workspaces.** `workspaces()` lists every workspace with a log, for the reactor to evaluate, and `due_runs(now=..., limit=..., policy=...)` returns the runs to attempt now that can start: pending and retrying runs that are due, and running runs whose lease (`run_lease(run_id)`) has lapsed. Storage does not see the rules, so the executor describes them with a `RunPolicy`, built by `RunPolicy.of(rules)`. A rule the policy does not name has every due run returned. The executor checks each run's place in its scope again when it claims it, so a storage that returns too much only costs claims that are declined, but one that returns too little leaves runs waiting: implement the filter exactly, with `RunPolicy.holds` saying which runs hold a scope. The policy names:
   - **`disabled`** rules, whose runs are left out, so they neither run nor take up the limit.

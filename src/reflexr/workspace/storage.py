@@ -196,9 +196,29 @@ class Storage(Protocol):
         ...
 
     async def read(
-        self, workspace: WorkspaceRef, *, after_seq: int = 0, limit: int | None = None
+        self,
+        workspace: WorkspaceRef,
+        *,
+        after_seq: int = 0,
+        before_seq: int | None = None,
+        types: Collection[str] | None = None,
+        limit: int | None = None,
+        last: int | None = None,
     ) -> list[Envelope]:
-        """Return logged envelopes with ``seq`` greater than ``after_seq``, in order."""
+        """Return logged envelopes in the window ``after_seq < seq < before_seq``, in order.
+
+        Args:
+            workspace: The workspace whose log to read.
+            after_seq: Only envelopes after this ``seq``.
+            before_seq: Only envelopes before this ``seq``; ``None`` reads to the head.
+            types: Only envelopes of these event types; ``None`` reads every type.
+            limit: At most this many: the first ones in the window that match.
+            last: At most this many: the last ones in the window that match, still returned
+                in order. This is the tail of the log.
+
+        Callers give at most one of ``limit`` and ``last``, and no negative numbers;
+        :meth:`~reflexr.workspace.Workspace.read` checks.
+        """
         ...
 
     def subscribe(self, workspace: WorkspaceRef, *, after_seq: int = 0) -> AsyncGenerator[Envelope]:

@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -19,7 +20,7 @@ from reflexr.core import (
 from reflexr.workspace import RunPolicy, Storage, WorkspaceRef, run_lease
 from tests.event_types import ServiceError
 from tests.workspace.conftest import START, FakeClock
-from tests.workspace.helpers import entry, fired
+from tests.workspace.helpers import deploy, entry, fired
 
 ACME = WorkspaceRef("acme", "prod")
 OTHER = WorkspaceRef("globex", "prod")
@@ -47,6 +48,40 @@ async def test_appends_assign_gap_free_seqs_and_default_chains(storage: Storage)
     assert await storage.head_seq(ACME) == 3
     assert await storage.read(ACME) == [first, second, third]
     assert await storage.read(ACME, after_seq=1, limit=1) == [second]
+
+
+async def test_reads_take_a_window_of_some_types_from_its_start_or_its_end(
+    storage: Storage,
+) -> None:
+    async with storage.transaction(ACME) as transaction:
+        await transaction.append(
+            [entry("e1"), deploy("e2"), entry("e3"), deploy("e4"), entry("e5"), deploy("e6")]
+        )
+    async with storage.transaction(OTHER) as transaction:
+        await transaction.append([deploy("x1")])
+
+    async def seqs(**options: Any) -> list[int]:
+        return [envelope.seq for envelope in await storage.read(ACME, **options)]
+
+    assert await seqs(before_seq=4) == [1, 2, 3]
+    assert await seqs(after_seq=2, before_seq=5) == [3, 4]
+    assert await seqs(after_seq=4, before_seq=5) == []
+    assert await seqs(before_seq=0) == []
+    assert await seqs(before_seq=100) == [1, 2, 3, 4, 5, 6]
+    assert await seqs(types={"deploy.finished"}) == [2, 4, 6]
+    assert await seqs(types=["service.error", "deploy.finished"], after_seq=4) == [5, 6]
+    assert await seqs(types={"heartbeat"}) == []
+    assert await seqs(types=()) == []
+    assert await seqs(limit=2, types={"service.error"}, after_seq=1) == [3, 5]
+    assert await seqs(limit=0) == []
+    assert await seqs(last=2) == [5, 6], "the tail, oldest first"
+    assert await seqs(last=2, types={"deploy.finished"}) == [4, 6]
+    assert await seqs(last=10, after_seq=3) == [4, 5, 6]
+    assert await seqs(last=0) == []
+    tail = await seqs(last=2, types={"deploy.finished"})
+    assert await seqs(last=2, types={"deploy.finished"}, before_seq=tail[0]) == [2], (
+        "paging backwards"
+    )
 
 
 async def test_timestamps_never_go_backwards(storage: Storage, clock: FakeClock) -> None:

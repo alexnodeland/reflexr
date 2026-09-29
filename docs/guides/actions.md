@@ -153,7 +153,7 @@ Pass `prompt="..."` for a fixed prompt, or a function of the reaction, such as `
 
 | Tool | What it does |
 |---|---|
-| `read_events(after_seq=0, types=None, limit=20)` | Reads envelopes from the workspace's log, oldest first, at most `read_limit` per call |
+| `read_events(after_seq=0, before_seq=None, types=None, limit=None, last=None)` | Reads envelopes from the workspace's log, oldest first, at most `read_limit` per call: the first `limit` in the window `after_seq < seq < before_seq`, or the latest `last`, of `types`. Without either, the first 20. The model reads further back by calling again with `before_seq` set to the oldest `seq` it has. |
 | `emit_event(type, fields)` | Publishes an event of an allowed type, validated against its schema. Only present when `emit` names types. |
 
 | Option | Default | Meaning |

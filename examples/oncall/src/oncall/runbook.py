@@ -79,12 +79,13 @@ async def diagnose(
     """Look for a recent deploy of the service in the log, and the version before it."""
     service = ctx.inputs.service
     opened = ctx.deps.events[-1]  # the incident.opened envelope that fired the runbook
+    earlier = await ctx.deps.workspace.read(
+        before_seq=opened.seq, types=[DeployCompleted.event_type]
+    )
     deploys = [
         (envelope.ts, envelope.event.version)
-        for envelope in await ctx.deps.workspace.read()
-        if envelope.seq < opened.seq
-        and isinstance(envelope.event, DeployCompleted)
-        and envelope.event.service == service
+        for envelope in earlier
+        if isinstance(envelope.event, DeployCompleted) and envelope.event.service == service
     ]
     recent = [version for at, version in deploys if opened.ts - at <= RECENT]
     if recent and len(deploys) > 1:

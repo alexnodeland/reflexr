@@ -208,11 +208,25 @@ class InMemoryStorage:
         return len(self._data(workspace).log)
 
     async def read(
-        self, workspace: WorkspaceRef, *, after_seq: int = 0, limit: int | None = None
+        self,
+        workspace: WorkspaceRef,
+        *,
+        after_seq: int = 0,
+        before_seq: int | None = None,
+        types: Collection[str] | None = None,
+        limit: int | None = None,
+        last: int | None = None,
     ) -> list[Envelope]:
-        """Return logged envelopes with ``seq`` greater than ``after_seq``, in order."""
-        log = self._data(workspace).log[after_seq:]
-        return log if limit is None else log[:limit]
+        """Return logged envelopes in the window ``after_seq < seq < before_seq``, in order.
+
+        Of those of ``types``, if given: the first ``limit`` or the last ``last``.
+        """
+        log = self._data(workspace).log
+        window = log[after_seq : len(log) if before_seq is None else max(before_seq - 1, 0)]
+        found = window if types is None else [e for e in window if e.event_type in types]
+        if last is not None:
+            return found[max(len(found) - last, 0) :]
+        return found if limit is None else found[:limit]
 
     async def subscribe(
         self, workspace: WorkspaceRef, *, after_seq: int = 0

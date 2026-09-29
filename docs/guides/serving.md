@@ -177,7 +177,7 @@ Every path is relative to the router's prefix, `/v1` above:
 |---|---|
 | `POST /workspaces/{workspace_id}/events` | Publishes one event or a batch; a list of `published` outcomes |
 | `POST /workspaces/{workspace_id}/commands` | Runs one command frame; its `command_result` |
-| `GET /workspaces/{workspace_id}/events?after_seq=&limit=&type=` | A page of the log, as envelopes. `type` may repeat to choose several event types. |
+| `GET /workspaces/{workspace_id}/events?after_seq=&before_seq=&type=&limit=&last=` | A page of the log, as envelopes, oldest first: the window `after_seq < seq < before_seq`, of the event types `type` names (it may repeat), the first `limit` or the last `last` of them. Both `limit` and `last` is 422. |
 | `GET /workspaces/{workspace_id}/runs?rule=&scope_key=&status=&limit=` | Runs, newest first |
 | `GET /workspaces/{workspace_id}/runs/{run_id}` | One run: its status, attempts, error, output, checkpoint and each attempt's trace id |
 | `GET /workspaces/{workspace_id}/dead-letters?rule=` | The envelopes rules could not evaluate, oldest first |
@@ -192,7 +192,14 @@ A dashboard follows a rule's health with `GET /v1/workspaces/prod/rules`:
 [{"rule": "error-spike", "enabled": true, "cursor": 4, "lag": 3, "generation": 0, "dead_letters": 0}]
 ```
 
-A lag that keeps growing means no reactor is evaluating the workspace, or it cannot keep up, unless the rule is [disabled](reactor.md#disabling-a-rule). Page through a long log with `after_seq`, starting from the last `seq` you have.
+A lag that keeps growing means no reactor is evaluating the workspace, or it cannot keep up, unless the rule is [disabled](reactor.md#disabling-a-rule).
+
+Page forwards through a long log with `after_seq`, starting from the last `seq` you have. To show the latest events first, as an incident timeline does, read the tail with `last`, then page backwards with `before_seq` set to the oldest `seq` you have:
+
+```text
+GET /v1/workspaces/prod/events?type=service.error&last=20
+GET /v1/workspaces/prod/events?type=service.error&last=20&before_seq=4180
+```
 
 ## The WebSocket stream
 
@@ -212,6 +219,7 @@ The server answers `welcome` with the head of the log, replays every event after
 ```
 
 - **Replay and live delivery are one subscription** to the log, so nothing falls between them. A client that reconnects says `hello` with its last `seq` and carries on. A client ahead of the log (the server lost events it had seen) gets `reset: true` and a replay from the beginning, and should discard what it has.
+- **`from_head: true` starts at the head** instead, for a client that needs only what happens from now on, such as a dashboard that shows live alerts. Nothing is replayed: `welcome` carries the head, `replay_complete` follows at once, and then live events. Its position is then `welcome.head_seq`, and it reconnects with `resume_after_seq` from there, not with `from_head` again, so it does not miss what was appended while it was away. A `hello` with both `from_head` and a `resume_after_seq` is refused with 4400. To show some history first, read the tail over REST with `last`, then say `hello` with `resume_after_seq` set to the last `seq` it returned.
 - **`types` filters** what the client receives; `null`, the default, sends everything. `replay_complete` is decided on the whole log, so it arrives even when the last replayed events were filtered out.
 - **Frames that are not commands** get an `error` frame, and the connection stays open. A command runs as its own task, so a slow one never holds up the others.
 
@@ -219,7 +227,7 @@ The server closes a connection with a code that says what to do next:
 
 | Code | Meaning | The client should |
 |---|---|---|
-| 4400 | The first frame was not a valid `hello`, or asked for another protocol | Fix it and reconnect |
+| 4400 | The first frame was not a valid `hello`, asked for another protocol, or asked both to start at the head and to resume | Fix it and reconnect |
 | 4401 | `resolve_actor` raised `Unauthorized` | Authenticate again |
 | 4403 | `authorize` refused the workspace | Stop |
 | 4408 | No `hello` arrived within `hello_timeout` | Reconnect |

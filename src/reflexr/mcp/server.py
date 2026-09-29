@@ -58,6 +58,9 @@ INSTRUCTIONS = (
 
 _RUN_FACTS = frozenset(t.event_type for t in SYSTEM_EVENTS if t.event_type.startswith("run_"))
 
+_READ_LIMIT = 50
+"""How many envelopes ``read_events`` returns when it is given neither ``limit`` nor ``last``."""
+
 _FORBIDDEN = "this workspace is not yours to use"
 """Why ``authorize`` refused, as the router's 403 says it."""
 
@@ -236,16 +239,25 @@ class ReflexrMcp:
             workspace_id: str,
             ctx: Context,
             after_seq: int = 0,
+            before_seq: int | None = None,
             types: list[str] | None = None,
-            limit: int = 50,
+            limit: int | None = None,
+            last: int | None = None,
         ) -> str:
-            """Read envelopes from a workspace's log, oldest first, as JSON lines."""
+            """Read envelopes from a workspace's log, oldest first, as JSON lines.
+
+            The window is ``after_seq < seq < before_seq``. ``limit`` reads its first
+            envelopes and ``last`` its last ones; without either, the first 50. To read back
+            through the log, give ``last``, then ``before_seq`` the oldest ``seq`` returned.
+            """
             workspace = await self._workspace(ctx, workspace_id)
-            found = [
-                e
-                for e in await workspace.read(after_seq=after_seq)
-                if types is None or e.event_type in types
-            ][:limit]
+            if limit is None and last is None:
+                limit = _READ_LIMIT
+            found = await _tool(
+                workspace.read(
+                    after_seq=after_seq, before_seq=before_seq, types=types, limit=limit, last=last
+                )
+            )
             return "\n".join(e.model_dump_json() for e in found) or "No events."
 
         @server.tool()

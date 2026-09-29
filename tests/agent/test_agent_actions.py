@@ -116,6 +116,23 @@ async def test_without_emit_types_an_agent_can_only_read() -> None:
     assert "emit_event" not in script.instructions(0)
 
 
+async def test_an_agent_reads_the_log_from_its_end_and_backwards() -> None:
+    script = Script(
+        call("read_events", last=1, types=["deploy.finished", "service.error"]),
+        call("read_events", "call_2", last=5, before_seq=2),
+        call("read_events", "call_3", limit=1, last=1),
+        say("Read back to the deploy."),
+    )
+    _, reactor = await setup(AgentAction(agent(script, EventContext(read_limit=1))))
+    await reactor.settle()
+    [latest] = script.sent(1)
+    assert latest.startswith('<event seq="2" type="service.error"')
+    [earlier] = script.sent(2)
+    assert earlier.startswith('<event seq="1" type="deploy.finished"'), "capped at read_limit"
+    [refused] = script.sent(3)
+    assert "give limit or last, not both" in refused
+
+
 async def test_structured_outputs_and_custom_prompts() -> None:
     script = Script(call("final_result", severity=8, summary="token checks fail"))
     action = AgentAction(

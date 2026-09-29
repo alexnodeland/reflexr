@@ -506,6 +506,11 @@
       "additionalProperties": false,
       "description": "The first frame a client sends on a connection.",
       "properties": {
+        "from_head": {
+          "default": false,
+          "title": "From Head",
+          "type": "boolean"
+        },
         "protocol": {
           "title": "Protocol",
           "type": "string"

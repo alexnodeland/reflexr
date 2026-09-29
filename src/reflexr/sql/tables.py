@@ -89,10 +89,15 @@ class EventRow(ScopedRow):
     __tablename__ = "reflexr_events"
     __table_args__ = (
         UniqueConstraint("tenant_id", "workspace_id", "event_id", name="uq_reflexr_events_id"),
+        # Reads of some types, from the start or the tail, are one range per type.
+        Index("ix_reflexr_events_type", "tenant_id", "workspace_id", "event_type", "seq"),
     )
 
     seq: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     event_id: Mapped[str]
+    event_type: Mapped[str]
+    """The event's type name, which reads filter on."""
+
     envelope: Mapped[dict[str, Any]] = mapped_column(JSON)
 
 

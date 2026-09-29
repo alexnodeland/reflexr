@@ -100,6 +100,29 @@ async def test_reads_filter_the_log_and_list_rules_runs_and_schedules(app: App) 
     ]
 
 
+async def test_the_log_is_read_from_its_end_and_backwards(app: App) -> None:
+    client, _, _ = app
+    deploy = {"type": "deploy.finished", "service": "auth"}
+    for event in (ERROR, deploy, ERROR, deploy, ERROR, deploy):
+        await client.post("/workspaces/prod/events", json={"event": event})
+
+    async def seqs(**params: int | list[str]) -> list[int]:
+        response = await client.get("/workspaces/prod/events", params=params)
+        return [envelope["seq"] for envelope in response.json()]
+
+    assert await seqs(last=2) == [5, 6]
+    assert await seqs(last=2, type=["deploy.finished"]) == [4, 6]
+    assert await seqs(last=2, type=["deploy.finished"], before_seq=4) == [2]
+    assert await seqs(after_seq=1, before_seq=4) == [2, 3]
+    both = await client.get("/workspaces/prod/events", params={"limit": 1, "last": 1})
+    assert (both.status_code, both.json()["detail"]) == (
+        422,
+        {"type": "validation_failed", "message": "give limit or last, not both", "errors": []},
+    )
+    negative = await client.get("/workspaces/prod/events", params={"last": -1})
+    assert negative.status_code == 422
+
+
 async def test_commands_are_idempotent_and_map_rejections_to_statuses(app: App) -> None:
     client, _, _ = app
     frame = {"type": "command", "command_id": "c1", "command": {"type": "publish", "event": ERROR}}
