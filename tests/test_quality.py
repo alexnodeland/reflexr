@@ -12,7 +12,7 @@ SUPPRESSION = re.compile(r"#\s*(type:\s*ignore|pyright:\s*ignore|noqa|pragma:\s*
 def _sources() -> list[Path]:
     return sorted(
         path
-        for folder in ("src", "tests", "examples")
+        for folder in ("src", "tests", "examples", "scripts")
         for path in (ROOT / folder).rglob("*.py")
         if ".venv" not in path.parts
     )

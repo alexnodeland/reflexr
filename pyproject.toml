@@ -129,8 +129,8 @@ known-third-party = ["fastapi", "mcp", "evalr", "langfuse"]
 # ─── types ────────────────────────────────────────────────────────────────────
 
 [tool.pyright]
-include = ["src", "tests", "examples"]
-strict = ["src", "examples/oncall/src"]
+include = ["src", "tests", "examples", "scripts"]
+strict = ["src", "examples/oncall/src", "scripts"]
 typeCheckingMode = "standard"
 pythonVersion = "3.12"
 venvPath = "."
