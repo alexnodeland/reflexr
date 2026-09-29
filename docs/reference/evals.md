@@ -22,6 +22,22 @@ The `evals` extra, over [evalr](https://github.com/alexnodeland/evalr). See [Fee
 
 ::: reflexr.evals.BuildInput
 
+## Experiments
+
+::: reflexr.evals.replay_task
+
+::: reflexr.evals.Replay
+
+## End-to-end measures
+
+::: reflexr.evals.rule_outcomes
+
+::: reflexr.evals.RuleOutcomes
+
+::: reflexr.evals.time_to_resolution
+
+::: reflexr.evals.OPERATORS
+
 ## What feedback is about
 
 ::: reflexr.evals.RunRecord

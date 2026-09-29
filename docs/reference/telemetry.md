@@ -18,7 +18,11 @@ Tracing and metrics through the OpenTelemetry API. See [Observability](../guides
 
 ::: reflexr.telemetry.MetricsDetail
 
-::: reflexr.telemetry.SCOPE_ATTRIBUTES
+::: reflexr.telemetry.kept_attributes
+
+::: reflexr.telemetry.SCOPE
+
+::: reflexr.telemetry.SCOPED
 
 ## Attributes
 
@@ -32,8 +36,6 @@ Tracing and metrics through the OpenTelemetry API. See [Observability](../guides
 These are what reflexr's components record with. Applications rarely need them, except the attribute helpers to attribute spans of their own.
 
 ::: reflexr.telemetry.Telemetry
-
-::: reflexr.telemetry.SCOPE_NAME
 
 ::: reflexr.telemetry.workspace_attributes
 

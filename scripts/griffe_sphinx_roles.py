@@ -30,9 +30,12 @@ _PUBLIC_MODULES = frozenset(
         "reflexr.workspace",
         "reflexr.agent",
         "reflexr.scores",
-        "reflexr.evals",
+        "reflexr.sql",
         "reflexr.fastapi",
         "reflexr.mcp",
+        "reflexr.otel",
+        "reflexr.langfuse",
+        "reflexr.evals",
     }
 )
 

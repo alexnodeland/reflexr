@@ -13,9 +13,12 @@ The packages are layers. Each depends only on the ones below it, so each is usab
 | [`reflexr.workspace`](workspace.md) | Tenant-scoped workspace handles, the `Reactor`, the action port and `Reaction`, schedules, the storage protocol and in-memory storage | core |
 | [`reflexr.agent`](agent.md) | pydantic-ai agents and pydantic-graph graphs as actions, with the `EventContext` capability and graph checkpoints | core |
 | [`reflexr.scores`](scores.md) | Feedback as scores: the mapping, the mirror that follows the log, and the ports scores leave through | core |
-| [`reflexr.evals`](evals.md) | evalr's feedback source over a workspace's log, and evaluators as rules | `evals` extra |
+| [`reflexr.sql`](sql.md) | SQL storage on PostgreSQL and SQLite, and its migrations | `sql`, `postgres` or `sqlite` extra |
 | [`reflexr.fastapi`](fastapi.md) | HTTP ingest, REST reads and administration, and the WebSocket stream, as a FastAPI router | `fastapi` extra |
 | [`reflexr.mcp`](mcp.md) | An MCP server for external agents | `mcp` extra |
+| [`reflexr.otel`](otel.md) | `configure_telemetry`: the OpenTelemetry SDK, OTLP export, instrumentations and metric views | `otel` extra |
+| [`reflexr.langfuse`](langfuse.md) | Langfuse: whole traces, each run's session and trace attributes, and feedback as scores | `langfuse` extra |
+| [`reflexr.evals`](evals.md) | evalr for reflexr: feedback as examples, evaluators as rules, replay experiments and end-to-end measures | `evals` extra |
 
 The wire formats have their own pages: the [stream protocol](../protocol.md), and the [JSON Schemas](schema.md) of rules and of the protocol's frames.
 

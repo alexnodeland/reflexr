@@ -146,9 +146,12 @@ nav:
       - reflexr.workspace: reference/workspace.md
       - reflexr.agent: reference/agent.md
       - reflexr.scores: reference/scores.md
-      - reflexr.evals: reference/evals.md
+      - reflexr.sql: reference/sql.md
       - reflexr.fastapi: reference/fastapi.md
       - reflexr.mcp: reference/mcp.md
+      - reflexr.otel: reference/otel.md
+      - reflexr.langfuse: reference/langfuse.md
+      - reflexr.evals: reference/evals.md
       - Stream protocol: protocol.md
       - JSON Schemas: reference/schema.md
   - Design:
@@ -183,6 +186,8 @@ nav:
           - adr/0026-the-reactors-evaluation.md
           - adr/0027-executing-runs.md
           - adr/0028-schedules-and-cronsim.md
+          - adr/0029-metric-detail-through-sdk-views.md
+          - adr/0030-sql-storage.md
           - adr/0032-documentation-site.md
           - adr/0033-publishing-the-documentation-site.md
           - adr/template.md
