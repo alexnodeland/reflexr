@@ -6,7 +6,9 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 from reflexr import SystemActor, UserActor
 from reflexr.telemetry import (
+    EXTERNAL_METRICS,
     METRICS,
+    SCOPE,
     SCOPED,
     Metric,
     MetricsDetail,
@@ -45,7 +47,13 @@ def test_the_registry_never_declares_identifying_attributes() -> None:
         assert metric.name.startswith("reflexr."), metric.name
         assert not metric.attributes & IDENTIFYING, metric.name
         assert metric.attributes >= SCOPED, "every metric carries tenant and workspace"
+        assert metric.scope == SCOPE
         assert METRICS[metric.name] is metric
+
+
+def test_external_metrics_are_recorded_by_other_scopes() -> None:
+    assert all(metric.scope != SCOPE for metric in EXTERNAL_METRICS.values())
+    assert not set(METRICS) & set(EXTERNAL_METRICS)
 
 
 @pytest.mark.parametrize(
@@ -71,6 +79,10 @@ def test_prometheus_names_follow_the_otlp_translation() -> None:
         "reflexr_evaluation_duration_seconds_count",
     }
     assert EVALUATION_LAG.prometheus_series == {"reflexr_evaluation_lag"}
+    assert EXTERNAL_METRICS["operation.cost"].prometheus_name == "operation_cost"
+    assert "gen_ai_client_token_usage_sum" in (
+        EXTERNAL_METRICS["gen_ai.client.token.usage"].prometheus_series
+    )
 
 
 def test_tenant_and_workspace_are_always_recorded() -> None:

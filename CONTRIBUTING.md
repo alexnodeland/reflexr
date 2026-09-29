@@ -23,6 +23,7 @@ Run `make` on its own to list every command:
 | `make test` | Run the tests with the 100% branch-coverage gate |
 | `make check` | Everything CI runs |
 | `make schema` | Regenerate `schemas/reflexr.rules.v1.json` from the rule models (a test fails if it drifts) |
+| `make dashboards` | Regenerate the Grafana dashboards in `deploy/grafana/dashboards/` from `scripts/grafana_dashboards.py` (a test fails if they drift) |
 | `make pg-up` / `make pg-down` | Start or stop PostgreSQL for the SQL tests, from `compose.yaml` (needs Docker) |
 | `make app-up` | Build and start oncall, the reference app, on PostgreSQL, at <http://localhost:8000> |
 | `make test-pg` | Run the tests on PostgreSQL as well as SQLite |
@@ -88,7 +89,7 @@ fix(workspace): release a run's lease when the run is cancelled
 docs(adr): record the cron parsing decision
 ```
 
-Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`. Scopes are package or area names: `core`, `workspace`, `agent`, `sql`, `fastapi`, `mcp`, `examples`, `docs`, `adr`, `rfc`. Mark breaking changes with `!` (`feat(core)!: ...`) and a `BREAKING CHANGE:` footer. The changelog is generated from these messages.
+Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`. Scopes are package or area names: `core`, `workspace`, `agent`, `sql`, `fastapi`, `mcp`, `examples`, `deploy`, `docs`, `adr`, `rfc`. Mark breaking changes with `!` (`feat(core)!: ...`) and a `BREAKING CHANGE:` footer. The changelog is generated from these messages.
 
 ## Dependencies
 

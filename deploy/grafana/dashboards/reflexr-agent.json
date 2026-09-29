@@ -1,0 +1,457 @@
+{
+  "uid": "reflexr-agent",
+  "title": "reflexr / Agent and LLM",
+  "description": "Model usage, cost and request sizes; guardrail blocks and failing rules.",
+  "tags": [
+    "reflexr"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "links": [
+    {
+      "title": "reflexr dashboards",
+      "type": "dashboards",
+      "tags": [
+        "reflexr"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "job",
+        "label": "Service",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(reflexr_events_published_total, job)",
+          "refId": "job"
+        },
+        "definition": "label_values(reflexr_events_published_total, job)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": null,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(reflexr_events_published_total{job=~\"$job\"}, deployment_environment_name)",
+          "refId": "environment"
+        },
+        "definition": "label_values(reflexr_events_published_total{job=~\"$job\"}, deployment_environment_name)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "tenant",
+        "label": "Tenant",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(reflexr_events_published_total{job=~\"$job\", deployment_environment_name=~\"$environment\"}, reflexr_tenant_id)",
+          "refId": "tenant"
+        },
+        "definition": "label_values(reflexr_events_published_total{job=~\"$job\", deployment_environment_name=~\"$environment\"}, reflexr_tenant_id)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Models",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens by model",
+      "description": "Tokens per second, from pydantic-ai's gen_ai.client.token.usage. pydantic-ai's metrics carry the model, not the tenant.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (gen_ai_request_model, gen_ai_token_type) (rate(gen_ai_client_token_usage_sum{job=~\"$job\", deployment_environment_name=~\"$environment\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_request_model}} {{gen_ai_token_type}}",
+          "interval": "1m",
+          "exemplar": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Cost by model",
+      "description": "Estimated spend per second, from pydantic-ai's operation.cost.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (gen_ai_request_model) (rate(operation_cost_sum{job=~\"$job\", deployment_environment_name=~\"$environment\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_request_model}}",
+          "interval": "1m",
+          "exemplar": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Model requests",
+      "description": "Model requests per second, counted by their input tokens.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (gen_ai_request_model) (rate(gen_ai_client_token_usage_count{job=~\"$job\", deployment_environment_name=~\"$environment\", gen_ai_token_type=\"input\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_request_model}}",
+          "interval": "1m",
+          "exemplar": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens per request",
+      "description": "The 95th percentile of one request's tokens: growing contexts show here.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, gen_ai_request_model, gen_ai_token_type) (rate(gen_ai_client_token_usage_bucket{job=~\"$job\", deployment_environment_name=~\"$environment\"}[$__rate_interval])))",
+          "legendFormat": "{{gen_ai_request_model}} {{gen_ai_token_type}} p95",
+          "interval": "1m",
+          "exemplar": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 9,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "Runs and the gateway",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Guardrail blocks by rule",
+      "description": "Runs the LLM gateway's guardrails blocked: permanent failures, dead-lettered without a retry.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reflexr_rule) (rate(reflexr_runs_total{job=~\"$job\", deployment_environment_name=~\"$environment\", reflexr_tenant_id=~\"$tenant\", reflexr_run_status=~\"retrying|dead\", reflexr_actor_kind=\"system\", reflexr_run_reason=\"guardrail_blocked\"}[$__rate_interval]))",
+          "legendFormat": "{{reflexr_rule}}",
+          "interval": "1m",
+          "exemplar": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Failed attempts by rule",
+      "description": "The share of each rule's finished attempts that failed: an agent's model or tools failing, or a guardrail block.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum by (reflexr_rule) (rate(reflexr_run_duration_seconds_count{job=~\"$job\", deployment_environment_name=~\"$environment\", reflexr_tenant_id=~\"$tenant\", reflexr_run_status=~\"retrying|dead\"}[$__rate_interval]))) / clamp_min(sum by (reflexr_rule) (rate(reflexr_run_duration_seconds_count{job=~\"$job\", deployment_environment_name=~\"$environment\", reflexr_tenant_id=~\"$tenant\"}[$__rate_interval])), 1e-9)",
+          "legendFormat": "{{reflexr_rule}}",
+          "interval": "1m",
+          "exemplar": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Attempt duration by rule",
+      "description": "The 95th percentile, by rule: an agent's attempt includes every model request it makes. Exemplars link to the trace.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, reflexr_rule) (rate(reflexr_run_duration_seconds_bucket{job=~\"$job\", deployment_environment_name=~\"$environment\", reflexr_tenant_id=~\"$tenant\"}[$__rate_interval])))",
+          "legendFormat": "{{reflexr_rule}} p95",
+          "interval": "1m",
+          "exemplar": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 8
+      }
+    }
+  ]
+}

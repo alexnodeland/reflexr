@@ -9,7 +9,7 @@ UV ?= uv
 PG_PORT ?= 54330
 PG_URL ?= postgresql+asyncpg://postgres:reflexr@localhost:$(PG_PORT)/postgres
 
-.PHONY: help install fmt lint typecheck test check docs docs-serve schema pg-up pg-down app-up test-pg changelog clean
+.PHONY: help install fmt lint typecheck test check docs docs-serve schema dashboards pg-up pg-down app-up test-pg changelog clean
 
 help: ## List the available commands
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -43,6 +43,9 @@ docs-serve: ## Serve the documentation site with live reload at http://localhost
 schema: ## Regenerate the rule and protocol JSON Schemas from the models
 	$(UV) run python -m reflexr.core.schema rules > schemas/reflexr.rules.v1.json
 	$(UV) run python -m reflexr.core.schema protocol > schemas/reflexr.v1.json
+
+dashboards: ## Regenerate the Grafana dashboards in deploy/grafana/dashboards
+	$(UV) run python scripts/grafana_dashboards.py
 
 pg-up: ## Start PostgreSQL for the SQL tests, from compose.yaml (needs Docker)
 	REFLEXR_PG_PORT=$(PG_PORT) docker compose up -d --wait postgres

@@ -1,0 +1,415 @@
+{
+  "uid": "reflexr-workspace",
+  "title": "reflexr / Workspace",
+  "description": "One workspace: events, firings, runs and feedback.",
+  "tags": [
+    "reflexr"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "links": [
+    {
+      "title": "reflexr dashboards",
+      "type": "dashboards",
+      "tags": [
+        "reflexr"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "job",
+        "label": "Service",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(reflexr_events_published_total, job)",
+          "refId": "job"
+        },
+        "definition": "label_values(reflexr_events_published_total, job)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": null,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(reflexr_events_published_total{job=~\"$job\"}, deployment_environment_name)",
+          "refId": "environment"
+        },
+        "definition": "label_values(reflexr_events_published_total{job=~\"$job\"}, deployment_environment_name)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "tenant",
+        "label": "Tenant",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(reflexr_events_published_total{job=~\"$job\", deployment_environment_name=~\"$environment\"}, reflexr_tenant_id)",
+          "refId": "tenant"
+        },
+        "definition": "label_values(reflexr_events_published_total{job=~\"$job\", deployment_environment_name=~\"$environment\"}, reflexr_tenant_id)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "workspace",
+        "label": "Workspace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(reflexr_events_published_total{job=~\"$job\", deployment_environment_name=~\"$environment\", reflexr_tenant_id=~\"$tenant\"}, reflexr_workspace_id)",
+          "refId": "workspace"
+        },
+        "definition": "label_values(reflexr_events_published_total{job=~\"$job\", deployment_environment_name=~\"$environment\", reflexr_tenant_id=~\"$tenant\"}, reflexr_workspace_id)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Events by type",
+      "description": "Events appended per second, by type.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reflexr_event_type) (rate(reflexr_events_published_total{job=~\"$job\", deployment_environment_name=~\"$environment\", reflexr_tenant_id=~\"$tenant\", reflexr_workspace_id=~\"$workspace\", reflexr_event_duplicate=\"false\"}[$__rate_interval]))",
+          "legendFormat": "{{reflexr_event_type}}",
+          "interval": "1m",
+          "exemplar": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Events by kind of actor",
+      "description": "Who publishes: people, sources, runs (agent), external agents over MCP.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reflexr_actor_kind) (rate(reflexr_events_published_total{job=~\"$job\", deployment_environment_name=~\"$environment\", reflexr_tenant_id=~\"$tenant\", reflexr_workspace_id=~\"$workspace\"}[$__rate_interval]))",
+          "legendFormat": "{{reflexr_actor_kind}}",
+          "interval": "1m",
+          "exemplar": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Duplicates",
+      "description": "Publishes of an event id already in the log, such as retried deliveries. They appended nothing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reflexr_event_type) (rate(reflexr_events_published_total{job=~\"$job\", deployment_environment_name=~\"$environment\", reflexr_tenant_id=~\"$tenant\", reflexr_workspace_id=~\"$workspace\", reflexr_event_duplicate=\"true\"}[$__rate_interval]))",
+          "legendFormat": "{{reflexr_event_type}}",
+          "interval": "1m",
+          "exemplar": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Firings by rule",
+      "description": "Times each rule fired.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reflexr_rule) (rate(reflexr_firings_total{job=~\"$job\", deployment_environment_name=~\"$environment\", reflexr_tenant_id=~\"$tenant\", reflexr_workspace_id=~\"$workspace\"}[$__rate_interval]))",
+          "legendFormat": "{{reflexr_rule}}",
+          "interval": "1m",
+          "exemplar": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Runs by rule and status",
+      "description": "Runs reaching each status, by rule.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reflexr_rule, reflexr_run_status) (rate(reflexr_runs_total{job=~\"$job\", deployment_environment_name=~\"$environment\", reflexr_tenant_id=~\"$tenant\", reflexr_workspace_id=~\"$workspace\"}[$__rate_interval]))",
+          "legendFormat": "{{reflexr_rule}} {{reflexr_run_status}}",
+          "interval": "1m",
+          "exemplar": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Feedback",
+      "description": "Feedback given, by type and by people or evaluators.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reflexr_feedback_type, reflexr_actor_kind) (rate(reflexr_feedback_total{job=~\"$job\", deployment_environment_name=~\"$environment\", reflexr_tenant_id=~\"$tenant\", reflexr_workspace_id=~\"$workspace\"}[$__rate_interval]))",
+          "legendFormat": "{{reflexr_feedback_type}} by {{reflexr_actor_kind}}",
+          "interval": "1m",
+          "exemplar": false,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      }
+    }
+  ]
+}

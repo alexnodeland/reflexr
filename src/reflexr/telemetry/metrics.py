@@ -2,7 +2,7 @@
 
 Each :class:`Metric` declares its name, instrument, unit, description and the attributes it
 may carry. reflexr records only declared attributes, so a metric cannot grow an attribute by
-accident, and the dashboards are tested against this registry.
+accident, and the dashboards in ``deploy/grafana/dashboards/`` are tested against this registry.
 
 The cardinality policy, as in artifactr (its ADR-0036):
 
@@ -51,6 +51,8 @@ class Metric:
         unit: The UCUM unit, or an annotation in braces such as ``{run}``.
         description: What it measures.
         attributes: The attributes it may carry, tenant and workspace included.
+        scope: The instrumentation scope that records it: ``reflexr``, or the library whose
+            metric a dashboard reads.
         buckets: For a histogram, the bucket boundaries it advises the SDK to use.
     """
 
@@ -59,6 +61,7 @@ class Metric:
     unit: str
     description: str
     attributes: frozenset[str] = SCOPED
+    scope: str = SCOPE
     buckets: tuple[float, ...] | None = None
 
     @property
@@ -197,6 +200,30 @@ METRICS: Mapping[str, Metric] = {
     )
 }
 """Every metric reflexr records, by name."""
+
+EXTERNAL_METRICS: Mapping[str, Metric] = {
+    metric.name: metric
+    for metric in (
+        Metric(
+            "gen_ai.client.token.usage",
+            "histogram",
+            "{token}",
+            "Tokens per model request, by model and type.",
+            frozenset(),
+            scope="pydantic-ai",
+        ),
+        Metric(
+            "operation.cost",
+            "histogram",
+            "{USD}",
+            "Estimated cost per model request, by model.",
+            frozenset(),
+            scope="pydantic-ai",
+        ),
+    )
+}
+"""Metrics recorded by others that reflexr's dashboards read, by name: pydantic-ai's, per model
+request of an agent action. They carry the model and token type, not reflexr's attributes."""
 
 
 def kept_attributes(metric: Metric, detail: MetricsDetail) -> frozenset[str]:

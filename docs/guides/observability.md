@@ -134,7 +134,26 @@ telemetry = configure_telemetry(service_name="oncall", metrics_detail="tenant") 
 
 `metrics_detail` becomes OpenTelemetry views, `metric_views(detail)`, that drop the workspace (or the tenant too) before aggregation. `kept_attributes(metric, detail)` states the same policy for one metric.
 
-pydantic-ai's instrumentation records metrics of its own too, such as `gen_ai.client.token.usage` per model request, by model.
+pydantic-ai's instrumentation records metrics of its own too, such as `gen_ai.client.token.usage` and `operation.cost` per model request, by model. The registry lists the ones reflexr's dashboards read in `EXTERNAL_METRICS`.
+
+### Dashboards
+
+Eight Grafana dashboards ship in [`deploy/grafana/dashboards/`](https://github.com/alexnodeland/reflexr/tree/main/deploy/grafana/dashboards):
+
+| Dashboard | What it shows |
+|---|---|
+| Overview | Every tenant: events, firings, the failed share of run attempts, the worst rule lag, run outcomes and dead letters |
+| Tenant | One tenant's busiest workspaces |
+| Workspace | One workspace's events by type and by actor, duplicates, firings, runs and feedback |
+| Rules | Lag, evaluation duration, firings and errors, by rule |
+| Runs | Outcomes, failures by reason, retries, dead letters, attempt duration by rule and outcome, and operators' retries, skips and cancels |
+| Agent and LLM | Tokens and cost by model, model requests and tokens per request; guardrail blocks and failing rules |
+| Schedules | Ticks by schedule and workspace |
+| Stream | Open WebSocket connections, and disconnects by close code |
+
+They expect Prometheus with the data source uid `prometheus`, fed over OTLP (Prometheus's own OTLP receiver, or a Collector), which names the series as the registry predicts: `reflexr.firings` becomes `reflexr_firings_total`, `reflexr.run.duration` becomes `reflexr_run_duration_seconds`, and `service.name` becomes the `job` label. Every dashboard filters by service and environment (`deployment_environment_name`), and most by tenant and workspace. Latency panels show exemplars, which link to the trace of a slow attempt or evaluation. Rates assume the SDK's default export interval of a minute.
+
+[stackr](https://github.com/alexnodeland/stackr) provisions them at the release it pins: each release attaches them as `reflexr-dashboards-<version>.tar.gz`. Elsewhere, import the JSON files, or download them from a release's assets. A test checks every query against the registry ([ADR-0038](../adr/0038-dashboards-generated-tested-and-released.md)), so a renamed metric or attribute cannot leave a dashboard behind.
 
 ## Sessions and causal chains
 
