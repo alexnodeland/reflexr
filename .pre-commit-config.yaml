@@ -1,29 +1,38 @@
-# See https://pre-commit.com for more information
-# Install: pip install pre-commit && pre-commit install
-repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.0
-    hooks:
-      - id: ruff
-        args: [--fix]
-      - id: ruff-format
+# Hooks run the same tool versions as CI: the Python tools come from uv.lock via `uv run`.
+default_install_hook_types: [pre-commit, commit-msg]
 
-  - repo: https://github.com/RobertCraiworthy/pyright-python
-    rev: v1.1.390
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
     hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
       - id: pyright
-        additional_dependencies:
-          - pydantic>=2.10
-          - pydantic-ai>=1.0
-          - pydantic-settings>=2.0
-          - fastapi>=0.115
-          - uvicorn[standard]>=0.32
-          - sqlmodel>=0.0.22
-          - sqlalchemy[asyncio]>=2.0
-          - asyncpg>=0.30
-          - httpx>=0.28
-          - logfire[fastapi,asyncpg,httpx,pydantic]>=2.0
-          - tenacity>=9.0
-          - slowapi>=0.1.9
-          - pytest>=8.0
-          - pytest-asyncio>=0.24
+        name: pyright
+        entry: uv run pyright
+        language: system
+        types: [python]
+        pass_filenames: false

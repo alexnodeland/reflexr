@@ -27,4 +27,4 @@ reflexr stays under the **MIT license**, with the existing `LICENSE` file (copyr
 
 ## Action items
 
-1. [ ] Declare the license in the new packaging (RFC-0001 phase 0).
+1. [x] Declare the license in the new packaging (RFC-0001 phase 0).

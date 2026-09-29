@@ -1,246 +1,105 @@
-# Contributing to Reflex
+# Contributing to reflexr
 
-Thank you for your interest in contributing to Reflex! This document provides guidelines and instructions for contributing.
+Thanks for helping. This guide covers how to set up, how work flows into `main`, and what "done" means here.
 
-## Development Setup
+## Set up
 
-### Prerequisites
-
-- Python 3.11+
-- Docker and Docker Compose
-- PostgreSQL 16+ (or use Docker)
-
-### Quick Start
-
-1. **Clone the repository:**
-
-   ```bash
-   git clone https://github.com/alexnodeland/reflex.git
-   cd reflex
-   ```
-
-2. **Copy environment file:**
-
-   ```bash
-   cp .env.example .env
-   ```
-
-3. **Start development environment:**
-
-   ```bash
-   docker compose up
-   ```
-
-   Or without Docker:
-
-   ```bash
-   pip install uv
-   uv pip install -e ".[dev]"
-   ```
-
-4. **Run migrations:**
-
-   ```bash
-   python scripts/migrate.py
-   ```
-
-## Development Workflow
-
-### Code Style
-
-We use `ruff` for linting and formatting, and `pyright` for type checking.
+You need [uv](https://docs.astral.sh/uv/) and `make`. Everything else is installed from `uv.lock`.
 
 ```bash
-# Check for linting issues
-ruff check src tests
-
-# Auto-fix linting issues
-ruff check --fix src tests
-
-# Format code
-ruff format src tests
-
-# Type check
-pyright src tests
+git clone git@github.com:alexnodeland/reflexr.git
+cd reflexr
+make install        # every dependency group and extra, and the git hooks
+make check          # lint, types and tests: the same gates as CI
 ```
 
-### Running Tests
+Run `make` on its own to list every command:
 
-```bash
-# Run all tests
-pytest -v
+| Command | What it does |
+|---|---|
+| `make fmt` | Format the code and apply safe lint fixes |
+| `make lint` | Check formatting and lint rules |
+| `make typecheck` | Type-check with pyright (strict for `src/`) |
+| `make test` | Run the tests with the 100% branch-coverage gate |
+| `make check` | Everything CI runs |
+| `make changelog` | Regenerate `CHANGELOG.md` from commit history |
 
-# Run with coverage
-pytest --cov=reflex --cov-report=html
+## How work flows: trunk-based development
 
-# Run specific test file
-pytest tests/test_events.py -v
+`main` is the trunk and is always releasable ([ADR-0012][adr-0012]).
 
-# Run integration tests (requires DATABASE_URL)
-DATABASE_URL=postgresql+asyncpg://user:pass@localhost/test pytest tests/test_store.py -v
-```
+1. Branch from the latest `main`. Keep branches short-lived: hours to a day or two, not weeks.
+2. Keep pull requests small and focused on one change. Split large work into a sequence of PRs that each leave `main` green.
+3. CI must pass before merging: lint, types, and tests at 100% coverage on every supported Python.
+4. Pull requests are squash-merged, so the PR title becomes the commit on `main`. Write it as a [Conventional Commit](https://www.conventionalcommits.org/).
+5. Delete the branch after merging. Don't stack branches on unmerged branches.
 
-### Commit Guidelines
+Unfinished features land behind unexported code paths or not at all; never on a long-lived branch.
 
-We follow conventional commit format:
+### Commit messages
 
-- `feat:` New feature
-- `fix:` Bug fix
-- `docs:` Documentation changes
-- `refactor:` Code refactoring
-- `test:` Adding or updating tests
-- `chore:` Maintenance tasks
-
-Examples:
+Commits and PR titles follow Conventional Commits, checked by a `commit-msg` hook:
 
 ```
-feat: add WebSocket reconnection logic
-fix: resolve race condition in event subscription
-docs: update API documentation
+feat(core): add the sequence pattern
+fix(stream): release a run's lease when the run is cancelled
+docs(adr): record the cron parsing decision
 ```
 
-### Pull Request Process
+Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`. Scopes are package or area names: `core`, `stream`, `agent`, `sql`, `fastapi`, `mcp`, `examples`, `docs`, `adr`, `rfc`. Mark breaking changes with `!` (`feat(core)!: ...`) and a `BREAKING CHANGE:` footer. The changelog is generated from these messages.
 
-1. **Create a feature branch:**
+## Dependencies
 
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
+`pyproject.toml` states the **oldest** versions reflexr supports, as wide as correctness allows, so applications can resolve it alongside their own dependencies. `uv.lock` pins what CI and contributors run, and Dependabot keeps the lockfile (not the ranges) current. Raise a lower bound only when the code needs a newer feature or fix, in the same pull request as that code.
 
-2. **Make your changes** following the code style guidelines.
+## Design: RFCs, ADRs and evergreen docs
 
-3. **Write tests** for new functionality.
+| Document | When | Where |
+|---|---|---|
+| **RFC** | Before a substantial change: new public API, protocol changes, a new package, cross-cutting behaviour | [`docs/rfcs/`][rfcs] |
+| **ADR** | When a decision is made, including decisions made while implementing an RFC | [`docs/adr/`][adrs] |
+| **Architecture docs** | Updated in the same PR as the code they describe | [`docs/architecture.md`][architecture], [`docs/protocol.md`][protocol] |
 
-4. **Ensure all checks pass:**
+An RFC proposes; ADRs record what was decided; the architecture docs describe what exists now. A PR that changes behaviour described in the architecture docs updates them in the same PR, never in a later cleanup. Accepted ADRs are not edited; a changed decision gets a new ADR that supersedes or amends the old one.
 
-   ```bash
-   ruff check src tests
-   ruff format --check src tests
-   pyright src tests
-   pytest -v
-   ```
+## Quality gates
 
-5. **Push and create a PR:**
+These are enforced by CI and described in [ADR-0013][adr-0013]:
 
-   ```bash
-   git push origin feature/your-feature-name
-   ```
+- **100% line and branch coverage** of `src/reflexr`. Code that cannot be reached by a test is usually code that should not exist. The only exclusions are configured in `pyproject.toml` (type-checking blocks, protocol stubs, overloads, `assert_never`).
+- **pyright strict** for `src/`, standard for `tests/`, with no inline suppressions.
+- **ruff** for formatting and linting, with Google-style docstrings on public API.
+- **Warnings are errors** in the test suite.
+- Core behaviour is specified by **conformance fixtures**; a change to core behaviour changes a fixture.
 
-6. **Fill out the PR template** with a clear description.
+## Definition of done
 
-## Project Structure
+- [ ] Tests cover the change, and `make check` passes locally.
+- [ ] Public API has docstrings and type annotations.
+- [ ] Architecture docs and the protocol spec reflect the change.
+- [ ] New decisions have an ADR; substantial proposals had an RFC.
+- [ ] The PR title is a Conventional Commit.
 
-```
-reflex/
-├── src/reflex/
-│   ├── config.py        # Configuration (pydantic-settings)
-│   ├── infra/           # Infrastructure layer
-│   │   ├── database.py  # Database connections
-│   │   ├── store.py     # EventStore implementation
-│   │   ├── locks.py     # Scoped locking
-│   │   └── observability.py  # Logfire setup
-│   ├── core/            # Core domain types
-│   │   ├── events.py    # Event type definitions
-│   │   ├── context.py   # DecisionContext
-│   │   └── deps.py      # Dependency container
-│   ├── agent/           # Agent layer
-│   │   ├── filters.py   # Event filters
-│   │   ├── triggers.py  # Trigger functions
-│   │   ├── agents.py    # PydanticAI agents
-│   │   └── loop.py      # Main processing loop
-│   └── api/             # API layer
-│       ├── app.py       # FastAPI application
-│       ├── deps.py      # API dependencies
-│       └── routes/      # Route handlers
-├── tests/               # Test suite
-├── scripts/             # Utility scripts
-└── docker/              # Docker configuration
-```
+## Reporting bugs and proposing features
 
-## Adding New Event Types
+Use the issue templates. For security issues, follow [SECURITY.md][security] instead of opening a public issue.
 
-1. Define your event type in `src/reflex/core/events.py`:
+## Code of conduct
 
-   ```python
-   class MyEvent(BaseEvent):
-       type: Literal["my.event"] = "my.event"
-       # Add your fields here
-   ```
+This project follows the [Code of Conduct][code-of-conduct]. By participating, you agree to uphold it.
 
-2. Add it to the `Event` union:
+## License
 
-   ```python
-   Event = Annotated[
-       Union[WebSocketEvent, HTTPEvent, TimerEvent, LifecycleEvent, MyEvent],
-       Field(discriminator="type")
-   ]
-   ```
+By contributing, you agree that your contributions are licensed under the [MIT License][license].
 
-3. Write tests in `tests/test_events.py`.
+<!-- Link targets live here so the documentation site can redefine them for its own layout. -->
 
-## Adding New Filters
-
-1. Create your filter function in `src/reflex/agent/filters.py`:
-
-   ```python
-   def my_filter(pattern: str) -> Filter:
-       def _filter(event: Event) -> bool:
-           # Your filter logic
-           return True
-       return _filter
-   ```
-
-2. Write tests in `tests/test_filters.py`.
-
-## Adding New Triggers
-
-1. Create your trigger function in `src/reflex/agent/triggers.py`:
-
-   ```python
-   def my_trigger(threshold: int) -> Trigger:
-       async def _trigger(ctx: DecisionContext, deps: ReflexDeps) -> Any | None:
-           # Your trigger logic
-           if condition_met:
-               return {"triggered": True, "data": ...}
-           return None
-       return _trigger
-   ```
-
-2. Write tests in `tests/test_trigger_funcs.py`.
-
-## Utility Scripts
-
-### migrate.py
-
-Create database tables:
-
-```bash
-python scripts/migrate.py
-```
-
-### replay.py
-
-Replay historical events:
-
-```bash
-python scripts/replay.py --last 1h
-python scripts/replay.py --start 2024-01-01T00:00:00 --type ws.message
-```
-
-### dlq.py
-
-Manage dead-letter queue:
-
-```bash
-python scripts/dlq.py list
-python scripts/dlq.py retry <event_id>
-python scripts/dlq.py retry-all
-```
-
-## Questions?
-
-- Open an issue for bugs or feature requests
-- Check existing issues before creating new ones
-- Join discussions in pull requests
-
-Thank you for contributing!
+[adr-0012]: docs/adr/0012-trunk-based-development-with-rfcs-and-adrs.md
+[adr-0013]: docs/adr/0013-quality-gates.md
+[adrs]: docs/adr/README.md
+[architecture]: docs/architecture.md
+[code-of-conduct]: CODE_OF_CONDUCT.md
+[license]: LICENSE
+[protocol]: docs/protocol.md
+[rfcs]: docs/rfcs/README.md
+[security]: SECURITY.md

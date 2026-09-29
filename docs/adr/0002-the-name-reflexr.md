@@ -30,4 +30,4 @@
 ## Action items
 
 1. [x] Rename the GitHub repository to `reflexr`.
-2. [ ] Rename the package in phase 0.
+2. [x] Rename the package in phase 0.

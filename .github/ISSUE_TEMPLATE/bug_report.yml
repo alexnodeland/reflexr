@@ -1,0 +1,34 @@
+name: Bug report
+description: Something in reflexr behaves differently from its documentation.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: The smallest code that shows the problem.
+      render: python
+    validations:
+      required: true
+  - type: dropdown
+    id: package
+    attributes:
+      label: Package
+      options: [core, workspace, agent, sql, fastapi, mcp, examples, docs]
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: reflexr, Python, and pydantic-ai versions.
+      placeholder: "reflexr 0.1.0, Python 3.13.2, pydantic 2.13"
+    validations:
+      required: true

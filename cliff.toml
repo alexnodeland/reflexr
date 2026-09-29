@@ -1,0 +1,74 @@
+# git-cliff configuration: CHANGELOG.md is generated from Conventional Commits.
+# https://git-cliff.org/docs/configuration
+
+[changelog]
+header = """
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+"""
+body = """
+{% if version -%}
+    ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else -%}
+    ## [Unreleased]
+{% endif -%}
+{% for group, commits in commits | group_by(attribute="group") %}
+    ### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+    - {% if commit.scope %}**{{ commit.scope }}**: {% endif %}\
+      {{ commit.message | upper_first }}\
+      {% if commit.breaking %} (**breaking**){% endif %}
+{%- endfor %}
+{% endfor %}\n
+"""
+footer = """
+{% for release in releases -%}
+    {% if release.version -%}
+        {% if release.previous.version -%}
+            [{{ release.version | trim_start_matches(pat="v") }}]: \
+                https://github.com/alexnodeland/reflexr/compare/{{ release.previous.version }}...{{ release.version }}
+        {% else -%}
+            [{{ release.version | trim_start_matches(pat="v") }}]: \
+                https://github.com/alexnodeland/reflexr/releases/tag/{{ release.version }}
+        {% endif -%}
+    {% else -%}
+        {% if release.previous.version -%}
+            [unreleased]: https://github.com/alexnodeland/reflexr/compare/{{ release.previous.version }}...HEAD
+        {% endif -%}
+    {% endif -%}
+{% endfor %}
+"""
+trim = true
+postprocessors = []
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+commit_preprocessors = [
+    # "(#12)" from a squash merge becomes a link to the pull request.
+    { pattern = '\s*\((\w+\s)?#([0-9]+)\)', replace = " ([#${2}](https://github.com/alexnodeland/reflexr/pull/${2}))" },
+]
+commit_parsers = [
+    { message = "^feat", group = "<!-- 0 -->Features" },
+    { message = "^fix", group = "<!-- 1 -->Bug fixes" },
+    { message = "^docs?", group = "<!-- 2 -->Documentation" },
+    { message = "^perf", group = "<!-- 3 -->Performance" },
+    { message = "^refactor", group = "<!-- 4 -->Refactoring" },
+    { message = "^test", group = "<!-- 5 -->Testing" },
+    { message = "^chore\\(release\\)", skip = true },
+    { message = "^chore\\(deps.*\\)", skip = true },
+    { message = "^(chore|ci|build)", group = "<!-- 6 -->Miscellaneous" },
+    { body = ".*security", group = "<!-- 8 -->Security" },
+    { message = "^revert", group = "<!-- 7 -->Reverted" },
+]
+protect_breaking_commits = true
+filter_commits = false
+tag_pattern = "v[0-9].*"
+topo_order = false
+sort_commits = "newest"

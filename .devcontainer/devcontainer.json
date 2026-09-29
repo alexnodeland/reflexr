@@ -1,0 +1,51 @@
+{
+  "name": "reflexr",
+  "image": "mcr.microsoft.com/devcontainers/base:jammy",
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "features": {
+    "github-cli": "latest",
+    "ghcr.io/va-h/devcontainers-features/uv:1": {},
+    "ghcr.io/devcontainers/features/node:1": {}
+  },
+  // Use 'forwardPorts' to make a list of ports inside the container available locally.
+  "forwardPorts": [],
+  // Configure tool-specific properties.
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit",
+            "source.unusedImports": "explicit"
+          }
+        },
+        "python.defaultInterpreterPath": ".venv/bin/python",
+        "python.analysis.typeCheckingMode": "basic",
+        // Forward SSH agent
+        "remote.containers.forwardAgent": true
+      },
+      "extensions": [
+        "ms-toolsai.jupyter",
+        "ms-toolsai.jupyter-keymap",
+        "ms-toolsai.jupyter-renderers",
+        "charliermarsh.ruff",
+        "wayou.vscode-todo-highlight",
+        "timonwong.shellcheck",
+        "ms-python.python",
+        "esbenp.prettier-vscode",
+        "tamasfe.even-better-toml",
+        "ms-vsliveshare.vsliveshare",
+        "donjayamanne.githistory",
+        "mechatroner.rainbow-csv",
+        "GrapeCity.gc-excelviewer",
+        "Gruntfuggly.todo-tree",
+        "yzhang.markdown-all-in-one",
+        "bierner.markdown-mermaid"
+      ]
+    }
+  },
+  "remoteUser": "vscode"
+}
