@@ -1,6 +1,6 @@
 # ADR-0015: Reference implementation: incident response
 
-**Status:** Accepted
+**Status:** Accepted; its events and rules are amended by [ADR-0031](0031-the-reference-implementations-events-and-rules.md)
 **Date:** 2026-09-28
 **Deciders:** Alex Nodeland
 
@@ -37,4 +37,4 @@ It pairs with artifactr for the system that will combine them: an opened inciden
 
 ## Action items
 
-1. [ ] Build `examples/oncall` (RFC-0001 phase 6).
+1. [x] Build `examples/oncall` (RFC-0001 phase 6).

@@ -90,3 +90,17 @@ def test_layer_imports_only_what_it_may(layer: str) -> None:
                 assert any(name == p or name.startswith(f"{p}.") for p in own), f"{where}: above"
             else:
                 assert root in third_party, f"{where}: not a dependency of this layer"
+
+
+EXAMPLE = Path(__file__).parent.parent / "examples" / "oncall" / "src" / "oncall"
+PUBLIC = {"reflexr", *(f"reflexr.{layer}" for layer in LAYERS)}
+"""What an application imports from: reflexr and its packages, never the modules inside them."""
+
+
+def test_the_reference_implementation_uses_only_the_public_api() -> None:
+    modules = sorted(EXAMPLE.rglob("*.py"))
+    assert modules, "the reference implementation has no modules"
+    for path in modules:
+        for name in _imports(path):
+            if name.split(".")[0] == "reflexr":
+                assert name in PUBLIC, f"{path.name} imports {name}, not a public package"

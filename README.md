@@ -6,6 +6,20 @@ It is the sibling of [artifactr](https://github.com/alexnodeland/artifactr): art
 
 > **Status:** pre-release. reflexr is being rebuilt from the Reflex template in the phases tracked by [RFC-0001](docs/rfcs/0001-v0.1-implementation-plan.md). Work from before the rebuild is on the `archive/pre-rebuild` branch.
 
+## Try it
+
+[`examples/oncall`](examples/oncall/README.md) is a complete application built on the library, for incident response: severe alerts run a triage agent that opens an incident, the incident runs a runbook graph that rolls back a recent deploy or pages a person, and a service that stops sending heartbeats is paged. It serves REST, the WebSocket stream and MCP, with a terminal client that watches the log live.
+
+```sh
+make install
+export ANTHROPIC_API_KEY=...
+uv run oncall-serve       # in one terminal
+uv run oncall watch       # in another
+uv run oncall alert api --severity 8 --message "5xx rate above 5%"   # three times, in a third
+```
+
+Set `ONCALL_DATABASE_URL` (for example `sqlite+aiosqlite:///oncall.db`) to keep its workspaces in a database instead of memory.
+
 ## Documentation
 
 - [Architecture](docs/architecture.md): concepts, layers, rules, deciding and acting, actions, safety, tenancy and storage.

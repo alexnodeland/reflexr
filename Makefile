@@ -16,7 +16,7 @@ help: ## List the available commands
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 install: ## Install every dependency group and extra, plus the git hooks
-	$(UV) sync --all-groups --all-extras
+	$(UV) sync --all-groups --all-extras --all-packages
 	$(UV) run pre-commit install --hook-type pre-commit --hook-type commit-msg
 
 fmt: ## Format the code and apply safe lint fixes

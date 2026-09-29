@@ -16,7 +16,7 @@
 | `reflexr.sql` | Implemented: `SqlStorage` on PostgreSQL and SQLite, with packaged Alembic migrations |
 | `reflexr.fastapi` | Implemented: REST and the WebSocket stream, over one command handler |
 | `reflexr.mcp` | Implemented: publishing, reading and administration as MCP tools, and runs as resources |
-| `examples/oncall` | Planned (phase 6) |
+| `examples/oncall` | Implemented: the reference implementation, incident response with a triage agent, a runbook graph, a paging function, every surface and a terminal client |
 
 ## What reflexr is
 
@@ -510,6 +510,7 @@ Coverage is 100% of lines and branches, and pyright runs in strict mode with no 
 | [0027](adr/0027-executing-runs.md) | Executing runs |
 | [0028](adr/0028-schedules-and-cronsim.md) | Schedules, with cronsim for cron expressions |
 | [0030](adr/0030-sql-storage.md) | SQL storage with one dialect-neutral implementation |
+| [0031](adr/0031-the-reference-implementations-events-and-rules.md) | The reference implementation's events and rules |
 
 ## Open questions
 

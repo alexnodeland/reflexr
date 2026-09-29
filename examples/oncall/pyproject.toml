@@ -1,0 +1,26 @@
+[project]
+name = "oncall"
+version = "0.1.0"
+description = "reflexr's reference implementation: incident response with a triage agent, a runbook graph and a terminal client."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "reflexr[fastapi,mcp,sqlite,postgres,litellm,otel,langfuse]",
+    "pydantic-ai-slim[anthropic,openai]>=2.51",
+    "uvicorn[standard]>=0.54",
+    "websockets>=17.1",
+    "rich>=15.0",
+    "httpx>=0.28",
+]
+
+[project.scripts]
+oncall-serve = "oncall.app:main"
+oncall = "oncall.cli:main"
+
+[tool.uv.sources]
+reflexr = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
