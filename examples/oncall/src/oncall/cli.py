@@ -39,6 +39,14 @@ type Frame = dict[str, Any]
 STATUSES = ("pending", "running", "retrying", "succeeded", "dead", "cancelled", "skipped")
 
 
+def severity(text: str) -> int:
+    """Parse an alert's severity: a whole number from 1 to 10."""
+    value = int(text)
+    if not 1 <= value <= 10:
+        raise argparse.ArgumentTypeError("a severity is from 1 to 10")
+    return value
+
+
 def parser() -> argparse.ArgumentParser:
     """The command line: shared connection options, then one subcommand."""
     main = argparse.ArgumentParser(prog="oncall", description="Talk to an oncall server.")
@@ -49,7 +57,7 @@ def parser() -> argparse.ArgumentParser:
 
     alert = commands.add_parser("alert", help="publish alert.fired, as monitoring would")
     alert.add_argument("service")
-    alert.add_argument("--severity", type=int, choices=range(1, 11), required=True, metavar="1-10")
+    alert.add_argument("--severity", type=severity, required=True, metavar="1-10")
     alert.add_argument("--message", required=True)
     deploy = commands.add_parser("deploy", help="publish deploy.completed, as CI would")
     deploy.add_argument("service")

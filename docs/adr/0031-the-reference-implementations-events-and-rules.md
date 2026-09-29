@@ -18,7 +18,7 @@ The event type registry is also process-wide: a type name belongs to one class. 
   - `runbook`: every `incident.opened` runs a **runbook graph** (pydantic-graph) for its service: diagnose from the log, decide, roll back a recent deploy or page a person, verify, and resolve.
   - `silence`: no heartbeat from a service for two minutes runs a **paging function**, which pages once per run and raises an alert about it. A `heartbeat-check` schedule ticks every 30 seconds so the silence is noticed in a quiet workspace.
 - **The runbook runs on the incident, not on a sequence.** The agent decides whether alerts are an incident; the runbook then works any incident, whoever opened it: the agent, a person over REST, or an MCP client. The question the `deploy-regression` sequence asked, whether a deploy came just before, is the runbook's first step, which reads the log through its `Reaction`.
-- **Storage** is in memory by default, and SQL (`reflexr.sql`) when `ONCALL_DATABASE_URL` is set. Authentication is a demo: the `x-user` header, one tenant.
+- **Storage** is in memory by default, and SQL (`reflexr.sql`) when `ONCALL_DATABASE_URL` is set. OpenTelemetry, Langfuse and a LiteLLM proxy are configured by the environment, as in artifactr's docplan. Authentication is a demo: the `x-user` header, one tenant.
 
 ## Options considered
 
@@ -39,7 +39,7 @@ The event type registry is also process-wide: a type name belongs to one class. 
 
 ## Consequences
 
-- Easier: the example exercises counts within windows, scopes, absence, schedules, an agent with emits, a checkpointed graph with a decision, a function, REST, the WebSocket stream, MCP and SQL storage, end to end with a scripted model.
+- Easier: the example exercises counts within windows, scopes, absence, schedules, an agent with emits, a checkpointed graph with a decision, a function, REST, the WebSocket stream, MCP, SQL storage, telemetry and the LiteLLM gateway, end to end with a scripted model.
 - Harder: `sequence`, `distinct` and `at_most` are covered by the library's tests, not by the example.
 - To revisit: if event types gain namespaces, or registries scoped to a `Workspaces`, the example can use the architecture document's names.
 

@@ -1,5 +1,9 @@
 """The actions the rules run: an agent, a graph and a function, all over one ``Reaction``."""
 
+from collections.abc import Sequence
+from typing import Any
+
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import Model
 
 from oncall.events import AlertFired
@@ -23,10 +27,16 @@ async def page(reaction: Reaction[OncallDeps]) -> dict[str, str]:
     return {"paged": service}
 
 
-def build_actions(model: Model | str | None = None) -> dict[str, Action[OncallDeps]]:
+def build_actions(
+    model: Model | str | None = None,
+    *,
+    capabilities: Sequence[AbstractCapability[Any]] = (),
+) -> dict[str, Action[OncallDeps]]:
     """Every action, by the name rules refer to it by.
 
     Args:
         model: The triage agent's model; see :func:`oncall.triage.build_triage_agent`.
+        capabilities: More capabilities for the triage agent, such as its instrumentation.
     """
-    return {"triage": triage_action(model), "runbook": runbook_action(), "page": page}
+    triage = triage_action(model, capabilities=capabilities)
+    return {"triage": triage, "runbook": runbook_action(), "page": page}

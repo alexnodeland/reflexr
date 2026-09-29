@@ -80,10 +80,16 @@ def test_run_commands_build_command_frames(argv: list[str], command: dict[str, A
     assert frame["command_id"].startswith("cmd_")
 
 
-def test_severity_is_one_to_ten(capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize(
+    ("given", "error"),
+    [("11", "a severity is from 1 to 10"), ("0", "a severity is from 1 to 10"), ("high", "high")],
+)
+def test_severity_is_one_to_ten(given: str, error: str, capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
-        args("alert", "api", "--severity", "11", "--message", "x")
-    assert "invalid choice: 11" in capsys.readouterr().err
+        args("alert", "api", "--severity", given, "--message", "x")
+    [complaint] = [line for line in capsys.readouterr().err.splitlines() if "error:" in line]
+    assert "argument --severity: " in complaint
+    assert error in complaint
 
 
 def test_hello_resumes_after_a_seq() -> None:

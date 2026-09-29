@@ -6,7 +6,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
-    "reflexr[fastapi,mcp,sqlite,postgres]",
+    "reflexr[fastapi,mcp,sqlite,postgres,litellm,otel,langfuse]",
     "pydantic-ai-slim[anthropic,openai]>=2.51",
     "uvicorn[standard]>=0.54",
     "websockets>=17.1",

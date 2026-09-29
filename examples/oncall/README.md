@@ -16,7 +16,7 @@ It is a small, complete application built only on reflexr's public API:
 | Runbook graph | [`runbook.py`](src/oncall/runbook.py) | A pydantic-graph `GraphBuilder` graph with a decision, checkpointed after every step, that reads the log and emits through the `Reaction` |
 | Paging | [`actions.py`](src/oncall/actions.py) | A plain async function, idempotent by its run id |
 | Services | [`services.py`](src/oncall/services.py) | The pager and deployer the workflows act on: in-memory fakes, given to every action as `reaction.deps` |
-| Server | [`app.py`](src/oncall/app.py) | FastAPI with REST and the WebSocket stream at `/v1` and MCP at `/mcp`, running the `Reactor` in its lifespan, over in-memory or SQL storage |
+| Server | [`app.py`](src/oncall/app.py) | FastAPI with REST and the WebSocket stream at `/v1` and MCP at `/mcp`, running the `Reactor` in its lifespan, over in-memory or SQL storage, with OpenTelemetry, Langfuse and a LiteLLM proxy when configured |
 | Terminal client | [`cli.py`](src/oncall/cli.py) | Publishes events, follows the stream live, and operates runs |
 
 ## How it fits together
@@ -127,6 +127,20 @@ ONCALL_DATABASE_URL=postgresql+asyncpg://user:password@localhost/oncall uv run o
 ```
 
 `Oncall(storage=...)` takes any reflexr `Storage` instead.
+
+### Observe it, and route models through a gateway
+
+With `OTEL_EXPORTER_OTLP_ENDPOINT` set, the server reports its traces, metrics and logs there
+over OTLP (`reflexr.otel`): each run attempt is an `invoke_workflow {rule}` span, the triage
+agent's model and tool calls are inside it, and requests and database queries are traced too. With
+`LANGFUSE_PUBLIC_KEY` (and its secret key and host) set as well, each run is filed in Langfuse
+under its rule, in its causal chain's session (`reflexr.langfuse`). `ONCALL_ENVIRONMENT` names
+the deployment (`development` by default).
+
+With `ONCALL_LITELLM_URL` set, the triage agent calls that LiteLLM proxy instead of a provider
+(`reflexr.litellm`): the model group `ONCALL_LITELLM_MODEL` (`claude-sonnet` by default), with the
+key `ONCALL_LITELLM_KEY`, and every request carries the tenant, the causal chain and the trace.
+[stackr](https://github.com/alexnodeland/stackr) runs a Collector, Langfuse and the proxy.
 
 ### Client commands
 

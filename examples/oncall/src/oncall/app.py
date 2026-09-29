@@ -6,6 +6,9 @@ Run it with ``oncall-serve`` (or ``uv run --package oncall oncall-serve``), then
 Workspaces are kept in memory, or in the database at ``ONCALL_DATABASE_URL`` (for example
 ``sqlite+aiosqlite:///oncall.db``), which is migrated to reflexr's schema at startup.
 
+With ``OTEL_EXPORTER_OTLP_ENDPOINT`` set, oncall reports its traces, metrics and logs there;
+with ``LANGFUSE_PUBLIC_KEY`` too, it files each run in Langfuse. stackr's stack provides both.
+
 Authentication here is a demo: the user is whatever the ``x-user`` header (or ``user`` query
 parameter) says, and every user shares one tenant. Real applications resolve actors from their
 own sessions or tokens.
@@ -16,7 +19,8 @@ import contextlib
 import os
 from collections.abc import AsyncGenerator
 from datetime import timedelta
-from typing import Never
+from importlib.metadata import version
+from typing import Any, Never
 
 import uvicorn
 from fastapi import FastAPI
@@ -32,7 +36,9 @@ from oncall.services import OncallDeps
 from reflexr import Actor, ExternalAgentActor, UserActor
 from reflexr.core import TenantId
 from reflexr.fastapi import reflexr_router
+from reflexr.langfuse import langfuse_run
 from reflexr.mcp import ReflexrMcp
+from reflexr.otel import TelemetryHandle, configure_telemetry
 from reflexr.sql import SqlStorage, create_sqlite_engine, migrate
 from reflexr.workspace import Clock, InMemoryStorage, Reactor, Storage, Workspaces, utc_now
 
@@ -62,6 +68,8 @@ class Oncall:
             storage or a URL, workspaces live in memory and are gone when the process stops.
         clock: The time, for the log and for runs; tests pass a fake one.
         deps: The pager and deployer the workflows act on. Defaults to in-memory fakes.
+        telemetry: OpenTelemetry, set up by :func:`telemetry_from_environment`; also Langfuse
+            when it has a client.
     """
 
     def __init__(
@@ -72,19 +80,40 @@ class Oncall:
         database_url: str | None = None,
         clock: Clock = utc_now,
         deps: OncallDeps | None = None,
+        telemetry: TelemetryHandle | None = None,
     ) -> None:
         self.engine = open_database(database_url) if storage is None and database_url else None
         if self.engine is not None:
             storage = SqlStorage(self.engine, clock=clock)
+        if telemetry is not None and self.engine is not None:
+            telemetry.instrument_engine(self.engine)
+        self.telemetry = telemetry
         self.deps = deps or OncallDeps()
+        providers: dict[str, Any] = (
+            {
+                "tracer_provider": telemetry.tracer_provider,
+                "meter_provider": telemetry.meter_provider,
+            }
+            if telemetry
+            else {}
+        )
         self.workspaces = Workspaces(
             storage or InMemoryStorage(clock=clock),
             events=EVENTS,
             rules=RULES,
             schedules=SCHEDULES,
             clock=clock,
+            **providers,
         )
-        self.reactor = Reactor(self.workspaces, actions=build_actions(model), deps=self.deps)
+        self.reactor = Reactor(
+            self.workspaces,
+            actions=build_actions(
+                model, capabilities=[telemetry.capability()] if telemetry else []
+            ),
+            deps=self.deps,
+            # Langfuse files each run under its rule, in its causal chain's session.
+            run_context=langfuse_run if telemetry and telemetry.langfuse else None,
+        )
 
     def app(
         self, *, serve: bool = True, poll_interval: timedelta = timedelta(seconds=1)
@@ -116,6 +145,8 @@ class Oncall:
             reflexr_router(self.workspaces, resolve_actor=resolve_actor), prefix="/v1"
         )
         app.mount("/mcp", mcp.http_app(streamable_http_path="/"))
+        if self.telemetry is not None:
+            self.telemetry.instrument_app(app)
 
         @app.get("/")
         async def about() -> dict[str, str]:
@@ -149,6 +180,7 @@ def create_app(
     model: Model | str | None = None,
     storage: Storage | None = None,
     database_url: str | None = None,
+    telemetry: TelemetryHandle | None = None,
     poll_interval: timedelta = timedelta(seconds=1),
 ) -> FastAPI:
     """Build the oncall application, which runs its reactor while it is up.
@@ -158,15 +190,37 @@ def create_app(
         storage: Where workspaces live, if not in a database of oncall's own.
         database_url: A SQLAlchemy URL with an async driver. Defaults to
             ``ONCALL_DATABASE_URL``. Without a storage or a URL, workspaces live in memory.
+        telemetry: OpenTelemetry, set up by :func:`telemetry_from_environment`.
         poll_interval: How often the reactor looks for work.
     """
     database_url = database_url or os.environ.get("ONCALL_DATABASE_URL")
-    oncall = Oncall(model=model, storage=storage, database_url=database_url)
+    oncall = Oncall(model=model, storage=storage, database_url=database_url, telemetry=telemetry)
     return oncall.app(poll_interval=poll_interval)
+
+
+def telemetry_from_environment() -> TelemetryHandle | None:
+    """Set up OpenTelemetry, and Langfuse, as the environment asks.
+
+    OpenTelemetry when ``OTEL_EXPORTER_OTLP_ENDPOINT`` is set, and Langfuse with it when
+    ``LANGFUSE_PUBLIC_KEY`` is set; otherwise, nothing.
+    """
+    if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+        return None
+    return configure_telemetry(
+        service_name="oncall",
+        service_version=version("oncall"),
+        environment=os.environ.get("ONCALL_ENVIRONMENT", "development"),
+        langfuse=bool(os.environ.get("LANGFUSE_PUBLIC_KEY")),
+    )
 
 
 def main() -> None:
     """Serve oncall on ``ONCALL_HOST``:``ONCALL_PORT`` (default 127.0.0.1:8000)."""
     host = os.environ.get("ONCALL_HOST", "127.0.0.1")
     port = int(os.environ.get("ONCALL_PORT", "8000"))
-    uvicorn.run(create_app(), host=host, port=port)
+    telemetry = telemetry_from_environment()
+    try:
+        uvicorn.run(create_app(telemetry=telemetry), host=host, port=port)
+    finally:
+        if telemetry is not None:
+            telemetry.shutdown()
