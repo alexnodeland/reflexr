@@ -262,6 +262,13 @@ class RunCancelled(Event, name="run_cancelled"):
     reason: str | None = None
 
 
+class RunRequeued(Event, name="run_requeued"):
+    """Someone made a run runnable again. The envelope's actor records who."""
+
+    run_id: RunId
+    rule: RuleName
+
+
 class RunSkipped(Event, name="run_skipped"):
     """A run was skipped without completing, unblocking its scope."""
 
@@ -296,6 +303,7 @@ SystemEvent = (
     | RunSucceeded
     | RunDeadLettered
     | RunCancelled
+    | RunRequeued
     | RunSkipped
 )
 """reflexr's facts about rules and runs. Each names the rule it is about."""
@@ -310,6 +318,7 @@ SYSTEM_EVENTS: tuple[type[Event], ...] = (
     RunSucceeded,
     RunDeadLettered,
     RunCancelled,
+    RunRequeued,
     RunSkipped,
     FeedbackGiven,
     Tick,
@@ -384,6 +393,7 @@ def about_rule(event: Event) -> RuleName | None:
             | RunSucceeded()
             | RunDeadLettered()
             | RunCancelled()
+            | RunRequeued()
             | RunSkipped()
         ):
             return event.rule

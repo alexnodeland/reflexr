@@ -207,7 +207,12 @@ class _Run:
             return
         key, values = scoped
         state = self.states.get(key) or _initial(self.condition, values)
-        match = Match(seq=envelope.seq, ts=envelope.ts, depth=envelope.depth)
+        match = Match(
+            seq=envelope.seq,
+            ts=envelope.ts,
+            correlation_id=envelope.correlation_id,
+            depth=envelope.depth,
+        )
         if self.condition.dedupe is not None:
             state, duplicate = _dedupe(self.condition, state, envelope)
             if duplicate:
@@ -267,6 +272,7 @@ class _Run:
             at=envelope.ts,
             matched=tuple(m.seq for m in matched),
             depth=max(m.depth for m in matched),
+            correlation_id=max(matched, key=lambda m: m.seq).correlation_id,
         )
         self.firings.append(firing)
         self.events.append(

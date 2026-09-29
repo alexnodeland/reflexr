@@ -1,0 +1,227 @@
+{
+  "description": "Chains: which causal chain a firing, and so its run, joins.",
+  "cases": [
+    {
+      "name": "a firing joins the chain of the envelope it matched",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "chain": "incident_a",
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ],
+            "chain": "incident_a"
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "a count joins the chain of its latest envelope",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          },
+          "pattern": {
+            "kind": "count",
+            "at_least": 3,
+            "within": "PT60S"
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "chain": "a",
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "chain": "b",
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "chain": "c",
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 3,
+            "matched": [
+              1,
+              2,
+              3
+            ],
+            "chain": "c"
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "a sequence joins the chain of its last step",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "deploy.finished",
+              "service.error"
+            ]
+          },
+          "pattern": {
+            "kind": "sequence",
+            "steps": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              }
+            ],
+            "within": "PT600S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "chain": "deploy_7",
+          "event": {
+            "type": "deploy.finished",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 30,
+          "chain": "alert_9",
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 2,
+            "matched": [
+              1,
+              2
+            ],
+            "chain": "alert_9"
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "absence joins the chain of the last envelope it saw, not the one that passed its deadline",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "heartbeat"
+            ]
+          },
+          "pattern": {
+            "kind": "absence",
+            "within": "PT300S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "chain": "beat_1",
+          "event": {
+            "type": "heartbeat",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 300,
+          "chain": "clock",
+          "event": {
+            "type": "tick",
+            "schedule": "clock",
+            "at": "2026-01-01T00:00:00Z"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 2,
+            "matched": [
+              1
+            ],
+            "chain": "beat_1"
+          }
+        ],
+        "errors": []
+      }
+    }
+  ]
+}

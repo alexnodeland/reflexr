@@ -61,7 +61,7 @@ def envelope(item: dict[str, Any]) -> Envelope:
         workspace_id="w1",
         actor=SourceActor(name="test"),
         causation=Causation(firing_id="fir_x", run_id="fir_x", depth=depth) if depth else None,
-        correlation_id=f"evt_{item['seq']}",
+        correlation_id=item.get("chain", f"evt_{item['seq']}"),
         event=load_event(item["event"]),
     )
 
@@ -83,6 +83,8 @@ def test_conformance(case: dict[str, Any]) -> None:
             assert firing.scope == expected["scope"]
         if "depth" in expected:
             assert firing.depth == expected["depth"]
+        if "chain" in expected:
+            assert firing.correlation_id == expected["chain"]
     assert [(e.seq, e.error) for e in whole.errors] == [
         (e["seq"], _containing(whole.errors, e)) for e in expect["errors"]
     ]

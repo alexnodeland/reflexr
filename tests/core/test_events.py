@@ -1,6 +1,7 @@
 """Event types, their registry, envelopes and actors."""
 
 from datetime import UTC, datetime
+from typing import get_args
 
 import pytest
 from pydantic import ValidationError
@@ -16,6 +17,7 @@ from reflexr.core import (
     RuleFired,
     SourceActor,
     SystemActor,
+    SystemEvent,
     Tick,
     UnknownEvent,
     UserActor,
@@ -124,6 +126,12 @@ def test_about_rule_names_the_rule_of_reflexr_facts_only() -> None:
     assert about_rule(fired) == "r"
     assert about_rule(Tick(schedule="clock", at=NOW)) is None
     assert about_rule(ServiceError(service="auth")) is None
+
+
+@pytest.mark.parametrize("event_type", get_args(SystemEvent))
+def test_every_fact_about_a_rule_names_it(event_type: type[Event]) -> None:
+    # Without this, a new fact about runs could trigger the rule whose run it describes.
+    assert about_rule(event_type.model_construct(rule="r")) == "r"
 
 
 @pytest.mark.parametrize(

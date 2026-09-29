@@ -49,6 +49,7 @@ def fired(seq: int = 1) -> Run:
         at=NOW,
         matched=(seq,),
         depth=1,
+        correlation_id="evt_1",
     )
     return create_run(firing, now=NOW)
 
@@ -108,14 +109,15 @@ def test_cancel_skip_and_retry() -> None:
     dead, _ = fail(
         start(fail(running, rule(), now=NOW, error="x")[0], now=NOW)[0], rule(), now=NOW, error="x"
     )
-    revived = retry(dead, now=NOW + SECOND)
+    revived, requeued = retry(dead, now=NOW + SECOND)
     assert (revived.status, revived.attempts, revived.next_attempt_at) == (
         "pending",
         0,
         NOW + SECOND,
     )
+    assert (requeued.run_id, requeued.rule) == (dead.id, dead.rule)
     waiting, _ = fail(start(fired(), now=NOW)[0], rule(), now=NOW, error="x")
-    assert retry(waiting, now=NOW).attempts == 1
+    assert retry(waiting, now=NOW)[0].attempts == 1
 
 
 def test_runs_of_a_scope_start_in_order() -> None:
