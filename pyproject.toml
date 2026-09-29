@@ -31,6 +31,7 @@ dependencies = [
 [project.optional-dependencies]
 fastapi = ["fastapi>=0.141"]
 mcp = ["mcp>=2.2"]
+evals = ["evalr>=0.1.0.dev0"]
 
 [project.urls]
 Homepage = "https://github.com/alexnodeland/reflexr"
@@ -48,6 +49,7 @@ test = [
     "httpx>=0.28",
     "fastapi>=0.141",
     "mcp>=2.2",
+    "evalr>=0.1.0.dev0",
 ]
 lint = ["ruff>=0.16", "pyright>=1.1.414"]
 dev = [
@@ -56,6 +58,10 @@ dev = [
     "pre-commit>=4.6",
     "git-cliff>=2.14",
 ]
+
+# evalr is not published yet: the [evals] extra resolves it from GitHub, pinned (ADR-0020).
+[tool.uv.sources]
+evalr = { git = "https://github.com/alexnodeland/evalr", rev = "15ac4a53b73b9ea13b986ab06cd3cdff54ab5ead" }
 
 [build-system]
 requires = ["uv_build>=0.12,<0.13"]
@@ -88,7 +94,7 @@ convention = "google"
 [tool.ruff.lint.isort]
 # reflexr.fastapi and reflexr.mcp share their names with the libraries they adapt; without
 # this, isort's same-package detection files the libraries as first-party.
-known-third-party = ["fastapi", "mcp"]
+known-third-party = ["fastapi", "mcp", "evalr"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D", "ARG"]
