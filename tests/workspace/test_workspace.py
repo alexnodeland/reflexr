@@ -338,3 +338,17 @@ async def test_by_default_time_is_utc_and_nothing_is_traced() -> None:
     envelope = (await workspace.publish(Deploy(service="auth"))).envelope
     assert envelope.ts.utcoffset() == timedelta(0)
     assert envelope.traceparent is None
+
+
+async def test_events_only_runs_may_publish_are_refused_to_clients(storage: Storage) -> None:
+    incident = Rule(name="incidents", when=on(Escalated), then=run("note"))
+    workspaces = Workspaces(storage, events=[Deploy], emitted=[Escalated], rules=[incident])
+    client = await workspaces.open("acme", "prod", actor=UserActor(id="ada"))
+    with pytest.raises(Forbidden, match="escalated events are published by runs, not clients"):
+        await client.publish(Escalated(service="auth"))
+    root = (await client.publish(Deploy(service="auth"))).envelope
+    triage = client.as_actor(AgentActor(rule="triage", run_id="fir_1", name="triage"))
+    run_handle = triage.caused_by(
+        Causation(firing_id="fir_1", run_id="fir_1", depth=1), correlation_id=root.id
+    )
+    assert not (await run_handle.publish(Escalated(service="auth"))).duplicate

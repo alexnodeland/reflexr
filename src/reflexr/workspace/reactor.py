@@ -9,6 +9,7 @@ Acting is at least once: see :mod:`reflexr.workspace.executor`.
 """
 
 import asyncio
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -46,6 +47,8 @@ from reflexr.workspace.executor import Executor
 from reflexr.workspace.schedules import SCHEDULER, Schedule, tick_id
 from reflexr.workspace.storage import Entry, Transaction, WorkspaceRef
 from reflexr.workspace.workspace import Workspaces, meet_rules
+
+logger = logging.getLogger("reflexr.reactor")
 
 EVALUATION_LEASE = "evaluate"
 """The lease key a reactor holds on a workspace while it evaluates it."""
@@ -188,11 +191,18 @@ class Reactor[D]:
         raise RuntimeError(f"still busy after {max_rounds} rounds")
 
     async def serve(self, *, poll_interval: timedelta = timedelta(seconds=1)) -> Never:
-        """Evaluate and execute until cancelled, checking for work every ``poll_interval``."""
+        """Tick, evaluate and execute until cancelled, checking for work every ``poll_interval``.
+
+        A pass that fails, as when the database is briefly unreachable, is logged and the next
+        one tries again: leases and transactions leave nothing half done.
+        """
         while True:
-            await self.tick()
-            await self.evaluate()
-            await self.execute()
+            try:
+                await self.tick()
+                await self.evaluate()
+                await self.execute()
+            except Exception:
+                logger.exception("a reactor pass failed; the next one will try again")
             await asyncio.sleep(poll_interval.total_seconds())
 
     async def tick(self) -> int:

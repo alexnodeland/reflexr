@@ -84,6 +84,9 @@ class Run(BaseModel):
     step: str | None = None
     """The last step a graph run completed."""
 
+    checkpoints: int = 0
+    """How many checkpoints the run has saved, across its attempts."""
+
     output: JsonValue = None
     trace_ids: tuple[TraceId, ...] = ()
     """The trace id of each attempt, so feedback on the run can be attached to its traces."""
@@ -121,7 +124,7 @@ def start(run: Run, *, now: AwareDatetime, trace_id: str | None = None) -> tuple
     traces = (*run.trace_ids, trace_id) if trace_id else run.trace_ids
     started = _update(run, now, status="running", attempts=attempt, trace_ids=traces)
     return started, RunStarted(
-        run_id=run.id, rule=run.rule, scope_key=run.scope_key, attempt=attempt
+        run_id=run.id, rule=run.rule, scope=run.scope, scope_key=run.scope_key, attempt=attempt
     )
 
 
@@ -177,7 +180,7 @@ def checkpoint(
 ) -> tuple[Run, RunProgressed]:
     """Save a running graph run's state after it completed ``step``."""
     _require(run, "checkpoint", "running")
-    saved = _update(run, now, checkpoint=state, step=step)
+    saved = _update(run, now, checkpoint=state, step=step, checkpoints=run.checkpoints + 1)
     return saved, RunProgressed(run_id=run.id, rule=run.rule, step=step)
 
 

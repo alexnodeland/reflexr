@@ -69,11 +69,13 @@ def firing_id(rule: RuleName, generation: int, scope: ScopeKey, seq: int) -> Fir
     return f"fir_{digest[:16]}"
 
 
-def derived_event_id(run: RunId, index: int) -> EventId:
-    """Return the id of the ``index``-th event a run emits in an attempt.
+def derived_event_id(run: RunId, index: int, *, segment: int = 0) -> EventId:
+    """Return the id of the ``index``-th event a run emits after its ``segment``-th checkpoint.
 
-    Every attempt of a run derives the same ids in the same order, so a retried run that
-    emits again publishes duplicates, which the log ignores.
+    Every attempt of a run derives the same ids in the same order from where it starts, so a
+    retried run that emits again publishes duplicates, which the log ignores. A run resumed
+    from its ``n``-th checkpoint emits in segment ``n``, so its events never collide with the
+    ones emitted before that checkpoint.
     """
-    digest = hashlib.sha256(f"{run}\x00{index}".encode()).hexdigest()
+    digest = hashlib.sha256(f"{run}\x00{segment}\x00{index}".encode()).hexdigest()
     return f"evt_{digest[:16]}"

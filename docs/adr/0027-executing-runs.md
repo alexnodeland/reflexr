@@ -23,6 +23,12 @@
 - **Outputs are JSON:** a Pydantic model is dumped, and anything else that is not JSON fails the attempt. A rule's `timeout` fails an attempt that runs too long.
 - **Runs of rules no longer registered are cancelled,** with a reason, so they stop being due.
 
+### Amendment (2026-09-29): what the reference implementation taught
+
+- **Emitted ids restart per checkpoint.** An emitted event's id derives from the run, the number of checkpoints it has saved (`Run.checkpoints`), and how many events it emitted since the last one. Numbering from zero on every attempt made a graph that emitted in one step, checkpointed, and emitted again after resuming reuse the first id, so the later event was taken for a duplicate and lost. A retry that resumes from the same checkpoint still derives the same ids, so it still does not emit twice.
+- **Events only runs may publish.** `Workspaces(emitted=[...])` names event types that runs may publish and clients (REST, the WebSocket, MCP, in-process handles not caused by a run) may not, such as the incident an agent opens.
+- **`Reactor.serve` survives a failing pass.** A tick, evaluation or execution that raises, such as when the database is briefly unreachable, is logged and the next pass tries again; leases and transactions leave nothing half done.
+
 ## Options considered
 
 ### Stale completions: compare status and attempt (chosen)

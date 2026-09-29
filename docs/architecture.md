@@ -299,7 +299,7 @@ triage_agent = Agent(
     "anthropic:claude-sonnet-5-5",
     deps_type=Reaction[AppDeps],
     output_type=Triage,
-    capabilities=[EventContext(emit=[IncidentOpened], lookback=timedelta(hours=1))],
+    capabilities=[EventContext(emit=[IncidentOpened])],
 )
 triage = AgentAction(triage_agent, name="triage")
 
@@ -311,7 +311,7 @@ runbook = GraphAction(runbook_graph, name="runbook", state=RunbookState, inputs=
 - **Graphs** are pydantic-graph graphs built with `GraphBuilder`, with the `Reaction` as their deps, wrapped in a `GraphAction(graph, state=, inputs=)`. reflexr drives them step by step and, at every boundary where nothing runs in parallel, saves the graph state and the next task to the run (`Reaction.checkpoint`, which appends `run_progressed`). A retry, or another executor after a crash, resumes after the last saved step instead of starting over; inside a fork it resumes from before the fork ([ADR-0009](adr/0009-graph-checkpoints.md)). Each step is an `execute_step {node}` span.
 - **Functions** are `async def` over a `Reaction`.
 
-A `Reaction` carries the workspace (acting as the run's `AgentActor`, so what it publishes records the run as its cause and joins the run's chain), the run (its scope, matched `seq`s, attempt and chain), the rule, the matched envelopes, and the application's `deps`. `reaction.emit(event)` publishes with an id derived from the run, so a retried attempt does not emit twice. An action returns the run's output (JSON, or a Pydantic model), or raises to fail the attempt; a rule's `timeout` bounds it. Raising `RunFailure(message, reason=, permanent=)` fails it with a stable reason code, recorded on the run, its facts and the `reflexr.runs` metric, and a permanent failure, such as a guardrail block, is dead-lettered without retrying ([ADR-0036](adr/0036-typed-run-failures.md)).
+A `Reaction` carries the workspace (acting as the run's `AgentActor`, so what it publishes records the run as its cause and joins the run's chain), the run (its scope, matched `seq`s, attempt and chain), the rule, the matched envelopes, and the application's `deps`. `reaction.emit(event)` publishes with an id derived from the run, its last checkpoint and its position since, so a retried attempt does not emit twice and a resumed graph never reuses an earlier id. An action returns the run's output (JSON, or a Pydantic model), or raises to fail the attempt; a rule's `timeout` bounds it. Raising `RunFailure(message, reason=, permanent=)` fails it with a stable reason code, recorded on the run, its facts and the `reflexr.runs` metric, and a permanent failure, such as a guardrail block, is dead-lettered without retrying ([ADR-0036](adr/0036-typed-run-failures.md)).
 
 Rules refer to actions by name (`{"action": "triage"}`), because functions and agents are not data. `run(triage)` takes the action's name. `Workspaces` checks rules' event types, fields and predicates when it is built, and the reactor checks their actions:
 
@@ -384,7 +384,7 @@ Authentication is the host's: each surface takes a resolver that returns the ten
 
 ## Workspace handles
 
-`Workspaces(storage, events=[...], rules=[...], predicates={...}, schedules=[...], clock=..., max_depth=8, tracer_provider=..., meter_provider=...)` holds the rules, checked at construction, and opens handles; each `Workspace` is bound to one tenant, workspace and actor. `Reactor(workspaces)` evaluates the rules.
+`Workspaces(storage, events=[...], emitted=[...], rules=[...], predicates={...}, schedules=[...], clock=..., max_depth=8, tracer_provider=..., meter_provider=...)` holds the rules, checked at construction, and opens handles; each `Workspace` is bound to one tenant, workspace and actor. `Reactor(workspaces)` evaluates the rules.
 
 ```python
 workspace = await workspaces.open("acme", "prod", actor=UserActor(id="ada"))
@@ -393,7 +393,7 @@ await workspace.give_feedback(Triage(correct=True, severity="high"), on=RunTarge
 await workspace.skip_run(run_id, reason="duplicate incident")
 ```
 
-- **Publishing** checks the event's type against the allowlist (`not_found` otherwise) and refuses reflexr's own events (`forbidden`). Publishing an id already in the log appends nothing and returns the logged envelope with `duplicate=True`. `publish_many` is atomic. An event starts a new causal chain unless it names one with `correlation_id=`, or the handle belongs to a run.
+- **Publishing** checks the event's type against the allowlist (`not_found` otherwise) and refuses reflexr's own events (`forbidden`). Types in `Workspaces(emitted=[...])` may be published only by runs; clients are refused them (`forbidden`). Publishing an id already in the log appends nothing and returns the logged envelope with `duplicate=True`. `publish_many` is atomic. An event starts a new causal chain unless it names one with `correlation_id=`, or the handle belongs to a run.
 - **Run handles.** `workspace.as_actor(AgentActor(...)).caused_by(causation, correlation_id=...)` gives a run a handle whose events record their causation and continue the run's chain; beyond `max_depth` they are rejected with `depth_exceeded`.
 - **Feedback** is validated against its type's targets and must find its target; it joins the target's chain.
 - **Operations** (`retry_run`, `skip_run`, `cancel_run`, `replay_rule`) apply core's transitions in one transaction and append the resulting event, attributed to the handle's actor.

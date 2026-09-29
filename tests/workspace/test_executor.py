@@ -549,3 +549,70 @@ async def test_typed_failures_record_their_reason_and_permanent_ones_skip_retrie
         (p[0].get(a.RUN_STATUS), p[0].get(a.RUN_REASON)) for p in telemetry.points("reflexr.runs")
     }
     assert {("retrying", "rate_limit"), ("dead", "guardrail_blocked")} <= reasons
+
+
+async def test_events_emitted_after_a_resumed_checkpoint_are_not_mistaken_for_earlier_ones(
+    build: Build, clock: FakeClock
+) -> None:
+    attempts: list[int] = []
+
+    async def stepwise(reaction: Reaction[None]) -> None:
+        attempts.append(reaction.attempt)
+        if reaction.run.checkpoint is None:
+            await reaction.emit(ServiceError(service="auth", message="step one"))
+            await reaction.checkpoint("one", {"done": 1})
+            raise RuntimeError("crashed in step two")
+        published = await reaction.emit(ServiceError(service="auth", message="step two"))
+        assert not published.duplicate
+
+    workspaces = build([rule(then=run("stepwise"))])
+    workspace = await open_(workspaces)
+    await workspace.publish(Deploy(service="auth"))
+    executor = Reactor(workspaces, actions={"stepwise": stepwise})
+    await executor.settle()
+    clock.advance(1)
+    await executor.settle()
+    messages = [
+        e.event.message for e in await workspace.read() if isinstance(e.event, ServiceError)
+    ]
+    assert (attempts, messages) == ([1, 2], ["step one", "step two"])
+    [done] = await workspace.runs()
+    assert (done.status, done.checkpoints) == ("succeeded", 1)
+
+
+async def test_run_started_names_the_scope(build: Build) -> None:
+    workspaces = build([rule()])
+    workspace = await open_(workspaces)
+    await workspace.publish(Deploy(service="auth"))
+    await reactor(workspaces, Deps()).settle()
+    [started] = [e.event for e in await workspace.read() if isinstance(e.event, RunStarted)]
+    assert (started.scope, started.scope_key) == ({"service": "auth"}, '["auth"]')
+
+
+async def test_serving_survives_a_failing_pass(
+    build: Build, caplog: pytest.LogCaptureFixture
+) -> None:
+    workspaces = build([rule()])
+    workspace = await open_(workspaces)
+    executor = reactor(workspaces, Deps())
+    real = executor.evaluate
+    failures = [RuntimeError("the database blinked")]
+
+    async def flaky(workspace: WorkspaceRef | None = None) -> int:
+        if failures:
+            raise failures.pop()
+        return await real(workspace)
+
+    executor.evaluate = flaky
+    serving = asyncio.create_task(executor.serve(poll_interval=timedelta(milliseconds=5)))
+    await workspace.publish(Deploy(service="auth"))
+    for _ in range(200):
+        runs = await workspace.runs()
+        if runs and runs[0].status == "succeeded":
+            break
+        await asyncio.sleep(0.005)
+    serving.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await serving
+    assert (await workspace.runs())[0].status == "succeeded"
+    assert "a reactor pass failed" in caplog.text
