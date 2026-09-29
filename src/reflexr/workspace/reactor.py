@@ -41,7 +41,7 @@ from reflexr.telemetry.metrics import (
     SCHEDULE_TICKS,
 )
 from reflexr.telemetry.telemetry import Attributes
-from reflexr.workspace.actions import Action
+from reflexr.workspace.actions import Action, RunContext
 from reflexr.workspace.executor import Executor
 from reflexr.workspace.schedules import SCHEDULER, Schedule, tick_id
 from reflexr.workspace.storage import Entry, Transaction, WorkspaceRef
@@ -87,6 +87,8 @@ class Reactor[D]:
         lease_ttl: How long a lease lasts unless renewed. A reactor that dies holding one
             releases it when it lapses, and its runs are attempted again.
         concurrency: How many runs this reactor executes at once.
+        run_context: Entered around each run attempt, inside its span, such as
+            ``reflexr.langfuse.langfuse_run`` to attribute runs in Langfuse.
 
     Raises:
         InvalidRule: If a rule's action is not among ``actions``.
@@ -102,6 +104,7 @@ class Reactor[D]:
         batch_size: int = 500,
         lease_ttl: timedelta = ...,
         concurrency: int = 10,
+        run_context: RunContext | None = None,
     ) -> None: ...
 
     @overload
@@ -115,6 +118,7 @@ class Reactor[D]:
         batch_size: int = 500,
         lease_ttl: timedelta = ...,
         concurrency: int = 10,
+        run_context: RunContext | None = None,
     ) -> None: ...
 
     def __init__(
@@ -127,6 +131,7 @@ class Reactor[D]:
         batch_size: int = 500,
         lease_ttl: timedelta = timedelta(seconds=30),
         concurrency: int = 10,
+        run_context: RunContext | None = None,
     ) -> None:
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1")
@@ -147,6 +152,7 @@ class Reactor[D]:
             holder=self._holder,
             lease_ttl=lease_ttl,
             concurrency=concurrency,
+            run_context=run_context,
         )
 
     @property
