@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-09-28
 **Deciders:** Alex Nodeland
+**Amended by:** [ADR-0029](0029-metric-detail-through-sdk-views.md): metric detail is applied by SDK views, as in artifactr.
 
 ## Context
 

@@ -7,12 +7,13 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from reflexr import SystemActor, UserActor
 from reflexr.telemetry import (
     METRICS,
-    SCOPE_ATTRIBUTES,
+    SCOPED,
     Metric,
     MetricsDetail,
     Telemetry,
     actor_attributes,
     chain_attributes,
+    kept_attributes,
     workspace_attributes,
 )
 from reflexr.telemetry import attributes as a
@@ -43,45 +44,60 @@ def test_the_registry_never_declares_identifying_attributes() -> None:
     for metric in METRICS.values():
         assert metric.name.startswith("reflexr."), metric.name
         assert not metric.attributes & IDENTIFYING, metric.name
-        assert not metric.attributes & SCOPE_ATTRIBUTES, "tenant and workspace are added by detail"
+        assert metric.attributes >= SCOPED, "every metric carries tenant and workspace"
         assert METRICS[metric.name] is metric
 
 
 @pytest.mark.parametrize(
     ("detail", "expected"),
     [
-        ("workspace", {a.TENANT_ID: "acme", a.WORKSPACE_ID: "prod"}),
-        ("tenant", {a.TENANT_ID: "acme"}),
-        ("none", {}),
+        ("workspace", {a.TENANT_ID, a.WORKSPACE_ID, a.EVENT_TYPE}),
+        ("tenant", {a.TENANT_ID, a.EVENT_TYPE}),
+        ("none", {a.EVENT_TYPE}),
     ],
 )
-def test_metrics_detail_limits_tenant_and_workspace(
-    detail: MetricsDetail, expected: dict[str, str]
+def test_detail_decides_the_attributes_a_deployment_keeps(
+    detail: MetricsDetail, expected: set[str]
 ) -> None:
+    assert kept_attributes(EVENTS_PUBLISHED, detail) >= expected
+    assert not kept_attributes(EVENTS_PUBLISHED, detail) & (SCOPED - expected)
+
+
+def test_prometheus_names_follow_the_otlp_translation() -> None:
+    assert EVENTS_PUBLISHED.prometheus_name == "reflexr_events_published_total"
+    assert EVALUATION_DURATION.prometheus_series == {
+        "reflexr_evaluation_duration_seconds_bucket",
+        "reflexr_evaluation_duration_seconds_sum",
+        "reflexr_evaluation_duration_seconds_count",
+    }
+    assert EVALUATION_LAG.prometheus_series == {"reflexr_evaluation_lag"}
+
+
+def test_tenant_and_workspace_are_always_recorded() -> None:
     reader = InMemoryMetricReader()
     provider = MeterProvider(metric_readers=[reader])
-    telemetry = Telemetry(meter_provider=provider, metrics_detail=detail)
+    telemetry = Telemetry(meter_provider=provider)
     telemetry.record(
-        EVENTS_PUBLISHED,
-        1,
-        tenant_id="acme",
-        workspace_id="prod",
-        attributes={a.EVENT_TYPE: "deploy"},
+        EVENTS_PUBLISHED, 1, tenant_id="acme", workspace_id="prod", attributes={a.EVENT_TYPE: "x"}
     )
     [(attributes, value)] = _points(reader)["reflexr.events.published"]
-    assert (attributes, value) == ({a.EVENT_TYPE: "deploy", **expected}, 1)
+    assert (attributes, value) == (
+        {a.EVENT_TYPE: "x", a.TENANT_ID: "acme", a.WORKSPACE_ID: "prod"},
+        1,
+    )
     provider.shutdown()
 
 
 def test_every_kind_of_instrument_records() -> None:
     reader = InMemoryMetricReader()
     provider = MeterProvider(metric_readers=[reader])
-    telemetry = Telemetry(meter_provider=provider, metrics_detail="none")
+    telemetry = Telemetry(meter_provider=provider)
     telemetry.record(EVALUATION_LAG, 7, tenant_id="t", workspace_id="w", attributes={a.RULE: "r"})
     telemetry.record(EVALUATION_DURATION, 0.25, tenant_id="t", workspace_id="w")
     points = _points(reader)
-    assert points["reflexr.evaluation.lag"] == [({a.RULE: "r"}, 7)]
-    assert points["reflexr.evaluation.duration"] == [({}, 0.25)]
+    scope = {a.TENANT_ID: "t", a.WORKSPACE_ID: "w"}
+    assert points["reflexr.evaluation.lag"] == [({a.RULE: "r", **scope}, 7)]
+    assert points["reflexr.evaluation.duration"] == [(scope, 0.25)]
     provider.shutdown()
 
 

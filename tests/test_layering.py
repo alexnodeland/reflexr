@@ -36,6 +36,20 @@ LAYERS: dict[str, tuple[set[str], set[str]]] = {
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.evals"},
         {"pydantic", "evalr"},
     ),
+    "otel": (
+        {"reflexr.telemetry", "reflexr.otel", "reflexr.langfuse"},
+        {"opentelemetry", "pydantic_ai", "fastapi", "sqlalchemy", "langfuse"},
+    ),
+    "langfuse": (
+        {
+            "reflexr.core",
+            "reflexr.telemetry",
+            "reflexr.workspace",
+            "reflexr.scores",
+            "reflexr.langfuse",
+        },
+        {"langfuse", "opentelemetry"},
+    ),
     "agent": (
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.agent"},
         {"pydantic", "pydantic_core", "opentelemetry", "pydantic_ai", "pydantic_graph"},
