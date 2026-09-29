@@ -32,13 +32,29 @@ reactor = Reactor(workspaces, actions={"page": page}, deps=AppDeps(pager=pager))
 
 The reactor checks at construction that every rule's action is in `actions`, and raises `InvalidRule` if one is missing. Without `deps`, it is a `Reactor[None]`, and its actions receive a `Reaction[None]`.
 
-In a service, run `serve()` for as long as the process lives, for example as a task started in your application's lifespan. It ticks schedules, evaluates and executes in a loop, sleeping `poll_interval` (one second by default) between rounds, until it is cancelled. A round that fails, as when the database is briefly unreachable, is logged on the `reflexr.reactor` logger and the next round tries again; leases and transactions leave nothing half done ([ADR-0027](../adr/0027-executing-runs.md)):
+In a service, run `serve()` for as long as the process lives, for example as a task started in your application's lifespan ([Serving](serving.md#mounting-the-router)). It ticks schedules, evaluates and executes in a loop, sleeping `poll_interval` (one second by default) between rounds, until it is stopped. A round that fails, as when the database is briefly unreachable, is logged on the `reflexr.reactor` logger and the next round tries again; leases and transactions leave nothing half done ([ADR-0027](../adr/0027-executing-runs.md)).
+
+To stop it, give it an `asyncio.Event` and set it:
 
 ```python
-task = asyncio.create_task(reactor.serve())
+stop = asyncio.Event()
+task = asyncio.create_task(reactor.serve(stop=stop, grace=timedelta(seconds=5)))
 ...
-task.cancel()  # stops a running action too; its run is attempted again later
+stop.set()
+await task  # returns once the reactor has let go of everything
 ```
+
+A stop never interrupts a transaction. Evaluation stops after its current batch, and the next reactor carries on from the cursor. Runs waiting for one of the `concurrency` places do not start. Running actions have `grace` (5 seconds by default) to end. Those that have not ended by then are cancelled, and each attempt is recorded as abandoned (the reason `abandoned`), a failed attempt that is retried under the rule's [policy](#retries-and-dead-letters); a graph resumes from its last checkpoint. Then the reactor releases its leases, and `serve` returns. An action is only ever cancelled between the storage calls it makes through its workspace, so one that is saving a checkpoint, publishing or reading the log finishes that first; a subscription is cancelled where it waits.
+
+A signal handler can set the same event, as in a worker process that runs only the reactor:
+
+```python
+loop = asyncio.get_running_loop()
+loop.add_signal_handler(signal.SIGTERM, stop.set)
+await reactor.serve(stop=stop)
+```
+
+Without `stop`, `serve()` runs until its task is cancelled. Cancelling stops it wherever it is, in the middle of a transaction too, which on SQLite can leave the connection holding the database's write lock, so prefer `stop` in a service.
 
 In tests and scripts, `settle()` does the same until nothing more happens now, and says what it did:
 
@@ -67,7 +83,7 @@ Settled(ticks=0, firings=1, attempts=1)
 
 | Method | What it does |
 |---|---|
-| `serve(poll_interval=)` | `tick`, `evaluate` and `execute` in a loop, until cancelled |
+| `serve(poll_interval=, stop=, grace=)` | `tick`, `evaluate` and `execute` in a loop, until `stop` is set (or the task is cancelled) |
 | `settle(max_rounds=)` | The same, until a round does nothing and meets no lease another reactor holds; returns `Settled(ticks, firings, attempts)` |
 | `tick()` | Publishes the [schedules](schedules.md)' due ticks; returns how many |
 | `evaluate(workspace=None)` | Evaluates every enabled rule over new envelopes, in one workspace or in all; returns how many times rules fired |
@@ -285,4 +301,4 @@ Any number of reactors, in any number of processes, can share the work, as long 
 - **One executor per run.** A run's lease is taken before its attempt and renewed while the action works. A reactor that finds a run leased leaves it to the other; in `settle()`, it looks again shortly, since the other may be about to find that the run cannot start yet and let it go.
 - **One publisher per tick.** Ticks have ids derived from the schedule and the time, so replicas never publish one twice.
 
-A lease lapses when its holder stops renewing it for `lease_ttl`. If a reactor dies, or is stopped, in the middle of a run, the run becomes due again once its lease lapses or is released, and the next claim records the abandoned attempt as a failed one ("the attempt was abandoned: its executor stopped", with the reason `abandoned`). So the retry policy also bounds actions that keep crashing their process. Give each process its own `holder`, so the leases say which process holds what.
+A lease lapses when its holder stops renewing it for `lease_ttl`. If a reactor dies, or is cancelled, in the middle of a run, the run becomes due again once its lease lapses or is released, and the next claim records the abandoned attempt as a failed one ("the attempt was abandoned: its executor stopped", with the reason `abandoned`). A reactor [stopped](#running-the-reactor) with `stop` records the same itself, for the actions it had to cancel, and releases their leases, so another reactor retries them after the rule's backoff without waiting for a lease to lapse. So the retry policy also bounds actions that keep crashing their process. Give each process its own `holder`, so the leases say which process holds what.

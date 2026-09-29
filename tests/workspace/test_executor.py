@@ -1,7 +1,7 @@
 """The reactor's execution: runs attempted at least once, under leases, in order per scope."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from reflexr import AgentActor, F, RetryPolicy, Rule, SourceActor, by, on, run
 from reflexr.core import (
+    Envelope,
     InvalidRule,
     InvalidState,
     NotFound,
@@ -31,6 +32,7 @@ from reflexr.core import (
 from reflexr.telemetry import attributes as a
 from reflexr.telemetry import parse_traceparent
 from reflexr.workspace import (
+    EVALUATION_LEASE,
     REACTOR,
     InMemoryStorage,
     Reaction,
@@ -752,15 +754,15 @@ async def test_serving_survives_a_failing_pass(
     workspaces = build([rule()])
     workspace = await open_(workspaces)
     executor = reactor(workspaces, Deps())
-    real = executor.evaluate
+    real = executor.tick
     failures = [RuntimeError("the database blinked")]
 
-    async def flaky(workspace: WorkspaceRef | None = None) -> int:
+    async def flaky() -> int:
         if failures:
             raise failures.pop()
-        return await real(workspace)
+        return await real()
 
-    executor.evaluate = flaky
+    executor.tick = flaky
     serving = asyncio.create_task(executor.serve(poll_interval=timedelta(milliseconds=5)))
     await workspace.publish(Deploy(service="auth"))
     for _ in range(200):
@@ -773,3 +775,129 @@ async def test_serving_survives_a_failing_pass(
         await serving
     assert (await workspace.runs())[0].status == "succeeded"
     assert "a reactor pass failed" in caplog.text
+
+
+async def assert_let_go(storage: Storage, runs: Iterable[Run]) -> None:
+    """Check that no lease is held on the workspace or its runs, and no transaction is open."""
+    for key in [EVALUATION_LEASE, *(run_lease(r.id) for r in runs)]:
+        assert await storage.acquire_lease(ACME, key, "next", timedelta(minutes=1)), key
+    async with asyncio.timeout(5), storage.transaction(ACME) as transaction:
+        await transaction.save_schedule("check", START)
+
+
+async def test_a_stopped_reactor_lets_running_attempts_end_and_starts_no_more(
+    build: Build, storage: Storage
+) -> None:
+    workspaces = build([rule(then=run("blocked"))])
+    deps = Deps()
+    workspace = await open_(workspaces)
+    await workspace.publish_many([Deploy(service="auth"), Deploy(service="billing")])
+    stop = asyncio.Event()
+    serving = reactor(workspaces, deps, concurrency=1).serve(stop=stop, grace=timedelta(minutes=1))
+    async with asyncio.timeout(5):
+        served = asyncio.create_task(serving)
+        await deps.started.wait()  # one scope's attempt runs, and the other's waits its turn
+        stop.set()
+        deps.release.set()
+        assert await served is None
+    runs = await workspace.runs()
+    assert sorted((r.status, r.attempts) for r in runs) == [("pending", 0), ("succeeded", 1)]
+    await assert_let_go(storage, runs)
+
+
+async def test_a_stopped_reactor_abandons_attempts_still_running_after_the_grace(
+    build: Build, storage: Storage
+) -> None:
+    workspaces = build([rule(then=run("stuck"))])
+    running = asyncio.Barrier(3)  # both attempts, and the test
+
+    async def stuck(reaction: Reaction[None]) -> None:
+        await running.wait()
+        await asyncio.Event().wait()
+
+    workspace = await open_(workspaces)
+    await workspace.publish_many([Deploy(service="auth"), Deploy(service="billing")])
+    stop = asyncio.Event()
+    executor = Reactor(workspaces, actions={"stuck": stuck})
+    async with asyncio.timeout(5):
+        served = asyncio.create_task(executor.serve(stop=stop, grace=timedelta(milliseconds=10)))
+        await running.wait()
+        stop.set()
+        await served
+    runs = await workspace.runs()
+    assert {(r.status, r.attempts, r.reason, r.error) for r in runs} == {
+        ("retrying", 1, "abandoned", "the attempt was abandoned: its executor stopped")
+    }
+    facts = [e.event for e in await workspace.read() if isinstance(e.event, RunRetrying)]
+    assert [f.reason for f in facts] == ["abandoned", "abandoned"]
+    await assert_let_go(storage, runs)
+
+
+class HeldStorage(InMemoryStorage):
+    """Storage whose next transaction or read, once armed, stays in flight until let go."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        super().__init__(clock=clock)
+        self.armed = False
+        self.holding = asyncio.Event()
+        self.let_go = asyncio.Event()
+
+    async def hold(self) -> None:
+        if self.armed:
+            self.armed = False
+            self.holding.set()
+            await self.let_go.wait()
+
+    @asynccontextmanager
+    async def transaction(self, workspace: WorkspaceRef) -> AsyncIterator[Any]:
+        async with super().transaction(workspace) as transaction:
+            await self.hold()
+            yield transaction
+
+    async def read(self, workspace: WorkspaceRef, **window: Any) -> list[Envelope]:
+        await self.hold()
+        return await super().read(workspace, **window)
+
+
+@pytest.mark.parametrize("call", ["checkpoint", "read"])
+async def test_a_stopped_reactor_cancels_an_action_only_between_its_storage_calls(
+    call: str, clock: FakeClock
+) -> None:
+    storage = HeldStorage(clock)
+    workspaces = Workspaces(storage, rules=[rule(then=run("careful"))], clock=clock)
+    finished: list[str] = []
+
+    async def careful(reaction: Reaction[None]) -> None:
+        storage.armed = True
+        if call == "checkpoint":
+            await reaction.checkpoint("first", {"done": 1})
+        else:
+            await reaction.workspace.read()
+        finished.append(call)
+        await asyncio.Event().wait()
+
+    workspace = await open_(workspaces)
+    await workspace.publish(Deploy(service="auth"))
+    stop = asyncio.Event()
+    executor = Reactor(workspaces, actions={"careful": careful})
+    async with asyncio.timeout(5):
+        served = asyncio.create_task(executor.serve(stop=stop, grace=timedelta(0)))
+        await storage.holding.wait()  # the action is in the middle of the call
+        stop.set()
+        await asyncio.sleep(0.05)
+        assert not served.done()  # the grace is over, but the call is in flight
+        storage.let_go.set()
+        await served
+    assert finished == [call]  # the call completed, and the action was cancelled after it
+    [abandoned] = await workspace.runs()
+    assert (abandoned.status, abandoned.reason) == ("retrying", "abandoned")
+
+
+async def test_a_stopped_reactor_stops_waiting_for_its_next_pass(build: Build) -> None:
+    stop = asyncio.Event()
+    serving = reactor(build(), Deps()).serve(poll_interval=timedelta(hours=1), stop=stop)
+    async with asyncio.timeout(5):
+        served = asyncio.create_task(serving)
+        await asyncio.sleep(0.01)
+        stop.set()
+        await served

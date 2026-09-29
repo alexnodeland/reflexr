@@ -20,7 +20,7 @@ import os
 from collections.abc import AsyncGenerator
 from datetime import timedelta
 from importlib.metadata import version
-from typing import Any, Never
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI
@@ -136,8 +136,9 @@ class Oncall:
                     stack.push_async_callback(engine.dispose)
                 await stack.enter_async_context(mcp.lifespan())
                 if serve:
-                    work = asyncio.create_task(reactor.serve(poll_interval=poll_interval))
-                    stack.push_async_callback(_stop, work)
+                    stop = asyncio.Event()
+                    serving = reactor.serve(poll_interval=poll_interval, stop=stop)
+                    stack.push_async_callback(_stop, asyncio.create_task(serving), stop)
                 yield
 
         app = FastAPI(title="oncall", lifespan=lifespan)
@@ -161,11 +162,14 @@ class Oncall:
         return app
 
 
-async def _stop(work: "asyncio.Task[Never]") -> None:
-    """Stop the reactor at shutdown; a run it was executing is attempted again later."""
-    work.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await work
+async def _stop(work: "asyncio.Task[None]", stop: asyncio.Event) -> None:
+    """Stop the reactor at shutdown, before the database closes.
+
+    Runs it is executing have a few seconds to finish; one that takes longer is recorded as
+    abandoned and attempted again later, by this process or another.
+    """
+    stop.set()
+    await work
 
 
 def open_database(url: str) -> AsyncEngine:

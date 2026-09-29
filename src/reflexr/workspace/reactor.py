@@ -9,6 +9,7 @@ Acting is at least once: see :mod:`reflexr.workspace.executor`.
 """
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -43,7 +44,7 @@ from reflexr.telemetry.metrics import (
 )
 from reflexr.telemetry.telemetry import Attributes
 from reflexr.workspace.actions import Action, RunContext
-from reflexr.workspace.executor import Executor
+from reflexr.workspace.executor import Executor, Stopping
 from reflexr.workspace.schedules import SCHEDULER, Schedule, tick_id
 from reflexr.workspace.storage import Entry, Transaction, WorkspaceRef
 from reflexr.workspace.workspace import Workspaces, meet_rules
@@ -61,6 +62,9 @@ _CONTENDED_WAIT = timedelta(milliseconds=2)
 lease it needed. The wait doubles each time, up to :data:`_CONTENDED_WAIT_MAX`."""
 
 _CONTENDED_WAIT_MAX = timedelta(milliseconds=100)
+
+_GRACE = timedelta(seconds=5)
+"""How long a stopping reactor gives running attempts to end, by default."""
 
 
 @dataclass(frozen=True)
@@ -207,20 +211,54 @@ class Reactor[D]:
                 return Settled(ticks=ticks, firings=firings, attempts=attempts)
         raise RuntimeError(f"still busy after {max_rounds} rounds")
 
-    async def serve(self, *, poll_interval: timedelta = timedelta(seconds=1)) -> Never:
-        """Tick, evaluate and execute until cancelled, checking for work every ``poll_interval``.
+    @overload
+    async def serve(self, *, poll_interval: timedelta = ...) -> Never: ...
+
+    @overload
+    async def serve(
+        self, *, poll_interval: timedelta = ..., stop: asyncio.Event, grace: timedelta = ...
+    ) -> None: ...
+
+    async def serve(
+        self,
+        *,
+        poll_interval: timedelta = timedelta(seconds=1),
+        stop: asyncio.Event | None = None,
+        grace: timedelta = _GRACE,
+    ) -> None:
+        """Tick, evaluate and execute until stopped, checking for work every ``poll_interval``.
 
         A pass that fails, as when the database is briefly unreachable, is logged and the next
         one tries again: leases and transactions leave nothing half done.
+
+        Setting ``stop`` stops the reactor gracefully, never in the middle of a transaction.
+        Evaluation stops after its current batch, and attempts still waiting for a place do not
+        start. Running attempts have ``grace`` to end; then their actions are cancelled, between
+        the storage calls they make, and each attempt is recorded as abandoned, a failed attempt
+        that is retried under the rule's policy. Once every lease it held is released, ``serve``
+        returns.
+
+        Without ``stop``, it runs until cancelled. Cancelling stops it wherever it is, in the
+        middle of a transaction too, which on SQLite can leave this process's connection holding
+        the database's write lock.
+
+        Args:
+            poll_interval: How long to wait between passes.
+            stop: Set it to stop the reactor, as a FastAPI lifespan does at shutdown.
+            grace: How long running attempts have to end once ``stop`` is set.
         """
-        while True:
+        asked = stop if stop is not None else asyncio.Event()
+        stopping = Stopping(asked, grace)
+        while not asked.is_set():
             try:
                 await self.tick()
-                await self.evaluate()
-                await self.execute()
+                await self._evaluate(None, asked)
+                await self._executor.execute(limit=100, stop=stopping)
             except Exception:
                 logger.exception("a reactor pass failed; the next one will try again")
-            await asyncio.sleep(poll_interval.total_seconds())
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(poll_interval.total_seconds()):
+                    await asked.wait()
 
     async def tick(self) -> int:
         """Publish the ticks that are due, for every schedule and the workspaces it targets.
@@ -298,20 +336,29 @@ class Reactor[D]:
         fired, _ = await self._evaluate(workspace)
         return fired
 
-    async def _evaluate(self, workspace: WorkspaceRef | None) -> tuple[int, bool]:
-        """Evaluate, and say whether another reactor held a workspace's evaluation lease."""
+    async def _evaluate(
+        self, workspace: WorkspaceRef | None, stop: asyncio.Event | None = None
+    ) -> tuple[int, bool]:
+        """Evaluate, and say whether another reactor held a workspace's evaluation lease.
+
+        Once ``stop`` is set, evaluation stops after its current batch.
+        """
         storage = self._workspaces.storage
         refs = [workspace] if workspace is not None else await storage.workspaces()
         fired, contended = 0, False
         for ref in refs:
-            evaluated = await self._evaluate_workspace(ref)
+            if stop is not None and stop.is_set():
+                break
+            evaluated = await self._evaluate_workspace(ref, stop)
             if evaluated is None:
                 contended = True
             else:
                 fired += evaluated
         return fired, contended
 
-    async def _evaluate_workspace(self, ref: WorkspaceRef) -> int | None:
+    async def _evaluate_workspace(
+        self, ref: WorkspaceRef, stop: asyncio.Event | None
+    ) -> int | None:
         """Evaluate a workspace's rules; return None if another reactor holds its lease."""
         storage = self._workspaces.storage
         if not await storage.acquire_lease(ref, EVALUATION_LEASE, self._holder, self._lease_ttl):
@@ -324,7 +371,7 @@ class Reactor[D]:
                 "reflexr.evaluate",
                 attributes=workspace_attributes(ref.tenant_id, ref.workspace_id),
             ) as span:
-                fired, evaluated = await self._catch_up(ref)
+                fired, evaluated = await self._catch_up(ref, stop)
                 span.set_attributes({a.EVALUATED_RULES: sorted(evaluated), a.FIRING_COUNT: fired})
             telemetry.record(
                 EVALUATION_DURATION,
@@ -336,14 +383,18 @@ class Reactor[D]:
             await storage.release_lease(ref, EVALUATION_LEASE, self._holder)
         return fired
 
-    async def _catch_up(self, ref: WorkspaceRef) -> tuple[int, set[str]]:
-        """Evaluate batches until no rule has new envelopes, or the lease is lost."""
+    async def _catch_up(
+        self, ref: WorkspaceRef, stop: asyncio.Event | None
+    ) -> tuple[int, set[str]]:
+        """Evaluate batches until no rule has new envelopes, the lease is lost, or a stop."""
         storage = self._workspaces.storage
         fired = 0
         evaluated: set[str] = set()
         while True:
             advanced = False
             for rule in self._workspaces.rules.values():
+                if stop is not None and stop.is_set():
+                    break  # whichever reactor evaluates next carries on from the cursors
                 if not rule.enabled:
                     continue  # its cursor holds until it is enabled again
                 evaluation = await self._evaluate_batch(ref, rule)

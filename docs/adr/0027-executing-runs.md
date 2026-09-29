@@ -54,6 +54,33 @@ The evidence, before and after:
 - The two-process test, run 300 times: 10 failures on SQLite before, none after. PostgreSQL had none before or after.
 - A test drives the race step by step, with two reactors on one storage: it left two runs pending every time before, and leaves none now.
 
+### Amendment (2026-09-29): a graceful stop
+
+`serve()` stopped only when cancelled, and a cancellation lands wherever the reactor is, inside a transaction too. SQLAlchemy takes a driver call cancelled part-way for a lost connection. On SQLite the connection could be dropped still holding the database's write lock, or not returned to the engine's one-connection pool. stackr's application template found it ([stackr#17](https://github.com/alexnodeland/stackr/pull/17)): the lease release in the reactor's cleanup failed with `database is locked` ([#63](https://github.com/alexnodeland/reflexr/issues/63)). Of 300 cancellations at random points in SQLite transactions, 33 left the database locked (cancelled in a query) and 16 left the pool without its connection (cancelled in the commit).
+
+Decided:
+
+- **`serve(stop=, grace=)`**, rather than `Reactor.stop()`. The caller owns an `asyncio.Event` and sets it, from a FastAPI lifespan or a signal handler (`loop.add_signal_handler(signal.SIGTERM, stop.set)`). Like `poll_interval`, it belongs to one serving loop, so the reactor keeps no state about being served, and nothing has to say which `serve` a `stop()` would stop. Neither reflexr nor artifactr had a stoppable loop to follow: their loops, such as the feedback mirror, stop by being cancelled. Without `stop`, `serve` runs until cancelled, as before, and is typed `Never`; with it, it returns `None`.
+- **A stop never interrupts a transaction.** Once `stop` is set:
+  - evaluation stops after its current batch, so the next reactor carries on from the cursor
+  - attempts still waiting for a place (`concurrency`) do not start
+  - running attempts have `grace` to end, 5 seconds by default
+  - then each action is cancelled, and its attempt recorded as abandoned by the executor, in a transaction of its own, never by the cancelled task
+  - every lease is released, and `serve` returns
+- **Abandoned is abandoned, however the executor stopped.** The attempt is recorded with the transition and error a claim records for an attempt whose executor died (`fail(..., reason="abandoned")`, "the attempt was abandoned: its executor stopped"), so it counts as a failed attempt under the retry policy. Recording it at once means another reactor retries it after the rule's backoff, rather than after its lease lapses. A graph resumes from its last checkpoint.
+- **Actions are cancelled between their storage calls.** Each action runs in a task whose workspace handles count the storage calls they have in flight (`OpenTransactions`, found through a context variable), and the executor cancels it only when none is. A write is a transaction, and on SQL so is a read, which on SQLite takes the write lock. A subscription is not counted, since it waits between reads for as long as nothing is logged. That covers every cancellation the executor makes: when a stop's grace is over, and when a run is cancelled or its lease lost. A rule's `timeout` still cancels the action wherever it is, and so does cancelling `serve`.
+- **The default grace is 5 seconds**, within the 10 seconds Docker allows a container between `SIGTERM` and `SIGKILL`, leaving time for the rest of the application's shutdown. A platform that allows longer, such as Kubernetes' 30 seconds, can pass a longer grace.
+
+Considered and rejected:
+
+- **`Reactor.stop()`:** state on the reactor, and a second method to await for the stop to finish.
+- **Making cancellation safe inside SQL storage,** by shielding each database call: a transaction would outlive the cancelled task that owns it, and every storage adapter would need the same care.
+
+The evidence:
+
+- Stopping a reactor with attempts running, on in-memory storage, SQLite and PostgreSQL, leaves no lease held, and a new transaction on the workspace commits at once. Attempts that end within the grace are recorded as they ended, and those that do not as abandoned.
+- A test stops a reactor while its action saves a checkpoint, and again while it reads the log. It fails if the action is cancelled as soon as the grace is over, in the middle of the call.
+
 ## Options considered
 
 ### Stale completions: compare status and attempt (chosen)
@@ -82,3 +109,4 @@ The evidence, before and after:
 1. [x] `Executor`, `Reaction`, the action port, and `Reactor.execute`, `settle` and `serve`.
 2. [ ] `AgentAction` and `GraphAction` adapters (phase 3).
 3. [x] Due runs that can start, and a `settle()` that waits out contention ([#57](https://github.com/alexnodeland/reflexr/issues/57)).
+4. [x] A graceful stop for `serve()` ([#63](https://github.com/alexnodeland/reflexr/issues/63)).
