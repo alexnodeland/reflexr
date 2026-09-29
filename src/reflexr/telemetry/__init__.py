@@ -7,6 +7,7 @@ ones, to see its spans and metrics.
 
 from reflexr.telemetry import attributes
 from reflexr.telemetry.metrics import (
+    EXTERNAL_METRICS,
     METRICS,
     SCOPE,
     SCOPED,
@@ -26,6 +27,7 @@ from reflexr.telemetry.telemetry import (
 )
 
 __all__ = [
+    "EXTERNAL_METRICS",
     "METRICS",
     "SCOPE",
     "SCOPED",

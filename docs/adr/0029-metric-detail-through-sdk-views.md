@@ -26,4 +26,4 @@ reflexr applied `metrics_detail` (keep tenant and workspace, the tenant only, or
 ## Action items
 
 1. [x] `kept_attributes`, `metric_views`, `configure_telemetry`, and the Langfuse adapter.
-2. [ ] Grafana dashboards tested against the registry (RFC-0002 B4).
+2. [x] Grafana dashboards tested against the registry (RFC-0002 B4, [ADR-0038](0038-dashboards-generated-tested-and-released.md)).

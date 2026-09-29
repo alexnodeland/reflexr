@@ -30,4 +30,4 @@ Working on reflexr needs PostgreSQL and the reference app. Evaluating and operat
 
 ## Action items
 
-1. [ ] Implement RFC-0002 phase B4.
+1. [x] Implement RFC-0002 phase B4 ([ADR-0037](0037-joining-stackrs-network.md), [ADR-0038](0038-dashboards-generated-tested-and-released.md)).

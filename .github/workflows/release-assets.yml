@@ -1,0 +1,40 @@
+# Attaches reflexr's Grafana dashboards to each GitHub release, for stackr to provision by
+# version (ADR-0021, ADR-0038). stackr's scripts/fetch-dashboards downloads
+# reflexr-dashboards-<version>.tar.gz from the release tagged v<version>. The workflow runs when a
+# release is published, or by hand for an existing release; it never creates a release or a tag.
+
+name: Release assets
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The existing release's tag, such as v0.1.0
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  dashboards:
+    name: Dashboards
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - name: Check the dashboards are valid JSON
+        run: for file in deploy/grafana/dashboards/*.json; do jq empty "$file"; done
+      - name: Package them
+        run: |
+          archive="reflexr-dashboards-${TAG#v}.tar.gz"
+          tar -czf "$archive" -C deploy/grafana dashboards
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+      - name: Attach them to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" --clobber deploy/grafana/dashboards/*.json "$ARCHIVE"

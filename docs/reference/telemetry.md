@@ -14,6 +14,8 @@ Tracing and metrics through the OpenTelemetry API. See [Observability](../guides
 
 ::: reflexr.telemetry.METRICS
 
+::: reflexr.telemetry.EXTERNAL_METRICS
+
 ::: reflexr.telemetry.Instrument
 
 ::: reflexr.telemetry.MetricsDetail

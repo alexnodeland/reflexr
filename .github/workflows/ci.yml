@@ -69,7 +69,7 @@ jobs:
       - run: uv run pytest --cov --cov-report=term-missing
 
   compose:
-    name: Compose
+    name: Compose and dashboards
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -87,6 +87,9 @@ jobs:
           docker network create stackr
           bash .devcontainer/initialize.sh
           docker compose $files config -q
+      # The dashboards' queries are tested against the metric registry in tests/test_dashboards.py.
+      - name: The dashboards' JSON
+        run: for file in deploy/grafana/dashboards/*.json; do jq empty "$file"; done
 
   docs:
     name: Docs
