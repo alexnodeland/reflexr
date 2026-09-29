@@ -334,6 +334,15 @@ wheels = [
 ]
 
 [[package]]
+name = "evalr"
+version = "0.1.0.dev0"
+source = { git = "https://github.com/alexnodeland/evalr?rev=15ac4a53b73b9ea13b986ab06cd3cdff54ab5ead#15ac4a53b73b9ea13b986ab06cd3cdff54ab5ead" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "pydantic" },
+]
+
+[[package]]
 name = "fastapi"
 version = "0.141.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1069,6 +1078,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+evals = [
+    { name = "evalr" },
+]
 fastapi = [
     { name = "fastapi" },
 ]
@@ -1078,6 +1090,7 @@ mcp = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "evalr" },
     { name = "fastapi" },
     { name = "git-cliff" },
     { name = "httpx" },
@@ -1096,6 +1109,7 @@ lint = [
     { name = "ruff" },
 ]
 test = [
+    { name = "evalr" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "hypothesis" },
@@ -1109,6 +1123,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "cronsim", specifier = ">=2.7" },
+    { name = "evalr", marker = "extra == 'evals'", git = "https://github.com/alexnodeland/evalr?rev=15ac4a53b73b9ea13b986ab06cd3cdff54ab5ead" },
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.141" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.2" },
     { name = "opentelemetry-api", specifier = ">=1.45" },
@@ -1116,10 +1131,11 @@ requires-dist = [
     { name = "pydantic-ai-slim", specifier = ">=2.51" },
     { name = "pydantic-graph", specifier = ">=2.51" },
 ]
-provides-extras = ["fastapi", "mcp"]
+provides-extras = ["fastapi", "mcp", "evals"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "evalr", git = "https://github.com/alexnodeland/evalr?rev=15ac4a53b73b9ea13b986ab06cd3cdff54ab5ead" },
     { name = "fastapi", specifier = ">=0.141" },
     { name = "git-cliff", specifier = ">=2.14" },
     { name = "httpx", specifier = ">=0.28" },
@@ -1138,6 +1154,7 @@ lint = [
     { name = "ruff", specifier = ">=0.16" },
 ]
 test = [
+    { name = "evalr", git = "https://github.com/alexnodeland/evalr?rev=15ac4a53b73b9ea13b986ab06cd3cdff54ab5ead" },
     { name = "fastapi", specifier = ">=0.141" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "hypothesis", specifier = ">=6.168" },

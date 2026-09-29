@@ -28,6 +28,12 @@ Writing this twice would drift. Putting it in core would saddle every user with 
   - the end-to-end measures for workflows (resolution, dead-letter and retry rates, operator intervention, time to resolution)
 - The core library keeps only what evaluation needs from it: typed feedback, the evaluator actor, and trace links. artifactr made the same decision ([artifactr ADR-0029](https://github.com/alexnodeland/artifactr/blob/main/docs/adr/0029-evalr-shared-eval-kit.md)).
 
+### Amendment (2026-09-28): the first part of the extra
+
+- **`LogFeedbackSource`** is evalr's `FeedbackSource` over a workspace's log. Each piece of one feedback type becomes an example: the verdict is the feedback, and the input is built by the application from what the feedback is about. For a run or a firing, that is the run with its matched and emitted events; for a chain, the chain's envelopes. Example ids are the feedback's event ids, and run examples carry the trace of the run's latest attempt.
+- **`EvaluatorAction`** runs any evalr `Evaluator` as a rule's action. Its verdict is given as feedback by an `EvaluatorActor` with the evaluator's name and version, so people's and evaluators' judgements of one target compare directly. An evaluator that hands off records nothing.
+- **Until evalr is published**, the extra resolves it from GitHub at a pinned revision (`[tool.uv.sources]`), and bumps the pin in its own pull requests. Experiment tasks that replay a firing's run, and the end-to-end workflow measures, come next.
+
 ## Options considered
 
 | Option | Duplication | Dependencies for users who don't evaluate | Works without the other library |
@@ -43,4 +49,5 @@ Writing this twice would drift. Putting it in core would saddle every user with 
 
 ## Action items
 
-1. [ ] Build evalr (evalr RFC-0001), then reflexr's `[evals]` extra (RFC-0002 phase B5).
+1. [x] Build evalr (evalr RFC-0001), then reflexr's `[evals]` extra (RFC-0002 phase B5): feedback sources and evaluators as rules.
+2. [ ] Experiment tasks that replay a firing's run, and the end-to-end workflow measures.
