@@ -13,6 +13,7 @@ from typing import Literal
 
 from opentelemetry.metrics import MeterProvider
 from opentelemetry.trace import Span, SpanKind, TracerProvider
+from pydantic import JsonValue
 
 from reflexr.core import (
     SYSTEM_EVENTS,
@@ -26,6 +27,7 @@ from reflexr.core import (
     Feedback,
     FeedbackGiven,
     FeedbackTarget,
+    InvalidState,
     NotFound,
     Predicates,
     Rule,
@@ -45,6 +47,7 @@ from reflexr.core import (
     WorkspaceId,
     begin,
     cancel,
+    checkpoint,
     event_types,
     new_event_id,
     reset,
@@ -414,6 +417,41 @@ class Workspace:
         return await self._operate(
             run_id, "cancel", lambda run, now: cancel(run, now=now, reason=reason)
         )
+
+    async def checkpoint_run(
+        self, run_id: RunId, *, attempt: int, step: str, state: JsonValue
+    ) -> Run:
+        """Save a running run's progress after a completed step, and append ``run_progressed``.
+
+        Actions call this through :meth:`Reaction.checkpoint
+        <reflexr.workspace.Reaction.checkpoint>`, so a retry resumes after the last step.
+
+        Args:
+            run_id: The run.
+            attempt: The attempt saving it, which must still be the run's current one.
+            step: The step that completed.
+            state: What resuming needs, as JSON.
+
+        Raises:
+            NotFound: If the run does not exist.
+            InvalidState: If the run is no longer running this attempt: it was cancelled, or
+                another executor took it over.
+        """
+        with self._span("reflexr.checkpoint_run") as span:
+            span.set_attributes({a.RUN_ID: run_id, a.ATTEMPT: attempt})
+            traceparent = current_traceparent()
+            async with self._context.storage.transaction(self._ref) as transaction:
+                run = await transaction.run(run_id)
+                if run is None:
+                    raise NotFound("run", run_id)
+                if (run.status, run.attempts) != ("running", attempt):
+                    raise InvalidState(f"attempt {attempt} of run {run_id} is no longer current")
+                saved, event = checkpoint(run, now=self._context.clock(), step=step, state=state)
+                await transaction.save_runs([saved])
+                await self._append(
+                    transaction, event, None, run.correlation_id, traceparent, run.causation
+                )
+        return saved
 
     async def replay_rule(
         self,

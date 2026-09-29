@@ -12,9 +12,12 @@ from pydantic import BaseModel
 from reflexr import AgentActor, F, RetryPolicy, Rule, SourceActor, by, on, run
 from reflexr.core import (
     InvalidRule,
+    InvalidState,
+    NotFound,
     Run,
     RunCancelled,
     RunDeadLettered,
+    RunProgressed,
     RunRetrying,
     RunStarted,
     RunSucceeded,
@@ -437,3 +440,50 @@ async def test_long_actions_keep_their_lease_and_untraced_runs_record_no_traces(
     assert await executor.settle() == Settled(firings=1, attempts=1)
     [done] = await workspace.runs()
     assert (done.status, done.trace_ids) == ("succeeded", ())
+
+
+async def test_actions_checkpoint_their_progress_for_the_next_attempt(
+    build: Build, clock: FakeClock
+) -> None:
+    seen: list[object] = []
+
+    async def stepwise(reaction: Reaction[None]) -> str:
+        seen.append(reaction.run.checkpoint)
+        if reaction.run.checkpoint is None:
+            await reaction.checkpoint("fetch", {"done": ["fetch"]})
+            raise RuntimeError("crashed after the first step")
+        return "finished"
+
+    workspaces = build([rule(then=run("stepwise"))])
+    workspace = await open_(workspaces)
+    await workspace.publish(Deploy(service="auth"))
+    executor = Reactor(workspaces, actions={"stepwise": stepwise})
+    await executor.settle()
+    [retrying] = await workspace.runs()
+    assert (retrying.status, retrying.step, retrying.checkpoint) == (
+        "retrying",
+        "fetch",
+        {"done": ["fetch"]},
+    )
+    progressed = [
+        (e.event.step, e.depth)
+        for e in await workspace.read()
+        if isinstance(e.event, RunProgressed)
+    ]
+    assert progressed == [("fetch", 1)]
+    clock.advance(1)
+    await executor.settle()
+    assert seen == [None, {"done": ["fetch"]}]
+    assert (await workspace.runs())[0].output == "finished"
+
+
+async def test_a_stale_attempt_cannot_checkpoint(build: Build, storage: Storage) -> None:
+    workspaces = build([rule()])
+    workspace = await open_(workspaces)
+    await workspace.publish(Deploy(service="auth"))
+    await reactor(workspaces, Deps()).evaluate()
+    [pending] = await workspace.runs()
+    with pytest.raises(InvalidState, match=f"attempt 1 of run {pending.id} is no longer current"):
+        await workspace.checkpoint_run(pending.id, attempt=1, step="s", state=None)
+    with pytest.raises(NotFound, match="run nope"):
+        await workspace.checkpoint_run("nope", attempt=1, step="s", state=None)
