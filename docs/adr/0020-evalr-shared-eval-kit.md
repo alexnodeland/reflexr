@@ -51,4 +51,4 @@ Writing this twice would drift. Putting it in core would saddle every user with 
 
 1. [x] Build evalr (evalr RFC-0001), then reflexr's `[evals]` extra (RFC-0002 phase B5): feedback sources and evaluators as rules.
 2. [x] The end-to-end workflow measures: `rule_outcomes` (dead-letter, retry and intervention rates per rule) and `time_to_resolution` per chain, from the log.
-3. [ ] Experiment tasks that replay a firing's run.
+3. [x] Experiment tasks: `replay_task` replays an example's events against a candidate action in an isolated in-memory workspace, as an evalr `Task`.
