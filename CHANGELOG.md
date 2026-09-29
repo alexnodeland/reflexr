@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **core**: Check a filter's fields on the event types of their own conjunction, so a sequence step can filter on its own type's fields
 - **workspace**: Join a causal chain only by its first event's id; a later event's id is `validation_failed`, naming its chain
 - **evals**: Leave evaluators' verdicts out of `LogFeedbackSource` unless `include_evaluators=True`
+- **mcp**: Ask an `authorize` hook, as the router does, on every tool call and resource read that names a workspace
 
 ### Documentation
 

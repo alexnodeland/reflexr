@@ -41,10 +41,27 @@ Clients connect to `https://your-host/mcp/` with any MCP client that speaks Stre
 |---|---|
 | `workspaces` | Opens tenant-scoped workspaces, and holds the rules the tools list and replay |
 | `resolve` | Authenticates each request and returns the client's tenant and `ExternalAgentActor` |
+| `authorize` | Whether a client may use a workspace of its tenant: the router's hook, asked on every tool call and resource read that names a workspace. `None`, the default, allows every one |
 | `name` | The server's name, `"reflexr"` by default |
 | `bus` | Where resource-updated notifications go: in process by default. Pass the MCP SDK's `SubscriptionBus` over a shared broker to fan them out across replicas. |
 
 `resolve(ctx)` is the boundary. `ctx.headers` holds the HTTP request's headers (it is `None` for an in-process client), and they are the client's own claims until you have checked a credential. The tenant comes from `resolve`, never from a tool's arguments, so a client cannot reach another tenant by naming it. To refuse a client, raise; raising the SDK's `ToolError` (from `mcp.server.mcpserver.exceptions`) gives the client your message, such as `Error executing tool read_events: unknown API key`.
+
+To decide which workspaces of its tenant a client may use, pass `authorize`, the same `reflexr.workspace.Authorize` hook the [router](serving.md#authentication) takes:
+
+```python
+from reflexr import Actor
+from reflexr.core import WorkspaceId
+
+
+async def authorize(tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor) -> bool:
+    return await api_keys.may_use(actor, tenant_id, workspace_id)  # your access control
+
+
+mcp = ReflexrMcp(workspaces, resolve=resolve_client, authorize=authorize)
+```
+
+It is asked on every tool call and resource read that names a workspace, before anything is read or written. A refusal is a tool error carrying the `forbidden` rejection's message, `Error executing tool read_events: this workspace is not yours to use`, and a refused resource read fails with the same message. `list_rules` names no workspace, so it is not asked. Without `authorize`, a client may use every workspace of the tenant `resolve` returns.
 
 ## Tools
 

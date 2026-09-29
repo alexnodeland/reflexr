@@ -82,7 +82,7 @@ async def authorize(tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor
 router = reflexr_router(workspaces, resolve_actor=resolve_actor, authorize=authorize)
 ```
 
-Without `authorize`, any authenticated actor may use every workspace of its own tenant.
+Without `authorize`, any authenticated actor may use every workspace of its own tenant. `ReflexrMcp` takes the same hook, so one function decides for every surface ([External agents over MCP](mcp.md#mounting-the-server)).
 
 ## Publishing over HTTP
 

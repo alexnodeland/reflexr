@@ -106,7 +106,7 @@ reflexr's own events, alongside the application's:
 
 ## MCP
 
-`reflexr.mcp` serves the same commands and reads to MCP clients, with the host's `resolve(ctx)` returning the client's tenant and `ExternalAgentActor`. Commands go through the same handler as REST and the WebSocket; a rejection is a tool error carrying its message.
+`reflexr.mcp` serves the same commands and reads to MCP clients, with the host's `resolve(ctx)` returning the client's tenant and `ExternalAgentActor`. An optional `authorize(tenant, workspace, actor)`, the same hook as REST's, is asked on every tool call and resource read that names a workspace, and a refusal is a tool error carrying the `forbidden` rejection's message. Commands go through the same handler as REST and the WebSocket; a rejection is a tool error carrying its message.
 
 | MCP | reflexr |
 |---|---|

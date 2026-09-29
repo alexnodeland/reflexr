@@ -19,6 +19,11 @@ v0.1 ships four surfaces, all thin adapters over one command handler on a `Strea
 
 Authentication is the host's: each surface takes a resolver that returns the tenant and actor. Rate limiting and health checks are the application's (FastAPI middleware and its own routes), not the library's.
 
+### Amendment (2026-09-29): every surface takes the authorize hook
+
+- **`ReflexrMcp(authorize=...)`** takes the router's hook, `authorize(tenant_id, workspace_id, actor) -> bool`, and asks it on every tool call and resource read that names a workspace, before the workspace is opened. A refusal is a tool error, or a failed resource read, carrying the `forbidden` rejection's message, as every other rejection over MCP carries its message. `list_rules` names no workspace and is not asked. Without the hook, an MCP client could use any workspace of its tenant however the application restricted REST and the WebSocket.
+- **The hook's type, `Authorize`, lives in `reflexr.workspace`,** beside `Workspaces.open`, since adapters may not import each other ([ADR-0025](0025-ports-and-adapters.md)). `reflexr.fastapi.Authorize` is the same alias, re-exported.
+
 ## Options considered
 
 | Option | Consistency across surfaces | Scope for v0.1 |
