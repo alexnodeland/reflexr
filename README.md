@@ -1,6 +1,6 @@
 # reflexr
 
-A Python library for **reactive agent workflows**: rules watch tenant-scoped event streams, and when a rule's condition holds (three errors from one service within a minute, a deploy followed by a spike, a heartbeat that stops), it runs a workflow: a [pydantic-ai](https://ai.pydantic.dev) agent, a pydantic-graph graph, or a plain async function.
+A Python library for **reactive agent workflows**: rules watch the event log of each workspace (tenants and workspaces, as in artifactr), and when a rule's condition holds (three errors from one service within a minute, a deploy followed by a spike, a heartbeat that stops), it runs a workflow: a [pydantic-ai](https://ai.pydantic.dev) agent, a pydantic-graph graph, or a plain async function.
 
 It is the sibling of [artifactr](https://github.com/alexnodeland/artifactr): artifactr is for live chats in which people and agents edit shared artifacts, and reflexr is for workflows that events start.
 

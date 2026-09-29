@@ -10,7 +10,7 @@ Please do not open a public issue. Report vulnerabilities privately through GitH
 
 Include what you can of:
 
-- the affected package (`core`, `stream`, `agent`, `sql`, `fastapi`, `mcp`) and version or commit
+- the affected package (`core`, `workspace`, `agent`, `sql`, `fastapi`, `mcp`) and version or commit
 - a description of the issue and its impact
 - steps to reproduce, or a proof of concept
 
@@ -18,8 +18,8 @@ You can expect an acknowledgement within a week. Once a fix is available, we wil
 
 ## Scope notes
 
-reflexr enforces tenant isolation through scoped stream handles ([ADR-0004][adr-0004]). Any way to read or write another tenant's streams through the public API is a vulnerability, as is any way for event data to reach a query other than as a bound parameter. Authentication itself is the host application's responsibility, through the `resolve_actor` hook.
+reflexr enforces tenant isolation through scoped workspace handles ([ADR-0016][adr-0016]). Any way to read or write another tenant's workspaces through the public API is a vulnerability, as is any way for event data to reach a query other than as a bound parameter. Authentication itself is the host application's responsibility, through the `resolve_actor` hook.
 
 <!-- Link targets live here so the documentation site can redefine them for its own layout. -->
 
-[adr-0004]: docs/adr/0004-tenant-scoped-streams.md
+[adr-0016]: docs/adr/0016-tenants-and-workspaces-like-artifactr.md

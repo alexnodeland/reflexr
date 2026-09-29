@@ -1,6 +1,6 @@
 # ADR-0004: Tenant-scoped streams with one log each
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0016](0016-tenants-and-workspaces-like-artifactr.md)
 **Date:** 2026-09-28
 **Deciders:** Alex Nodeland
 
