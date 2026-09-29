@@ -115,4 +115,6 @@ def _recorder(meter: Meter, metric: Metric) -> _Recorder:
         return meter.create_histogram(name, unit=unit, description=description).record
     if metric.instrument == "gauge":
         return meter.create_gauge(name, unit=unit, description=description).set
+    if metric.instrument == "up_down_counter":
+        return meter.create_up_down_counter(name, unit=unit, description=description).add
     return meter.create_counter(name, unit=unit, description=description).add

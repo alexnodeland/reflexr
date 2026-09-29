@@ -20,6 +20,10 @@ LAYERS: dict[str, tuple[set[str], set[str]]] = {
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace"},
         {"pydantic", "opentelemetry", "cronsim"},
     ),
+    "fastapi": (
+        {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.fastapi"},
+        {"pydantic", "opentelemetry", "fastapi", "starlette"},
+    ),
     "agent": (
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.agent"},
         {"pydantic", "opentelemetry", "pydantic_ai", "pydantic_graph"},

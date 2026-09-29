@@ -31,17 +31,18 @@ Rejections carry a stable `type` and a `message`: `not_found`, `invalid_state`, 
 
 | Method and path | Purpose |
 |---|---|
-| `POST /v1/workspaces/{workspace_id}/commands` | One command frame; the response body is its `command_result`. |
-| `POST /v1/workspaces/{workspace_id}/events` | Publish one event, or `{"events": [...]}` in order. A convenience for producers and webhooks, equivalent to `publish` commands. |
+| `POST /v1/workspaces/{workspace_id}/commands` | One command frame; the response body is its `command_result`. A repeated `command_id` returns the first result. |
+| `POST /v1/workspaces/{workspace_id}/events` | Publish `{"event": {...}, "id"?}`, or `{"events": [{"event", "id"?}, ...], "correlation_id"?}` atomically and in order. A convenience for producers and webhooks, equivalent to `publish` commands; the response lists each `published` outcome. |
 | `GET /v1/workspaces/{workspace_id}/events?after_seq=&limit=&type=` | A page of the log, as envelopes. `type` may repeat. |
 | `GET /v1/rules` | The registered rules, as JSON. |
-| `GET /v1/workspaces/{workspace_id}/rules` | Each rule's cursor, lag behind the head, number of scopes, and dead-letter count. |
-| `GET /v1/workspaces/{workspace_id}/runs?rule=&scope=&status=&limit=` | Runs, newest first. |
-| `GET /v1/workspaces/{workspace_id}/runs/{run_id}` | A run, with its attempts, last error and checkpoint summary. |
-| `GET /v1/workspaces/{workspace_id}/dead-letters?rule=` | Evaluation errors and dead-lettered runs. |
-| `GET /v1/schedules` | Schedules, with their next tick. |
+| `GET /v1/workspaces/{workspace_id}/rules` | Each rule's `cursor`, `lag` behind the head, `generation`, and `dead_letters` count. |
+| `GET /v1/workspaces/{workspace_id}/runs?rule=&scope_key=&status=&limit=` | Runs, newest first. |
+| `GET /v1/workspaces/{workspace_id}/runs/{run_id}` | A run, with its attempts, last error and checkpoint. |
+| `GET /v1/workspaces/{workspace_id}/dead-letters?rule=` | The envelopes rules could not evaluate. |
+| `GET /v1/schedules` | The registered schedules. |
+| `GET /v1/workspaces/{workspace_id}/schedules` | Each schedule targeting the workspace, with its `last_tick` and `next_tick`. |
 
-Rejections map to HTTP status codes: `not_found` → 404, `invalid_state` → 409, `validation_failed` and `depth_exceeded` → 422, `forbidden` → 403. Authentication is the host's: `resolve_actor(request)` returns the tenant and actor, or raises `Unauthorized` (401).
+Rejections map to HTTP status codes: `not_found` → 404, `invalid_state` → 409, `validation_failed` and `depth_exceeded` → 422, `forbidden` → 403, `unsupported_protocol` → 400. A body that does not validate, such as an event whose fields do not match its type, is 422. Authentication is the host's: `resolve_actor(request)` returns the tenant and actor, or raises `Unauthorized` (401); an optional `authorize(tenant, workspace, actor)` refuses a workspace (403).
 
 ## WebSocket
 

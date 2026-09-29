@@ -12,7 +12,7 @@ from typing import Literal
 
 from reflexr.telemetry import attributes as a
 
-type Instrument = Literal["counter", "histogram", "gauge"]
+type Instrument = Literal["counter", "up_down_counter", "histogram", "gauge"]
 """The kind of OpenTelemetry instrument a metric is recorded with."""
 
 type MetricsDetail = Literal["workspace", "tenant", "none"]
@@ -115,6 +115,20 @@ FEEDBACK = Metric(
     frozenset({a.FEEDBACK_TYPE, a.FEEDBACK_TARGET, a.ACTOR_KIND}),
 )
 
+STREAM_CONNECTIONS = Metric(
+    "reflexr.stream.connections",
+    "up_down_counter",
+    "{connection}",
+    "WebSocket connections open now.",
+)
+STREAM_DISCONNECTS = Metric(
+    "reflexr.stream.disconnects",
+    "counter",
+    "{connection}",
+    "WebSocket connections ended, by close code.",
+    frozenset({a.CLOSE_CODE}),
+)
+
 METRICS: Mapping[str, Metric] = {
     metric.name: metric
     for metric in (
@@ -129,6 +143,8 @@ METRICS: Mapping[str, Metric] = {
         DEAD_LETTERS,
         SCHEDULE_TICKS,
         FEEDBACK,
+        STREAM_CONNECTIONS,
+        STREAM_DISCONNECTS,
     )
 }
 """Every metric reflexr records, by name."""

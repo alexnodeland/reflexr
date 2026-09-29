@@ -505,6 +505,10 @@ class Workspace:
         """Return the envelopes rules could not evaluate, oldest first."""
         return await self._context.storage.dead_letters(self._ref, rule=rule)
 
+    async def schedule_ticks(self) -> dict[str, datetime]:
+        """Return when each schedule last ticked in this workspace."""
+        return await self._context.storage.schedules(self._ref)
+
     async def rule_progress(self) -> dict[RuleName, RuleProgress]:
         """Return each rule's progress: its cursor, generation and pending deadlines."""
         return await self._context.storage.progress(self._ref)

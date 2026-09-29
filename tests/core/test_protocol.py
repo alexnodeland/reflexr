@@ -60,6 +60,12 @@ def test_commands_are_strict_and_events_of_unknown_types_are_kept() -> None:
     assert isinstance(frame, CommandFrame)
     assert isinstance(frame.command, Publish)
     assert isinstance(frame.command.event, UnknownEvent)
+    with pytest.raises(ValidationError, match="an event needs a string 'type'"):
+        Publish.model_validate({"event": {"service": "auth"}})
+    with pytest.raises(
+        ValidationError, match=r"invalid service\.error event: service: Field required"
+    ):
+        Publish.model_validate({"event": {"type": "service.error"}})
 
 
 def test_server_frames_round_trip_by_their_type() -> None:

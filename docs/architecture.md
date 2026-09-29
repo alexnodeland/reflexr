@@ -9,7 +9,8 @@
 | `reflexr.workspace` | Implemented: storage protocol, in-memory storage, workspace handles, the `Reactor` (evaluation, execution and schedules) and function actions |
 | `reflexr.agent` | In progress (phase 3): agent actions and the `EventContext` capability implemented; graph actions planned |
 | `reflexr.sql` | Planned (phase 4) |
-| `reflexr.fastapi`, `reflexr.mcp` | Planned (phase 5) |
+| `reflexr.fastapi` | Implemented: REST and the WebSocket stream, over one command handler |
+| `reflexr.mcp` | Planned (phase 5) |
 | `examples/oncall` | Planned (phase 6) |
 
 ## What reflexr is
