@@ -10,7 +10,14 @@ from reflexr.workspace.memory import Clock, InMemoryStorage, utc_now
 from reflexr.workspace.reactor import EVALUATION_LEASE, REACTOR, Reactor, Settled
 from reflexr.workspace.schedules import SCHEDULER, Schedule, tick_id
 from reflexr.workspace.storage import Entry, Storage, Transaction, WorkspaceRef, run_lease
-from reflexr.workspace.workspace import Authorize, Published, Workspace, Workspaces
+from reflexr.workspace.workspace import (
+    Authorize,
+    Published,
+    RuleStatus,
+    ScheduleStatus,
+    Workspace,
+    Workspaces,
+)
 
 __all__ = [
     "EVALUATION_LEASE",
@@ -24,9 +31,11 @@ __all__ = [
     "Published",
     "Reaction",
     "Reactor",
+    "RuleStatus",
     "RunContext",
     "RunFailure",
     "Schedule",
+    "ScheduleStatus",
     "Settled",
     "Storage",
     "Transaction",

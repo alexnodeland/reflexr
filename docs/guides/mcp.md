@@ -41,7 +41,7 @@ Clients connect to `https://your-host/mcp/` with any MCP client that speaks Stre
 |---|---|
 | `workspaces` | Opens tenant-scoped workspaces, and holds the rules the tools list and replay |
 | `resolve` | Authenticates each request and returns the client's tenant and `ExternalAgentActor` |
-| `authorize` | Whether a client may use a workspace of its tenant: the router's hook, asked on every tool call and resource read that names a workspace. `None`, the default, allows every one |
+| `authorize` | Whether a client may use a workspace of its tenant: the router's hook, asked on every tool call, resource read and resource subscription that names a workspace. `None`, the default, allows every one |
 | `name` | The server's name, `"reflexr"` by default |
 | `bus` | Where resource-updated notifications go: in process by default. Pass the MCP SDK's `SubscriptionBus` over a shared broker to fan them out across replicas. |
 
@@ -61,7 +61,7 @@ async def authorize(tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor
 mcp = ReflexrMcp(workspaces, resolve=resolve_client, authorize=authorize)
 ```
 
-It is asked on every tool call and resource read that names a workspace, before anything is read or written. A refusal is a tool error carrying the `forbidden` rejection's message, `Error executing tool read_events: this workspace is not yours to use`, and a refused resource read fails with the same message. `list_rules` names no workspace, so it is not asked. Without `authorize`, a client may use every workspace of the tenant `resolve` returns.
+It is asked on every tool call and resource read that names a workspace, before anything is read or written, and when a client subscribes to a run's changes. A refusal is a tool error carrying the `forbidden` rejection's message, `Error executing tool read_events: this workspace is not yours to use`. A refused resource read fails with the same message, and so does a `subscriptions/listen` request that names a run of a refused workspace. `list_rules` names no workspace, so it is not asked. Without `authorize`, a client may use every workspace of the tenant `resolve` returns.
 
 ## Tools
 
@@ -72,9 +72,10 @@ The server's instructions tell the client what it is talking to: event logs, one
 | `publish_event(workspace_id, event, id=None, correlation_id=None)` | Publishes an event, an object with its `type` and fields. An `id` already in the log adds nothing; `correlation_id` joins the causal chain that event started, and naming a later event of a chain is refused. |
 | `read_events(workspace_id, after_seq=0, types=None, limit=50)` | Reads envelopes, oldest first, as JSON lines |
 | `list_rules()` | The rules every workspace evaluates, as JSON. They are the application's, the same for every tenant, so every client sees them all ([Multi-tenancy and security](security.md#tenants-and-workspaces)) |
-| `rule_status(workspace_id)` | Each rule's cursor, how far it is behind the log, and its generation, and whether it is disabled |
+| `rule_status(workspace_id)` | Every registered rule, as `GET /v1/workspaces/{workspace_id}/rules` lists them: whether it is enabled, its cursor, how far it is behind the log, its generation and its number of dead letters. A rule that has not evaluated the workspace yet is at cursor 0. |
+| `schedule_status(workspace_id)` | Each [schedule](schedules.md) that targets the workspace, as `GET /v1/workspaces/{workspace_id}/schedules` lists them: when it last ticked and when it ticks next, or that it has not started there yet |
 | `replay_rule(workspace_id, rule, from_seq=0, mode="rebuild")` | Evaluates a rule again from `from_seq`: rebuilds its state quietly, or refires ([The reactor](reactor.md#replaying-a-rule)) |
-| `list_runs(workspace_id, rule=None, status=None, limit=20)` | Runs, newest first, as JSON lines |
+| `list_runs(workspace_id, rule=None, scope_key=None, status=None, limit=20)` | Runs, newest first, as JSON lines, filtered as `GET /v1/workspaces/{workspace_id}/runs` filters them. `scope_key` holds the scope's values, such as `["auth"]`, or is a run's `scope_key` as the run has it. |
 | `get_run(workspace_id, run_id)` | One run: its status, attempts, error, output and checkpoint |
 | `retry_run(workspace_id, run_id)` | Makes a run runnable now, with a fresh retry budget if it had finished |
 | `skip_run(workspace_id, run_id, reason=None)` | Gives up on a waiting or dead-lettered run, unblocking its scope |
@@ -94,7 +95,7 @@ The same rules apply as everywhere else: the `Workspaces` event allowlist decide
 
 ## Run resources
 
-Each run is a resource at `reflexr://{tenant_id}/{workspace_id}/runs/{run_id}`, whose content is the run's current JSON. `run_uri(tenant_id, workspace_id, run_id)` builds the URI. A client may read runs of its own tenant only: reading another tenant's run fails with `runs of tenant acme are not available`.
+Each run is a resource at `reflexr://{tenant_id}/{workspace_id}/runs/{run_id}`, whose content is the run's current JSON. `run_uri(tenant_id, workspace_id, run_id)` builds the URI. A client may read, and subscribe to, the runs of its own tenant only, in the workspaces `authorize` allows: reading another tenant's run fails with `runs of tenant acme are not available`, and so does a `subscriptions/listen` request that names one, with `INVALID_PARAMS`. The MCP SDK serves `subscriptions/listen` itself, so `ReflexrMcp` checks each run URI a listen request names, when the stream opens, as a read of it is checked; a request that names no run is not checked, and `resolve` is not called for it.
 
 Once a client has used a workspace through a tool, the server follows that workspace's log, and every fact about a run from then on (`run_started`, `run_progressed`, `run_retrying`, `run_succeeded` and the rest) is published as a resource-updated notification for the run's URI. A client that listens for a run's URI learns when to read it again, which suits an agent that published an alert and wants to watch the triage it caused.
 

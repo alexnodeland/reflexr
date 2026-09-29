@@ -15,6 +15,7 @@ from reflexr.workspace import (
     Reaction,
     Reactor,
     Schedule,
+    ScheduleStatus,
     Settled,
     Storage,
     Workspace,
@@ -205,6 +206,31 @@ async def test_ticks_let_absence_rules_fire_in_quiet_workspaces(
         await reactor.settle()
     [paged] = await workspace.runs()
     assert (paged.rule, paged.status) == ("quiet", "succeeded")
+
+
+async def test_a_workspace_reports_its_schedules_last_and_next_ticks(
+    storage: Storage, clock: FakeClock
+) -> None:
+    elsewhere = Schedule(
+        name="elsewhere", every=timedelta(minutes=5), workspaces=(("acme", "staging"),)
+    )
+    workspaces = build(storage, clock, every_30s, elsewhere)
+    workspace = await open_(workspaces)
+    assert await workspace.schedule_statuses() == [
+        ScheduleStatus(schedule="heartbeat-check", last_tick=None, next_tick=None)
+    ]
+    await workspace.publish(Heartbeat(service="auth"))
+    reactor = Reactor(workspaces)
+    await reactor.tick()
+    clock.advance(40)
+    await reactor.tick()
+    assert await workspace.schedule_statuses() == [
+        ScheduleStatus(
+            schedule="heartbeat-check",
+            last_tick=START + timedelta(seconds=30),
+            next_tick=START + timedelta(seconds=60),
+        )
+    ]
 
 
 async def test_schedule_names_are_unique(storage: Storage, clock: FakeClock) -> None:

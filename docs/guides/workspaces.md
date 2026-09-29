@@ -127,7 +127,11 @@ The incident's `causation` names the firing and run behind it, and its depth cou
 | `runs(rule=None, status=None, scope_key=None, limit=None)` | Runs, newest first, optionally of one rule, status or scope |
 | `dead_letters(rule=None)` | The envelopes rules could not evaluate, oldest first |
 | `rule_progress()` | Each rule's `RuleProgress`: its cursor, generation and pending `absence` deadlines |
+| `rule_statuses()` | A `RuleStatus` for every registered rule: whether it is `enabled`, its `cursor`, its `lag` behind the head, its `generation` and its number of `dead_letters`. A rule that has not evaluated the workspace yet is at cursor 0. |
 | `schedule_ticks()` | When each [schedule](schedules.md) last ticked in the workspace |
+| `schedule_statuses()` | A `ScheduleStatus` for each schedule that targets the workspace: its `last_tick` and `next_tick`, or neither before its first check |
+
+The statuses are what REST's `GET /v1/workspaces/{workspace_id}/rules` and `GET /v1/workspaces/{workspace_id}/schedules` return ([REST endpoints](serving.md#rest-endpoints)), and what MCP's `rule_status` and `schedule_status` tools report as text ([External agents over MCP](mcp.md#tools)), so the surfaces agree.
 
 `subscribe` yields the stored envelopes and then the live ones on one iterator, so nothing falls between catching up and following along:
 
@@ -183,4 +187,4 @@ except NotFound as rejection:
 | `DepthExceeded` | `depth_exceeded` | A run's event would extend its causal chain beyond `max_depth` (`depth`, `limit`) | 422 |
 | `UnsupportedProtocol` | `unsupported_protocol` | A client asked for another protocol version | 400 |
 
-The HTTP column is how [REST](serving.md) reports each one; over the WebSocket and MCP the rejection's payload travels in the command's result ([Stream protocol](../protocol.md)). A rule that refers to something that does not exist is not a rejection but an `InvalidRule` error, raised when the application starts ([Checking rules](rules.md#checking-rules)).
+The HTTP column is how [REST](serving.md) reports each one, with the payload as the response's `detail`, or as the `rejection` of a `POST /commands` result. Over the WebSocket the payload travels in the command's result ([Stream protocol](../protocol.md)). Over MCP only the message does: a rejection is a tool error carrying it, such as `Error executing tool retry_run: run nope does not exist`, or a failed resource read ([External agents over MCP](mcp.md#tools)). A rule that refers to something that does not exist is not a rejection but an `InvalidRule` error, raised when the application starts ([Checking rules](rules.md#checking-rules)).

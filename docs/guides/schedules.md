@@ -72,7 +72,7 @@ async def remind(reaction: Reaction[None]) -> None:
 
 - **Each tick starts its own causal chain**, so every standup reminder is a separate session in traces.
 - **A tick's id is derived from the schedule and its time** (`tick_id(name, at)`), the same in every process. Replicas that check the same schedule at the same time cannot publish a tick twice: the log already has its id.
-- **Each workspace remembers each schedule's last tick**, saved in the transaction that appends the tick, so no lease is needed. `workspace.schedule_ticks()` returns them, and REST's `GET /v1/workspaces/{workspace_id}/schedules` shows each schedule's last and next tick ([REST endpoints](serving.md#rest-endpoints)).
+- **Each workspace remembers each schedule's last tick**, saved in the transaction that appends the tick, so no lease is needed. `workspace.schedule_ticks()` returns them, and `workspace.schedule_statuses()`, REST's `GET /v1/workspaces/{workspace_id}/schedules` and the MCP `schedule_status` tool show each schedule's last and next tick ([REST endpoints](serving.md#rest-endpoints), [MCP tools](mcp.md#tools)).
 
 ## Keeping time moving
 

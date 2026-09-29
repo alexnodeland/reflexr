@@ -16,6 +16,10 @@ Tenant-scoped handles. See [Workspaces and the log](../guides/workspaces.md).
 
 ::: reflexr.workspace.Published
 
+::: reflexr.workspace.RuleStatus
+
+::: reflexr.workspace.ScheduleStatus
+
 ::: reflexr.workspace.Authorize
 
 ## The reactor

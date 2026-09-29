@@ -13,13 +13,13 @@ from reflexr.fastapi.router import (
     PublishBatch,
     PublishItem,
     ResolveActor,
-    RuleStatus,
-    ScheduleStatus,
     Unauthorized,
     reflexr_router,
 )
 from reflexr.fastapi.stream import Stream
-from reflexr.workspace import Authorize  # defined with the workspaces, for every surface
+
+# Defined with the workspaces, for every surface.
+from reflexr.workspace import Authorize, RuleStatus, ScheduleStatus
 
 __all__ = [
     "STATUS_CODES",

@@ -88,7 +88,7 @@ Dependencies point one way. Each layer is usable without the ones above it, and 
 | `reflexr.telemetry` | core, opentelemetry-api | Attribute names, the metric registry and its cardinality policy, and the tracer and instruments. Never configures the SDK. |
 | `reflexr.scores` | core, telemetry, workspace | Feedback types as score configs, feedback as scores, the `FeedbackMirror` that follows a log, and the `ScoreSink` and `ScoreConfigStore` ports that evaluation backends adapt. |
 | `reflexr.evals` (extra) | workspace, evalr | evalr's `FeedbackSource` over a workspace's log, and `EvaluatorAction`, which runs an evalr evaluator as a rule's action and records its verdicts as feedback. |
-| `reflexr.workspace` | core, telemetry, cronsim | `Workspaces`, `Workspace`, the storage protocol, in-memory storage, the `Reactor`, the action port and `Reaction`, schedules and their runner. |
+| `reflexr.workspace` | core, telemetry, cronsim | `Workspaces`, `Workspace` and the rule and schedule statuses it reports, the storage protocol, in-memory storage, the `Reactor`, the action port and `Reaction`, schedules and their runner. |
 | `reflexr.agent` | workspace, pydantic-ai, pydantic-graph | Agent actions with the `EventContext` capability, and graph actions with checkpoints: adapters of the action port. |
 | `reflexr.sql` (extra) | workspace, SQLAlchemy 2 async, Alembic | Durable storage on PostgreSQL and SQLite, and its migrations. |
 | `reflexr.fastapi` (extra) | workspace, FastAPI | HTTP ingest, REST reads and administration, and the WebSocket stream protocol. |
@@ -372,7 +372,7 @@ Each workspace remembers each schedule's last tick, saved in the transaction tha
 
 ## Surfaces
 
-Every surface is a thin adapter over a `Workspace` handle ([ADR-0011](adr/0011-surfaces.md)). The wire formats are in [`protocol.md`](protocol.md).
+Every surface is a thin adapter over a `Workspace` handle ([ADR-0011](adr/0011-surfaces.md)). What a surface reports, such as a rule's or a schedule's status, the handle computes, so every surface reports the same and only translates it. The wire formats are in [`protocol.md`](protocol.md).
 
 | Surface | Package | What it offers |
 |---|---|---|
@@ -381,7 +381,7 @@ Every surface is a thin adapter over a `Workspace` handle ([ADR-0011](adr/0011-s
 | Schedules | `reflexr.workspace` | Cron and interval schedules that publish into workspaces. |
 | MCP | `reflexr.mcp` | Publishing, reading and administration as MCP tools, so external agents can feed and operate workspaces. |
 
-Authentication is the host's: each surface takes a resolver that returns the tenant and actor for a request. Authorization within a tenant is the host's too: the router and the MCP server take the same `authorize(tenant_id, workspace_id, actor)` hook (`reflexr.workspace.Authorize`), asked before a request uses a workspace.
+Authentication is the host's: each surface takes a resolver that returns the tenant and actor for a request. Authorization within a tenant is the host's too: the router and the MCP server take the same `authorize(tenant_id, workspace_id, actor)` hook (`reflexr.workspace.Authorize`), asked before a request uses a workspace, and by the MCP server before a client reads or subscribes to a run.
 
 ## Workspace handles
 
@@ -398,7 +398,7 @@ await workspace.skip_run(run_id, reason="duplicate incident")
 - **Run handles.** `workspace.as_actor(AgentActor(...)).caused_by(causation, correlation_id=...)` gives a run a handle whose events record their causation and continue the run's chain; beyond `max_depth` they are rejected with `depth_exceeded`.
 - **Feedback** is validated against its type's targets and must find its target (a chain by its first event's id); it joins the target's chain.
 - **Operations** (`retry_run`, `skip_run`, `cancel_run`, `replay_rule`) apply core's transitions in one transaction and append the resulting event, attributed to the handle's actor.
-- **Reads**: `read`, `subscribe`, `head_seq`, `run`, `runs` (newest first), `dead_letters`, `rule_progress`.
+- **Reads**: `read`, `subscribe`, `head_seq`, `run`, `runs` (newest first), `dead_letters`, `rule_progress`, `schedule_ticks`, and the statuses the surfaces report: `rule_statuses` (every registered rule: enabled, cursor, lag, generation, dead letters) and `schedule_statuses` (each schedule targeting the workspace: last and next tick).
 
 Every write is a span (`reflexr.publish {type}`, a producer span; `reflexr.feedback {type}`; `reflexr.skip_run` and so on) attributed to the tenant, workspace and actor and placed in its chain's session. The W3C trace context of the publishing span is stored on the envelope, so the runs it causes can link back to it. Each evaluation pass is a `reflexr.evaluate` span listing the rules that evaluated and the firings made, and the `rule_fired` facts carry its trace context. Each run attempt is an `invoke_workflow {rule}` span in the run's session, linked to the spans that published the envelopes it matched, and the run records each attempt's trace id. Metrics come from the registry in `reflexr.telemetry.metrics`, always with tenant and workspace; a deployment keeps less detail with SDK views, which `reflexr.otel.configure_telemetry(metrics_detail=...)` installs ([ADR-0029](adr/0029-metric-detail-through-sdk-views.md)). The `[otel]` extra sets up the SDK, OTLP export and the open instrumentations in one call, and the `[langfuse]` extra adds Langfuse on the same tracer provider, with `langfuse_run` as the reactor's `run_context` so each run is filed under its chain's session. The metrics are `reflexr.events.published`, `reflexr.feedback`, `reflexr.runs`, `reflexr.firings`, `reflexr.rule.errors`, `reflexr.evaluation.lag`, `reflexr.evaluation.duration`, `reflexr.run.attempts`, `reflexr.run.duration`, `reflexr.dead_letters`, `reflexr.schedule.ticks` and the WebSocket stream's `reflexr.stream.connections` and `reflexr.stream.disconnects`.
 
