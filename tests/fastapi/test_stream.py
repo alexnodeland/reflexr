@@ -69,6 +69,32 @@ def test_an_up_to_date_client_gets_replay_complete_at_once(client: TestClient) -
         assert ws.receive_json() == {"type": "replay_complete", "up_to_seq": 1}
 
 
+def test_a_client_from_the_head_replays_nothing_and_follows_live(client: TestClient) -> None:
+    publish(client, ERROR)
+    publish(client, DEPLOY)
+    with client.websocket_connect(STREAM) as ws:
+        ws.send_json(hello(from_head=True, types=["service.error"]))
+        welcome = ws.receive_json()
+        assert (welcome["head_seq"], welcome["reset"]) == (2, False)
+        assert ws.receive_json() == {"type": "replay_complete", "up_to_seq": 2}
+        publish(client, DEPLOY)  # not received
+        publish(client, ERROR)
+        live = ws.receive_json()
+        assert (live["type"], live["seq"]) == ("event", 4)
+
+
+def test_a_client_from_the_head_cannot_also_resume(client: TestClient) -> None:
+    publish(client, ERROR)
+    with client.websocket_connect(STREAM) as ws:
+        ws.send_json(hello(from_head=True, resume_after_seq=1))
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+    assert (closed.value.code, closed.value.reason) == (
+        4400,
+        "from_head replays nothing, so resume_after_seq must be 0",
+    )
+
+
 def test_a_client_ahead_of_the_log_is_reset(client: TestClient) -> None:
     with client.websocket_connect(STREAM) as ws:
         ws.send_json(hello(resume_after_seq=99))

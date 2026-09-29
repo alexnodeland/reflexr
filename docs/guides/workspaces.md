@@ -120,7 +120,7 @@ The incident's `causation` names the firing and run behind it, and its depth cou
 
 | Method | Returns |
 |---|---|
-| `read(after_seq=0, limit=None)` | The envelopes after `after_seq`, in order |
+| `read(after_seq=0, before_seq=None, types=None, limit=None, last=None)` | The envelopes in a window of the log, in order, optionally of some types: the first `limit` or the last `last` ([below](#windows-types-and-the-tail)) |
 | `subscribe(after_seq=0)` | An async iterator of the envelopes after `after_seq`, then each new one as it commits |
 | `head_seq()` | The latest `seq`, or 0 if the log is empty |
 | `run(run_id)` | A run, or raises `NotFound` |
@@ -139,6 +139,23 @@ The statuses are what REST's `GET /v1/workspaces/{workspace_id}/rules` and `GET 
 async for envelope in monitoring.subscribe(after_seq=last_seen_seq):
     handle(envelope)
 ```
+
+### Windows, types and the tail
+
+`read` takes a window of the log, the envelopes with `after_seq < seq < before_seq`, and returns them oldest first. Without `before_seq` the window runs to the head. `types` keeps the envelopes of those event types. `limit` takes the first so many that match, and `last` the last so many, which is the tail of the log. Storage does the filtering, so SQL storage reads only the envelopes it returns, over an index on the event type ([Storage](storage.md#how-it-behaves)).
+
+```python
+# The five latest deploys, oldest first
+deploys = await workspace.read(types=["deploy.finished"], last=5)
+
+# The five before those: page backwards from the oldest seq you have
+earlier = await workspace.read(types=["deploy.finished"], last=5, before_seq=deploys[0].seq)
+
+# What happened between two points in the log
+window = await workspace.read(after_seq=40, before_seq=60)
+```
+
+Give `limit` or `last`, not both: a read with both, or with a negative number, is refused with `ValidationFailed`. Over REST the same parameters are query parameters of `GET /v1/workspaces/{workspace_id}/events`, with `type` repeated for several types ([REST endpoints](serving.md#rest-endpoints)), and over MCP they are the arguments of `read_events` ([External agents over MCP](mcp.md#tools)).
 
 A `Run` records its rule, `scope` and `scope_key`, the `seq` it fired at and the envelopes it `matched`, its chain, its `status` and `attempts`, the last `error` and its `reason` code, its `output`, a graph's latest `checkpoint`, and the trace id of each attempt. Its id is the firing's id. The [reactor](reactor.md) explains how runs move through their statuses.
 

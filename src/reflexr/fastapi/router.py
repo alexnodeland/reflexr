@@ -169,14 +169,22 @@ def reflexr_router(
     @router.get("/workspaces/{workspace_id}/events")
     async def list_events(
         after_seq: int = 0,
+        before_seq: int | None = None,
         limit: int | None = None,
+        last: int | None = None,
         type: Annotated[list[str] | None, Query()] = None,
         workspace: Workspace = current_workspace,
     ) -> list[Envelope]:
-        """Return a page of the log, optionally of some event types. ``type`` may repeat."""
-        envelopes = await workspace.read(after_seq=after_seq)
-        chosen = [e for e in envelopes if type is None or e.event_type in type]
-        return chosen if limit is None else chosen[:limit]
+        """Return a page of the log, optionally of some event types. ``type`` may repeat.
+
+        The window is ``after_seq < seq < before_seq``. ``limit`` returns its first envelopes,
+        ``last`` its last ones, oldest first either way.
+        """
+        return await _or_http(
+            workspace.read(
+                after_seq=after_seq, before_seq=before_seq, types=type, limit=limit, last=last
+            )
+        )
 
     @router.get("/rules", dependencies=[signed_in])
     async def list_rules() -> list[Rule]:

@@ -8,8 +8,12 @@ from pydantic import ValidationError
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from reflexr.agent.render import envelope_text
-from reflexr.core import Event
+from reflexr.core import Event, Rejection
 from reflexr.workspace import Reaction
+
+_DEFAULT_READ = 20
+"""How many envelopes ``read_events`` returns when the model gives neither ``limit`` nor
+``last``."""
 
 # Tools annotate their context as RunContext[...] literally: pydantic-ai detects context-taking
 # tools by that annotation, and a type alias would hide it.
@@ -35,21 +39,33 @@ def event_tools(
     async def read_events(
         ctx: RunContext[Reaction[Any]],
         after_seq: int = 0,
+        before_seq: int | None = None,
         types: list[str] | None = None,
-        limit: int = 20,
+        limit: int | None = None,
+        last: int | None = None,
     ) -> str:
         """Read envelopes from the workspace's log, oldest first.
 
         Args:
             after_seq: Only envelopes after this position in the log.
+            before_seq: Only envelopes before this position in the log.
             types: Only these event types.
-            limit: The most envelopes to return.
+            limit: The most envelopes to return, from the start. Without it or ``last``, 20.
+            last: The most envelopes to return, from the end: the latest ones. To read further
+                back, call again with ``before_seq`` set to the oldest position returned.
         """
-        found = [
-            envelope
-            for envelope in await ctx.deps.workspace.read(after_seq=after_seq)
-            if types is None or envelope.event_type in types
-        ][: min(limit, read_limit)]
+        if limit is None and last is None:
+            limit = _DEFAULT_READ
+        try:
+            found = await ctx.deps.workspace.read(
+                after_seq=after_seq,
+                before_seq=before_seq,
+                types=types,
+                limit=None if limit is None else min(limit, read_limit),
+                last=None if last is None else min(last, read_limit),
+            )
+        except Rejection as rejection:
+            raise ModelRetry(rejection.message) from rejection
         if not found:
             return "No events."
         return "\n".join(envelope_text(e, max_chars=max_event_chars) for e in found)

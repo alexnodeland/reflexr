@@ -17,6 +17,7 @@ from reflexr.core import (
     ServerFrame,
     UnknownEvent,
     UnsupportedProtocol,
+    ValidationFailed,
     Welcome,
     resume,
 )
@@ -29,6 +30,7 @@ SERVER: TypeAdapter[ServerFrame] = TypeAdapter(ServerFrame)
 def test_client_frames_round_trip_by_their_type() -> None:
     frames: list[ClientFrame] = [
         Hello(protocol=PROTOCOL, resume_after_seq=4, types=("service.error",)),
+        Hello(protocol=PROTOCOL, from_head=True),
         CommandFrame(command_id="c1", command=Publish(event=ServiceError(service="auth"), id="e1")),
         CommandFrame(
             command_id="c2",
@@ -84,3 +86,13 @@ def test_resuming_replays_after_the_clients_seq_or_resets() -> None:
     with pytest.raises(UnsupportedProtocol, match=r"this server speaks reflexr\.v1"):
         resume(Hello(protocol="reflexr.v0"), head_seq=5)
     assert RunTarget(run_id="r").kind == "run"
+
+
+def test_a_client_can_start_at_the_head_and_replay_nothing() -> None:
+    plan = resume(Hello(protocol=PROTOCOL, from_head=True), head_seq=5)
+    assert (plan.replay_after, plan.reset) == (5, False)
+    assert resume(Hello(protocol=PROTOCOL, from_head=True), head_seq=0).replay_after == 0
+    with pytest.raises(ValidationFailed, match="resume_after_seq must be 0"):
+        resume(Hello(protocol=PROTOCOL, resume_after_seq=3, from_head=True), head_seq=5)
+    with pytest.raises(UnsupportedProtocol):
+        resume(Hello(protocol="reflexr.v0", from_head=True), head_seq=5)

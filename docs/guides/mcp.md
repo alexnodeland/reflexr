@@ -70,7 +70,7 @@ The server's instructions tell the client what it is talking to: event logs, one
 | Tool | Does |
 |---|---|
 | `publish_event(workspace_id, event, id=None, correlation_id=None)` | Publishes an event, an object with its `type` and fields. An `id` already in the log adds nothing; `correlation_id` joins the causal chain that event started, and naming a later event of a chain is refused. |
-| `read_events(workspace_id, after_seq=0, types=None, limit=50)` | Reads envelopes, oldest first, as JSON lines |
+| `read_events(workspace_id, after_seq=0, before_seq=None, types=None, limit=None, last=None)` | Reads envelopes, oldest first, as JSON lines, as `GET /v1/workspaces/{workspace_id}/events` reads them: the window `after_seq < seq < before_seq`, of `types`, the first `limit` or the last `last`. Without either, the first 50. To read back from the latest events, give `last`, then `before_seq` the oldest `seq` returned ([Reading the log](workspaces.md#windows-types-and-the-tail)). |
 | `list_rules()` | The rules every workspace evaluates, as JSON. They are the application's, the same for every tenant, so every client sees them all ([Multi-tenancy and security](security.md#tenants-and-workspaces)) |
 | `rule_status(workspace_id)` | Every registered rule, as `GET /v1/workspaces/{workspace_id}/rules` lists them: whether it is enabled, its cursor, how far it is behind the log, its generation and its number of dead letters. A rule that has not evaluated the workspace yet is at cursor 0. |
 | `schedule_status(workspace_id)` | Each [schedule](schedules.md) that targets the workspace, as `GET /v1/workspaces/{workspace_id}/schedules` lists them: when it last ticked and when it ticks next, or that it has not started there yet |

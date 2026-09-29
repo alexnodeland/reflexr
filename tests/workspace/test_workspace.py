@@ -1,7 +1,7 @@
 """Workspace handles: publishing, feedback, run operations and reads, with their telemetry."""
 
 from datetime import timedelta
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 from opentelemetry.trace import SpanKind
@@ -319,6 +319,36 @@ async def test_subscribing_follows_the_log(workspace: Workspace) -> None:
     await workspace.publish(Deploy(service="auth"))
     assert (await anext(stream)).seq == 2
     await stream.aclose()
+
+
+async def test_reading_passes_the_window_filter_and_tail_to_storage(
+    workspace: Workspace,
+) -> None:
+    for service in ("auth", "billing", "search"):
+        await workspace.publish(Deploy(service=service))
+        await workspace.publish(ServiceError(service=service))
+    tail = await workspace.read(types=["deploy.finished"], last=2)
+    assert [e.seq for e in tail] == [3, 5]
+    earlier = await workspace.read(types=["deploy.finished"], last=2, before_seq=tail[0].seq)
+    assert [e.seq for e in earlier] == [1]
+    assert [e.seq for e in await workspace.read(after_seq=1, before_seq=4, limit=1)] == [2]
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"limit": 1, "last": 1}, "give limit or last, not both"),
+        ({"after_seq": -1}, "after_seq cannot be negative"),
+        ({"before_seq": -1}, "before_seq cannot be negative"),
+        ({"limit": -1}, "limit cannot be negative"),
+        ({"last": -1}, "last cannot be negative"),
+    ],
+)
+async def test_a_read_takes_limit_or_last_and_no_negative_numbers(
+    workspace: Workspace, options: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValidationFailed, match=message):
+        await workspace.read(**options)
 
 
 async def test_handles_are_scoped_to_their_tenant(workspaces: Workspaces) -> None:

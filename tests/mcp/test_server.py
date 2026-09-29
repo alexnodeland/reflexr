@@ -176,6 +176,30 @@ async def test_agents_publish_read_and_operate(server: Server, workspaces: Works
     assert run_uri("acme", "prod", done["id"]) in uris
 
 
+async def test_agents_read_the_log_from_its_end_and_backwards(
+    server: Server, workspaces: Workspaces
+) -> None:
+    mcp, _, _ = server
+    workspace = await workspaces.open("acme", "prod", actor=CLAUDE)
+    await workspace.publish_many(
+        [Deploy(service="auth") if n % 10 == 0 else ServiceError(service="auth") for n in range(60)]
+    )
+
+    async def seqs(**args: Any) -> list[int]:
+        _, lines = await call(client, "read_events", workspace_id="prod", **args)
+        return [json.loads(line)["seq"] for line in lines.splitlines()]
+
+    async with Client(mcp.server) as client:
+        assert await seqs() == list(range(1, 51)), "the first 50 by default"
+        assert await seqs(limit=60) == list(range(1, 61))
+        assert await seqs(last=3) == [58, 59, 60]
+        assert await seqs(last=2, types=["deploy.finished"]) == [41, 51]
+        assert await seqs(last=2, types=["deploy.finished"], before_seq=41) == [21, 31]
+        assert await seqs(after_seq=5, before_seq=8) == [6, 7]
+        both = await call(client, "read_events", workspace_id="prod", limit=1, last=1)
+        assert both == (True, "Error executing tool read_events: give limit or last, not both")
+
+
 async def test_runs_are_resources_of_their_tenant_only(
     server: Server, workspaces: Workspaces
 ) -> None:

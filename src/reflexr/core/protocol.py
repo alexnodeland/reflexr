@@ -11,7 +11,7 @@ from typing import Annotated, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
-from reflexr.core.errors import UnsupportedProtocol
+from reflexr.core.errors import UnsupportedProtocol, ValidationFailed
 from reflexr.core.events import AnyEvent, Envelope
 from reflexr.core.feedback import FeedbackTarget
 from reflexr.core.ids import EventId, RuleName, RunId, WorkspaceId
@@ -137,6 +137,12 @@ class Hello(_Model):
     type: Literal["hello"] = "hello"
     protocol: str
     resume_after_seq: int = Field(default=0, ge=0)
+    """The last ``seq`` the client has: everything after it is replayed."""
+
+    from_head: bool = False
+    """Start at the head of the log instead, replaying nothing. ``resume_after_seq`` must then
+    be 0; a client that reconnects resumes from ``welcome.head_seq`` with it."""
+
     types: tuple[str, ...] | None = None
     """The event types to receive; ``None`` means every type. ``replay_complete`` always
     arrives, since it is decided on the whole log."""
@@ -161,11 +167,16 @@ def resume(hello: Hello, *, head_seq: int) -> ResumePlan:
 
     Raises:
         UnsupportedProtocol: If the client speaks another protocol version.
+        ValidationFailed: If the client asks to start at the head and to resume.
     """
     if hello.protocol != PROTOCOL:
         raise UnsupportedProtocol(
             f"this server speaks {PROTOCOL}; the client asked for {hello.protocol}"
         )
+    if hello.from_head:
+        if hello.resume_after_seq:
+            raise ValidationFailed("from_head replays nothing, so resume_after_seq must be 0", [])
+        return ResumePlan(replay_after=head_seq)
     if hello.resume_after_seq > head_seq:
         # The client has seen events this log does not have: it must start over.
         return ResumePlan(replay_after=0, reset=True)

@@ -19,6 +19,7 @@ from reflexr.core import (
     Hello,
     ReplayComplete,
     UnsupportedProtocol,
+    ValidationFailed,
     Welcome,
     WorkspaceId,
     resume,
@@ -120,8 +121,8 @@ class Stream:
         head = await workspace.head_seq()
         try:
             plan = resume(hello, head_seq=head)
-        except UnsupportedProtocol as unsupported:
-            await self._close(4400, unsupported.message)
+        except (UnsupportedProtocol, ValidationFailed) as refused:
+            await self._close(4400, refused.message)
             return
         self._put(Welcome(workspace_id=workspace.workspace_id, head_seq=head, reset=plan.reset))
         self._connected = True

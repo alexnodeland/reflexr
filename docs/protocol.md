@@ -33,7 +33,7 @@ Rejections carry a stable `type` and a `message`: `not_found`, `invalid_state`, 
 |---|---|
 | `POST /v1/workspaces/{workspace_id}/commands` | One command frame; the response body is its `command_result`. A repeated `command_id` returns the first result. |
 | `POST /v1/workspaces/{workspace_id}/events` | Publish `{"event": {...}, "id"?}`, or `{"events": [{"event", "id"?}, ...], "correlation_id"?}` atomically and in order. A convenience for producers and webhooks, equivalent to `publish` commands; the response lists each `published` outcome. |
-| `GET /v1/workspaces/{workspace_id}/events?after_seq=&limit=&type=` | A page of the log, as envelopes. `type` may repeat. |
+| `GET /v1/workspaces/{workspace_id}/events?after_seq=&before_seq=&type=&limit=&last=` | A page of the log, as envelopes, oldest first: the window `after_seq < seq < before_seq` (to the head without `before_seq`), of the event types `type` names (it may repeat), and of those the first `limit` or the last `last`. `last` is the tail of the log; `last` with `before_seq` set to the oldest `seq` a client has pages backwards. Both `limit` and `last`, or a negative number, is `validation_failed`. |
 | `GET /v1/rules` | The registered rules, as JSON. Rules are the application's, shared by every tenant, so every authenticated client of any tenant gets them all, and `authorize` is not asked. |
 | `GET /v1/workspaces/{workspace_id}/rules` | Whether each rule is `enabled`, and its `cursor`, `lag` behind the head, `generation`, and `dead_letters` count. A disabled rule's cursor holds. |
 | `GET /v1/workspaces/{workspace_id}/runs?rule=&scope_key=&status=&limit=` | Runs, newest first. |
@@ -54,7 +54,7 @@ Rejections map to HTTP status codes: `not_found` → 404, `invalid_state` → 40
 sequenceDiagram
     participant C as Client
     participant S as Server
-    C->>S: hello {protocol, resume_after_seq, types?}
+    C->>S: hello {protocol, resume_after_seq or from_head, types?}
     S-->>C: welcome {workspace_id, head_seq, reset}
     S-->>C: event ... (replay after resume_after_seq)
     S-->>C: replay_complete {up_to_seq}
@@ -66,6 +66,7 @@ sequenceDiagram
 ```
 
 - `resume_after_seq` is the last `seq` the client has; the server replays everything after it. A client ahead of the log gets `reset: true` and a replay from the beginning.
+- `from_head: true` starts at the head of the log instead: nothing is replayed, `replay_complete` (`up_to_seq` is `head_seq`) follows `welcome` at once, and `reset` is `false`. The client's position is then `welcome.head_seq`, and it reconnects with `resume_after_seq` from there. A `hello` with `from_head` and a nonzero `resume_after_seq` closes with `4400`.
 - `types` filters which events are sent; `null` sends all. `replay_complete` is decided on the unfiltered log, so it always arrives.
 
 ### Server frames
@@ -110,7 +111,7 @@ reflexr's own events, alongside the application's:
 
 | MCP | reflexr |
 |---|---|
-| Tools `publish_event`, `read_events` | Publish and read, with the same idempotency and filters. |
+| Tools `publish_event`, `read_events` | Publish and read, with the same idempotency, window, filter and tail as REST. `read_events` returns 50 when given neither `limit` nor `last`. |
 | Tools `list_rules`, `rule_status`, `replay_rule` | Inspect and replay rules. `list_rules`, like `GET /v1/rules`, gives every rule to every authenticated client of any tenant. `rule_status` reports what `GET /v1/workspaces/{workspace_id}/rules` does, as a line per registered rule. |
 | Tool `schedule_status` | Each schedule targeting the workspace, with its last and next tick, as `GET /v1/workspaces/{workspace_id}/schedules` reports them. |
 | Tools `list_runs`, `get_run`, `retry_run`, `skip_run`, `cancel_run`, `list_dead_letters` | Operate runs. `list_runs` and `list_dead_letters` take the filters REST's reads do. |

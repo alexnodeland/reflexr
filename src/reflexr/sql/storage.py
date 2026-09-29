@@ -108,6 +108,7 @@ class _Transaction:
                     **self._key,
                     seq=envelope.seq,
                     event_id=envelope.id,
+                    event_type=envelope.event_type,
                     envelope=envelope.model_dump(mode="json"),
                 )
             )
@@ -125,7 +126,7 @@ class _Transaction:
         return self._workspace.head_seq
 
     async def read(self, *, after_seq: int, limit: int) -> list[Envelope]:
-        rows = await self._session.scalars(_log(self._ref, after_seq, limit))
+        rows = await self._session.scalars(_log(self._ref, after_seq=after_seq, limit=limit))
         return [_envelope(row) for row in rows]
 
     async def progress(self, rule: RuleName) -> RuleProgress | None:
@@ -262,10 +263,27 @@ def _scoped[R: ScopedRow](model: type[R], ref: WorkspaceRef) -> Select[R]:
     return select(model).where(*_in_workspace(model, ref))
 
 
-def _log(ref: WorkspaceRef, after_seq: int, limit: int | None) -> Select[EventRow]:
-    return (
-        _scoped(EventRow, ref).where(EventRow.seq > after_seq).order_by(EventRow.seq).limit(limit)
-    )
+def _log(
+    ref: WorkspaceRef,
+    *,
+    after_seq: int,
+    before_seq: int | None = None,
+    types: Collection[str] | None = None,
+    limit: int | None = None,
+    last: int | None = None,
+) -> Select[EventRow]:
+    """Select the envelopes in a window of the log: the first ``limit``, or the last ``last``.
+
+    The last are selected newest first, so the caller reverses them.
+    """
+    query = _scoped(EventRow, ref).where(EventRow.seq > after_seq)
+    if before_seq is not None:
+        query = query.where(EventRow.seq < before_seq)
+    if types is not None:
+        query = query.where(EventRow.event_type.in_(sorted(types)))
+    if last is not None:
+        return query.order_by(EventRow.seq.desc()).limit(last)
+    return query.order_by(EventRow.seq).limit(limit)
 
 
 def _envelope(row: EventRow) -> Envelope:
@@ -329,10 +347,31 @@ class SqlStorage:
         return head or 0
 
     async def read(
-        self, workspace: WorkspaceRef, *, after_seq: int = 0, limit: int | None = None
+        self,
+        workspace: WorkspaceRef,
+        *,
+        after_seq: int = 0,
+        before_seq: int | None = None,
+        types: Collection[str] | None = None,
+        limit: int | None = None,
+        last: int | None = None,
     ) -> list[Envelope]:
-        """Return logged envelopes with ``seq`` greater than ``after_seq``, in order."""
-        return [_envelope(row) for row in await self._all(_log(workspace, after_seq, limit))]
+        """Return logged envelopes in the window ``after_seq < seq < before_seq``, in order.
+
+        Of those of ``types``, if given: the first ``limit`` or the last ``last``. The filter
+        and both ends of the window are in the query, over ``ix_reflexr_events_type`` when it
+        names types, and the last are read from the end of the log.
+        """
+        query = _log(
+            workspace,
+            after_seq=after_seq,
+            before_seq=before_seq,
+            types=types,
+            limit=limit,
+            last=last,
+        )
+        envelopes = [_envelope(row) for row in await self._all(query)]
+        return envelopes if last is None else envelopes[::-1]
 
     async def subscribe(
         self, workspace: WorkspaceRef, *, after_seq: int = 0
