@@ -1,4 +1,8 @@
-"""A feedback source for evalr: people's feedback in a workspace, as examples (ADR-0020)."""
+"""A feedback source for evalr: people's feedback in a workspace, as examples (ADR-0020).
+
+Evaluators' verdicts are left out unless asked for, since a judge trained or calibrated on
+its own verdicts learns nothing from them.
+"""
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection
 from dataclasses import dataclass
@@ -56,6 +60,9 @@ class LogFeedbackSource[InputT: BaseModel, VerdictT: Feedback]:
         input_type: The evaluator's input type.
         input: Builds an input from a piece of feedback's context.
         targets: Only feedback on these kinds of target; every kind by default.
+        include_evaluators: Whether to yield feedback an ``EvaluatorActor`` gave as well. By
+            default only other actors' feedback is yielded, such as people's, because training
+            or calibrating a judge on evaluators' verdicts, its own included, is circular.
     """
 
     def __init__(
@@ -66,12 +73,14 @@ class LogFeedbackSource[InputT: BaseModel, VerdictT: Feedback]:
         input_type: type[InputT],
         input: BuildInput[InputT, VerdictT],
         targets: Collection[TargetKind] | None = None,
+        include_evaluators: bool = False,
     ) -> None:
         self._workspace = workspace
         self._feedback_type = feedback_type
         self._input_type = input_type
         self._input = input
         self._targets = targets
+        self._include_evaluators = include_evaluators
 
     @property
     def input_type(self) -> type[InputT]:
@@ -92,6 +101,8 @@ class LogFeedbackSource[InputT: BaseModel, VerdictT: Feedback]:
             if event.feedback_type != self._feedback_type.feedback_type:
                 continue
             if self._targets is not None and event.target.kind not in self._targets:
+                continue
+            if envelope.actor.kind == "evaluator" and not self._include_evaluators:
                 continue
             yield await self._example(envelope, event)
 

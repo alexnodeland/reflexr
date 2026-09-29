@@ -146,6 +146,24 @@ async def test_evaluators_run_as_rules_and_record_their_verdicts() -> None:
     assert verdict.event == FeedbackGiven(
         feedback_type="triage_quality", target=RunTarget(run_id=triaged.id), value={"correct": True}
     )
+    # A source of examples leaves the evaluator's verdicts out unless asked for them.
+    person = await workspace.give_feedback(
+        TriageQuality(correct=False), on=RunTarget(run_id=triaged.id)
+    )
+    people = LogFeedbackSource(
+        workspace, feedback_type=TriageQuality, input_type=TriageInput, input=build
+    )
+    assert [e.id async for e in people.examples()] == [person.id]
+    everyone = LogFeedbackSource(
+        workspace,
+        feedback_type=TriageQuality,
+        input_type=TriageInput,
+        input=build,
+        include_evaluators=True,
+    )
+    examples = [e async for e in everyone.examples()]
+    assert [e.id for e in examples] == [verdict.id, person.id]
+    assert examples[0].metadata["given_by"] == "evaluator:rollbacks@2"
 
 
 async def test_an_evaluator_that_hands_off_records_nothing() -> None:

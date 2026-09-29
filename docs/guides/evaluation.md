@@ -269,7 +269,8 @@ dataset = await collect("triage-quality", source)
 
 - The context holds the `feedback_given` envelope and the validated feedback, with the run and its events (`context.run`, a `RunRecord`) for feedback on a run or a firing, or the chain's envelopes (`context.chain`) for feedback on a chain. The builder may be async.
 - Example ids are the feedback's event ids, so they are stable across collections. A run's example carries the trace of its latest attempt, and every example's metadata names the tenant, workspace, target kind, `seq` and `given_by`, the participant who gave it.
-- `targets={"run"}` keeps feedback on some kinds of target only. The source yields every piece of the type, whoever gave it, evaluators' verdicts included; to train or measure a judge against people only, keep the examples whose `given_by` starts with `user:`.
+- `targets={"run"}` keeps feedback on some kinds of target only.
+- Evaluators' verdicts are left out: feedback an `EvaluatorActor` gave, such as an `EvaluatorAction`'s, is skipped, because training or calibrating a judge on evaluators' verdicts, its own among them, is circular. Pass `include_evaluators=True` to compare evaluators with each other or with people, and tell them apart by `given_by`.
 
 ### Experiments
 
