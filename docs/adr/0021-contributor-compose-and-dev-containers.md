@@ -15,6 +15,10 @@ Working on reflexr needs PostgreSQL and the reference app. Evaluating and operat
 - **Dashboards stay here,** next to the metric registry they are tested against, and are published with each release for stackr to provision by version.
 - CI validates the Compose file and dashboard JSON without starting containers.
 
+### Amendment (2026-09-29): CI builds and starts oncall
+
+Validating the Compose files without starting containers cannot tell whether the reference app's image still builds; artifactr's stopped building unnoticed (artifactr#52). CI's Compose job now builds oncall's image, starts it on the Compose PostgreSQL, waits for its health check, and requests its root page. It still starts nothing else.
+
 ## Options considered
 
 | Option | Copies of the infrastructure | Setup for a contributor |

@@ -90,6 +90,13 @@ jobs:
       # The dashboards' queries are tested against the metric registry in tests/test_dashboards.py.
       - name: The dashboards' JSON
         run: for file in deploy/grafana/dashboards/*.json; do jq empty "$file"; done
+      # Validating the files cannot tell whether oncall's image still builds and starts.
+      - name: oncall's image, built and started on the Compose PostgreSQL
+        run: |
+          docker compose --profile app up -d --build --wait oncall \
+            || { docker compose --profile app logs oncall; exit 1; }
+          curl -fsS http://127.0.0.1:8000/ > /dev/null
+          docker compose --profile app down
 
   docs:
     name: Docs
