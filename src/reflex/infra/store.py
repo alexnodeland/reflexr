@@ -27,24 +27,18 @@ if TYPE_CHECKING:
     from sqlmodel.ext.asyncio.session import AsyncSession
 
 
-# Lazy event adapter to avoid circular imports at module load time.
-# The adapter is initialized on first use, ensuring the import only
-# happens once rather than on every function call.
-_event_adapter: TypeAdapter[Any] | None = None
-
-
 def _get_event_adapter() -> TypeAdapter[Any]:
-    """Get the Event TypeAdapter, initializing lazily if needed.
+    """Get a fresh Event TypeAdapter with all registered types.
+
+    Creates a new TypeAdapter each time to ensure custom event types
+    registered via @EventRegistry.register are included.
 
     Returns:
-        TypeAdapter for parsing Event JSON
+        TypeAdapter for parsing Event JSON including custom types
     """
-    global _event_adapter
-    if _event_adapter is None:
-        from reflex.core.events import Event
+    from reflex.core.events import get_event_union
 
-        _event_adapter = TypeAdapter(Event)
-    return _event_adapter
+    return TypeAdapter(get_event_union())
 
 
 class EventRecord(SQLModel, table=True):

@@ -7,14 +7,14 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Path, Query, Request, status
+from fastapi import APIRouter, Body, Depends, Path, Query, Request, status
 from pydantic import BaseModel, Field
 
 from reflex.api.deps import get_store
 from reflex.api.rate_limiting import limiter
 from reflex.config import get_settings
 from reflex.core.errors import EventNotFoundError
-from reflex.core.events import Event  # noqa: TC001 - FastAPI needs this at runtime
+from reflex.core.events import EventRegistry
 from reflex.infra.store import EventStore
 
 # Type alias for cleaner route signatures
@@ -65,22 +65,25 @@ def _get_rate_limit() -> str:
 @limiter.limit(_get_rate_limit)  # pyright: ignore[reportUntypedFunctionDecorator]
 async def publish_event(
     request: Request,  # Required for rate limiter
-    event: Event,
+    event_data: Annotated[dict[str, Any], Body()],
     store: StoreDep,
 ) -> PublishResponse:
     """Publish an event to the event store.
 
-    The event must conform to one of the defined event types
-    (WebSocketEvent, HTTPEvent, TimerEvent, LifecycleEvent).
+    The event must conform to one of the registered event types.
+    Built-in types: WebSocketEvent, HTTPEvent, TimerEvent, LifecycleEvent.
+    Custom types can be registered using @EventRegistry.register.
 
     Args:
         request: The incoming request (used for rate limiting)
-        event: The event to publish
+        event_data: The event data as a dictionary
         store: The EventStore dependency
 
     Returns:
         The event ID and publication status
     """
+    # Parse using EventRegistry to support custom event types
+    event = EventRegistry.parse(event_data)
     await store.publish(event)
     return PublishResponse(id=event.id, status="published")
 

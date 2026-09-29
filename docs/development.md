@@ -28,6 +28,36 @@ Commands and workflows for developing with Reflex.
     make demo
     ```
 
+## 📦 Running Examples
+
+Reflex includes several example applications demonstrating different use cases.
+
+```bash
+# List available examples
+make examples-list
+
+# Run a specific example
+make example EXAMPLE=basic
+make example EXAMPLE=fraud_detection
+```
+
+### Available Examples
+
+| Example | Description |
+|---------|-------------|
+| `basic` | Error monitoring with alert triggers |
+| `fraud_detection` | E-commerce order fraud detection with LLM |
+| `incident_response` | Automated incident response system |
+| `log_anomaly` | Log anomaly detection agent |
+| `support_bot` | Customer support chatbot |
+| `content_moderation` | Content moderation with AI classification |
+
+!!! note "Requirements"
+    Examples require:
+
+    - A running database: `docker compose up db -d`
+    - API keys: `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
+
 ## 🧪 Testing
 
 ```bash

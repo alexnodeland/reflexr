@@ -1,4 +1,4 @@
-.PHONY: dev test lint type-check format clean logs shell ci docs docs-build docs-deploy api-test api-test-health api-test-events
+.PHONY: dev test lint type-check format clean logs shell ci docs docs-build docs-deploy api-test api-test-health api-test-events example examples-list
 
 # CI - Emulate GitHub Actions pipeline locally
 ci:
@@ -61,6 +61,16 @@ migrate:
 # Utilities
 demo:
 	uv run python scripts/demo.py
+
+example:
+ifndef EXAMPLE
+	@uv run python scripts/run_example.py --list
+else
+	@uv run python scripts/run_example.py $(EXAMPLE)
+endif
+
+examples-list:
+	@uv run python scripts/run_example.py --list
 
 replay:
 	docker compose run --rm app python scripts/replay.py $(ARGS)

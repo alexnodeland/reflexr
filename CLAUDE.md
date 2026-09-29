@@ -9,6 +9,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 make dev                  # Start with docker compose (includes PostgreSQL)
 make dev-build            # Rebuild and start
 make demo                 # Run interactive demo (server must be running)
+make example EXAMPLE=basic  # Run an example (fraud_detection, log_anomaly, etc.)
+make examples-list        # List available examples
 
 # Testing
 make test                 # Run all tests in Docker

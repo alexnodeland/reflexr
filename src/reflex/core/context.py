@@ -13,8 +13,28 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
 
-    from reflex.core.events import Event
+    from reflex.core.events import BaseEvent, Event
     from reflex.infra.store import EventStore
+
+# Type variable for event types
+from typing import TypeVar
+
+T = TypeVar("T", bound="BaseEvent")
+
+
+def _create_derived_meta(
+    causation_id: str,
+    correlation_id: str | None,
+    trace_id: str,
+) -> Any:
+    """Create EventMeta for a derived event."""
+    from reflex.core.events import EventMeta
+
+    return EventMeta(
+        causation_id=causation_id,
+        correlation_id=correlation_id or causation_id,
+        trace_id=trace_id,
+    )
 
 
 def _empty_event_list() -> list[Event]:
@@ -146,22 +166,35 @@ class AgentContext:
     publish: Callable[[Any], Coroutine[Any, Any, None]]
     scope: str
 
-    def derive_event(self, **kwargs: Any) -> dict[str, Any]:
-        """Create event data derived from the current event.
+    def derive_event(self, event_type: type[T], **kwargs: Any) -> T:
+        """Create a new event derived from the current event.
 
-        Automatically sets causation_id and correlation_id for tracing.
+        Automatically sets causation_id and correlation_id for tracing,
+        and inherits the source from the current event.
 
         Args:
-            **kwargs: Additional fields for the new event
+            event_type: The event class to instantiate
+            **kwargs: Fields for the new event
 
         Returns:
-            Dict with meta fields set for event derivation
+            A new event instance with tracing metadata set
+
+        Example:
+            alert = ctx.derive_event(
+                AlertEvent,
+                title="Error Alert",
+                severity="high",
+            )
+            await ctx.publish(alert)
         """
-        return {
-            "meta": {
-                "causation_id": self.event.id,
-                "correlation_id": self.event.meta.correlation_id or self.event.id,
-                "trace_id": self.event.meta.trace_id,
-            },
-            **kwargs,
-        }
+        # Set source from current event if not provided
+        if "source" not in kwargs:
+            kwargs["source"] = self.event.source
+
+        # Create the event with tracing metadata
+        meta = _create_derived_meta(
+            causation_id=self.event.id,
+            correlation_id=self.event.meta.correlation_id,
+            trace_id=self.event.meta.trace_id,
+        )
+        return event_type(meta=meta, **kwargs)

@@ -7,6 +7,7 @@ They use PydanticAI for LLM integration with type-safe tools.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import logfire
@@ -186,15 +187,37 @@ class SimpleAgent(Agent):
     Use this for agents that don't need LLM capabilities,
     just event processing logic.
 
-    Example:
+    Can be used in two ways:
+
+    1. Functional style (recommended for simple cases):
+        async def process(ctx: AgentContext) -> dict:
+            return {"processed": ctx.event.id}
+
+        agent = SimpleAgent(process)
+
+    2. Subclass style (for more complex agents):
         class LoggingAgent(SimpleAgent):
-            async def handle(self, ctx: AgentContext) -> None:
+            async def handle(self, ctx: AgentContext) -> Any:
                 print(f"Received event: {ctx.event.id}")
     """
 
+    _handler: Callable[[AgentContext], Awaitable[Any]] | None = None
+
+    def __init__(
+        self,
+        handler: Callable[[AgentContext], Awaitable[Any]] | None = None,
+    ) -> None:
+        """Initialize the agent.
+
+        Args:
+            handler: Optional async function to handle events.
+                     If not provided, override the handle() method instead.
+        """
+        self._handler = handler
+
     async def run(self, ctx: AgentContext) -> None:
         """Execute the agent by calling handle()."""
-        agent_name = self.__class__.__name__
+        agent_name = self._handler.__name__ if self._handler else self.__class__.__name__
         with logfire.span(
             "agent.run",
             agent=agent_name,
@@ -203,13 +226,18 @@ class SimpleAgent(Agent):
         ):
             await self.handle(ctx)
 
-    @abstractmethod
-    async def handle(self, ctx: AgentContext) -> None:
+    async def handle(self, ctx: AgentContext) -> Any:
         """Handle the event.
 
-        Override this with your event processing logic.
+        Override this with your event processing logic,
+        or pass a handler function to __init__.
 
         Args:
             ctx: The agent context with event and dependencies
+
+        Returns:
+            Any result from processing
         """
-        ...
+        if self._handler is not None:
+            return await self._handler(ctx)
+        raise NotImplementedError("Either pass a handler to __init__ or override handle()")

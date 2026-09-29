@@ -194,20 +194,56 @@ def register_trigger(trigger: Trigger) -> None:
 def trigger(
     name: str,
     filter: EventFilter,
+    agent: Agent | None = None,
+    trigger_func: TriggerFunc | None = None,
     scope_key: Callable[[Any], str] | None = None,
     priority: int = 0,
-) -> Callable[[type[Agent]], type[Agent]]:
-    """Decorator to register an agent class as a trigger.
+) -> Callable[[type[Agent] | Callable[..., Any]], type[Agent] | Callable[..., Any]]:
+    """Decorator to register a trigger.
 
-    Example:
-        @trigger("chat_handler", TypeFilter(types=["ws.message"]))
-        class ChatAgent(BaseAgent):
-            async def run(self, ctx: AgentContext) -> None:
+    Can be used in two ways:
+
+    1. Decorating an Agent class:
+        @trigger("chat_handler", filter=type_filter("ws.message"))
+        class ChatAgent(SimpleAgent):
+            async def handle(self, ctx: AgentContext) -> None:
                 ...
+
+    2. With an agent instance (decorates a placeholder function):
+        @trigger(
+            name="error-alert",
+            filter=type_filter("app.error"),
+            agent=my_agent,
+            trigger_func=error_threshold_trigger(threshold=5),
+            priority=10,
+        )
+        def error_handler():
+            pass
+
+    Args:
+        name: Unique name for the trigger
+        filter: EventFilter to match events
+        agent: Optional agent instance (if not decorating a class)
+        trigger_func: Optional trigger function for complex trigger logic
+        scope_key: Function to extract scope key from event (for locking)
+        priority: Higher priority triggers execute first
     """
 
-    def decorator(agent_cls: type[Agent]) -> type[Agent]:
-        agent_instance = agent_cls()
+    def decorator(
+        target: type[Agent] | Callable[..., Any],
+    ) -> type[Agent] | Callable[..., Any]:
+        # Determine the agent to use
+        if agent is not None:
+            # Agent was passed as argument
+            agent_instance = agent
+        elif isinstance(target, type):
+            # Decorating an Agent class
+            agent_instance = target()
+        else:
+            raise ValueError(
+                "trigger() must either decorate an Agent class or be passed an agent= argument"
+            )
+
         t = Trigger(
             name=name,
             filter=filter,
@@ -216,7 +252,12 @@ def trigger(
             priority=priority,
         )
         register_trigger(t)
-        return agent_cls
+
+        # Store trigger_func on the trigger for later use if provided
+        if trigger_func is not None:
+            t.trigger_func = trigger_func  # type: ignore[attr-defined]
+
+        return target
 
     return decorator
 
@@ -231,7 +272,7 @@ def trigger(
 def error_threshold_trigger(
     threshold: int,
     window_seconds: float = 60.0,
-    error_types: tuple[str, ...] = ("lifecycle",),
+    error_types: tuple[str, ...] | list[str] = ("lifecycle",),
 ) -> TriggerFunc:
     """Create a trigger that fires when error count exceeds threshold.
 

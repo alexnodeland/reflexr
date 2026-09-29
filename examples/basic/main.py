@@ -65,7 +65,7 @@ class AlertEvent(BaseEvent):
 # =============================================================================
 
 alert_classifier = Agent(
-    "openai:gpt-4o-mini",
+    "anthropic:claude-sonnet-4-20250514",
     deps_type=ReflexDeps,
     system_prompt="""You are an error classification assistant.
     Given error events, determine the appropriate alert severity and compose
