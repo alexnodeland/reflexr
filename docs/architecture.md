@@ -128,12 +128,13 @@ class Envelope(BaseModel):
     actor: Actor  # who published it
     causation: Causation | None  # the firing and run that emitted it, and the chain's depth
     correlation_id: str  # the id of the first event in its causal chain
+    traceparent: str | None  # the W3C trace context of the span that published it
     event: Event  # discriminated by `type`
 ```
 
 - **Publishing is idempotent** by event id within a workspace, so producers can retry, and a run that retries does not duplicate the events it emits.
-- **Application events form an open family**: any registered `Event` subclass. reflexr's own facts form a **closed** union, so pyright checks `match` blocks for exhaustiveness: `RuleFired`, `RuleErrored`, `RuleReset`, `RunStarted`, `RunProgressed`, `RunRetrying`, `RunSucceeded`, `RunDeadLettered`, `RunCancelled`, `RunSkipped`, and `Tick` from schedules. An event type from a newer version validates as `UnknownEvent` and round-trips unchanged.
-- **Actors** match artifactr's kinds: `UserActor`, `AgentActor` (an agent or graph run, by rule and run), `ExternalAgentActor` (an MCP client) and `SystemActor` (the reactor and schedules), plus `SourceActor` for systems that publish events, such as a monitoring service.
+- **Application events form an open family**: any registered `Event` subclass. reflexr's own facts form a **closed** union, so pyright checks `match` blocks for exhaustiveness: `RuleFired`, `RuleErrored`, `RuleReset`, `RunStarted`, `RunProgressed`, `RunRetrying`, `RunSucceeded`, `RunDeadLettered`, `RunCancelled`, `RunSkipped`, `FeedbackGiven`, and `Tick` from schedules. An event type from a newer version validates as `UnknownEvent` and round-trips unchanged.
+- **Actors** match artifactr's kinds: `UserActor`, `AgentActor` (an agent or graph run, by rule and run), `ExternalAgentActor` (an MCP client), `SystemActor` (the reactor and schedules) and `EvaluatorActor` (a judge or decision model, by name and version), plus `SourceActor` for systems that publish events, such as a monitoring service.
 - **Type allowlist.** `Workspaces(storage, events=[ServiceError, Deploy, Heartbeat])` rejects publishing any other type, even one registered elsewhere in the process.
 
 ## Rules
@@ -275,6 +276,19 @@ runbook = GraphAction(runbook_graph, name="runbook", state=RunbookState, inputs=
 - **Functions** are `async def` over a `Reaction`.
 
 Rules refer to actions by name (`{"action": "triage"}`), because functions and agents are not data. `run(triage)` takes the action's name. The application gives the reactor its actions, and `Rule.check` confirms at startup that every rule's action, event types, fields and predicates exist.
+
+## Feedback
+
+People's and evaluators' judgements are typed ([ADR-0019](adr/0019-typed-feedback-as-events.md)). A feedback type is a Pydantic model that subclasses `Feedback`, registered by name, and declares what it can be given on: a **run** (a workflow execution), a **firing** (whether the rule should have fired) or a **chain** (everything one triggering event led to):
+
+```python
+class Triage(Feedback, name="triage", targets={"run"}):
+    correct: bool
+    severity: Literal["low", "high", "critical"]
+    reason: str | None = None
+```
+
+Feedback is recorded as a `feedback_given` event (the type, the target and the validated value), so it is attributed, replayable, and something rules can watch. An evaluator's verdict is feedback given by an `EvaluatorActor`, so people's and evaluators' judgements can be compared directly. `Run.trace_ids` records each attempt's trace, so feedback on a run can be attached to it in Langfuse ([RFC-0002](rfcs/0002-observability-feedback-and-evaluation.md)).
 
 ## Safety
 

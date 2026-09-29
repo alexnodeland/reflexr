@@ -66,7 +66,7 @@ sequenceDiagram
 
 ### Server frames
 
-- `event`: an envelope, `{"type": "event", "seq", "id", "ts", "workspace_id", "actor", "causation", "correlation_id", "event": {...}}`.
+- `event`: an envelope, `{"type": "event", "seq", "id", "ts", "workspace_id", "actor", "causation", "correlation_id", "traceparent", "event": {...}}`. `traceparent` is the W3C trace context of the span that published the event, or `null`.
 - `command_result`: `{"type": "command_result", "command_id", "ok", "outcome" | "rejection"}`.
 - `replay_complete`: `{"type": "replay_complete", "up_to_seq"}`.
 - `error`: `{"type": "error", "message"}`, for a frame that is not a valid command. The connection stays open.
@@ -83,9 +83,10 @@ reflexr's own events, alongside the application's:
 | `run_succeeded` | `run_id`, `output?` |
 | `run_dead_lettered` | `run_id`, `attempts`, `error` |
 | `run_cancelled`, `run_skipped` | `run_id`, `reason?` |
+| `feedback_given` | `feedback_type`, `target` (`{kind: run, run_id}`, `{kind: firing, firing_id}` or `{kind: chain, correlation_id}`), `value` |
 | `tick` | `schedule`, `at` |
 
-`actor.kind` is `user`, `agent` (`rule`, `run_id`, `name`), `external_agent` (`client_id`, `name?`), `system` (`name`) or `source` (`name`). `causation` is `{firing_id, run_id, depth}` for an event a run emitted, and `null` otherwise.
+`actor.kind` is `user`, `agent` (`rule`, `run_id`, `name`), `external_agent` (`client_id`, `name?`), `system` (`name`), `source` (`name`) or `evaluator` (`name`, `version`). `causation` is `{firing_id, run_id, depth}` for an event a run emitted, and `null` otherwise.
 
 ### Close codes
 
