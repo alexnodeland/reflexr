@@ -11,18 +11,20 @@
 
 ## Summary
 
-Rules are typed, serializable data ([ADR-0006][adr-0006]), but they're registered in code, and every tenant's workspaces evaluate the same ones ([ADR-0016][adr-0016], as amended). This RFC proposes **stored rules**. A stored rule belongs to one workspace and is versioned. It is installed, changed, disabled and archived through the protocol's commands, and running reactors pick up each change at their next batch.
+Rules are typed, serializable data ([ADR-0006][adr-0006]), but they're registered in code, and every tenant's workspaces evaluate the same ones ([ADR-0016][adr-0016], as amended). This RFC proposes **stored rules**: the same `Rule`, kept in storage for one workspace, installed and changed through the protocol's commands, and picked up by running reactors at their next batch.
 
-The recommendations, taken together:
+It aims at the smallest design that serves stackr RFC-0002's rules from chat. It reuses the machinery reflexr has: the `Rule` model and `Rule.check`, `begin`, `reset`, generations and `reflexr:rule_reset`, `enabled`, `replay_rule`, the command handler, and the storage port's contract for due runs. The recommendations, taken together:
 
-- A stored rule belongs to **one workspace**. Its name is **qualified**, such as `chat:prod-deploy-failures`, in a namespace the policy grants, so it can never clash with the application's rules, which keep bare names.
-- **Every change is a new, immutable version.** A new condition or scope resets the rule, through the same generation and `reflexr:rule_reset` machinery code rules use. Installing replays nothing unless asked to rebuild.
-- Stored rules run only **registered actions** that an application **policy** allows, with **typed parameters** that each action declares. They watch only the **event namespaces** the policy grants, resolved in the registry of their `Workspaces`.
-- Five **commands** go through the one handler: `install_rule`, `update_rule`, `disable_rule`, `enable_rule` and `archive_rule`. A **policy hook** on `Workspaces` authorizes each change, and refuses everything unless configured. Each version records its **provenance** in typed fields.
-- Each change is a **fact in the workspace's log**, written in the same transaction as the rule. Reactors read a workspace's stored rules **from storage** on every pass and cache each version, so no process runs a replaced definition.
-- A stored rule needs a **cap**, a new throttle across all of its scopes. The policy bounds retries, timeouts, windows and the number of rules. It may lower the depth limit, and nothing can raise it.
-- `GET /v1/rules` still lists only code rules. Stored rules are listed **only within their workspace**, behind `authorize`.
-- Metrics record stored rules under a **bounded label** by default, so the dashboards don't grow a series per stored rule.
+- A stored rule belongs to **one workspace**. Its name is **qualified**, such as `chat:prod-deploy-failures`, so it can never clash with the application's rules, which keep bare names.
+- A change to its condition or scope **resets it as a code rule is reset**, but in the change's own transaction, so no event is missed. Installing replays nothing, and `replay_rule` warms a rule when asked.
+- It runs only **registered actions** that the application's **policy** allows, with **typed parameters** each action declares. It watches only the **event namespaces** the policy grants.
+- **Three commands** go through the one handler: `install_rule`, `update_rule` and `archive_rule`. Disabling is an update of `enabled`. A **`rule_policy`** on `Workspaces` authorizes each change, and refuses everything unless configured.
+- Each change is a **`reflexr:rule_installed` fact** carrying the rule and its provenance. The log is the history, and one table holds each rule's current version.
+- Reactors read a workspace's stored rules **from storage** on every pass, so no process runs a replaced definition.
+- A stored rule needs a **throttle**. It has no scope fields unless the policy allows them, so the throttle bounds the whole rule. Nothing can raise the depth limit.
+- `GET /v1/rules` still lists only code rules. Stored rules are listed **only within their workspace**.
+- Metrics record a stored rule under its **namespace**, so the dashboards don't grow a series per stored rule.
+- Everything else is **[deferred](#deferred)** until something needs it.
 
 **This RFC waits for the maintainer's decisions** on the questions in [Decision points](#decision-points). Nothing is built until then.
 
@@ -73,25 +75,23 @@ The rule from the scenario, installed over REST (`POST /v1/workspaces/prod/comma
           {"kind": "where", "field": "environment", "op": "eq", "value": "production"},
           {"kind": "where", "field": "status", "op": "eq", "value": "failed"}
         ]},
-        "throttle": {"at_most": 1, "per": "PT15M"},
-        "cap": {"at_most": 10, "per": "PT1H"}
+        "throttle": {"at_most": 1, "per": "PT15M"}
       },
-      "scope": {"fields": ["service"]},
       "then": {"action": "notify", "params": {"thread_id": "thr_4"}},
       "timeout": "PT1M"
     },
     "provenance": {
       "source": "artifactr",
-      "record": "art_rule_7",
-      "record_version": 3,
-      "approval": "prp_12",
-      "approved_by": {"kind": "user", "id": "ada"}
+      "artifact": "art_rule_7",
+      "artifact_version": 3,
+      "proposal": "prp_12",
+      "approved_by": "user:ada"
     }
   }
 }
 ```
 
-Three parts are new: the qualified `name` ([D1b](#d1b-names-and-code-rules-of-the-same-name)), the `cap` across scopes ([D6a](#d6a-the-required-throttle)) and the action's `params` ([D3b](#d3b-parameters)). The event type is qualified, as every type is under ADR-0039, and the policy must let the rule watch the `oncall` namespace ([D3c](#d3c-which-event-types-a-stored-rule-may-watch)).
+Two parts of the rule are new: the qualified `name` ([D1b](#d1b-names-and-code-rules-of-the-same-name)) and the action's `params` ([D3b](#d3b-parameters)). The rest is a rule as reflexr has it today. Its event type is qualified, as every type is under ADR-0039, and the policy must let the rule watch the `oncall` namespace ([D3c](#d3c-which-event-types-a-stored-rule-may-watch)). The provenance is relayr's, and reflexr stores it as given ([D4d](#d4d-provenance)).
 
 The outcome:
 
@@ -110,11 +110,9 @@ In the same transaction, the workspace's log gains a fact. relayr installs from 
     "type": "reflexr:rule_installed",
     "rule": "chat:prod-deploy-failures",
     "version": 1,
-    "previous_version": null,
-    "definition": "4be1c0a79d2e3f18",
     "reset": false,
     "spec": {"name": "chat:prod-deploy-failures", "when": {"...": "..."}, "then": {"...": "..."}},
-    "provenance": {"source": "artifactr", "record": "art_rule_7", "record_version": 3, "approval": "prp_12", "approved_by": {"kind": "user", "id": "ada"}}
+    "provenance": {"source": "artifactr", "artifact": "art_rule_7", "artifact_version": 3, "proposal": "prp_12", "approved_by": "user:ada"}
   }
 }
 ```
@@ -126,55 +124,56 @@ The rule's cursor starts at 812, its own fact, so it acts only on deploys logged
 ```mermaid
 stateDiagram-v2
     [*] --> Enabled: install_rule (version 1)
-    Enabled --> Enabled: update_rule (a new version)
-    Enabled --> Disabled: disable_rule (a new version)
-    Disabled --> Disabled: update_rule (a new version)
-    Disabled --> Enabled: enable_rule (a new version)
+    Enabled --> Enabled: update_rule
+    Enabled --> Disabled: update_rule with enabled false
+    Disabled --> Enabled: update_rule with enabled true
+    Disabled --> Disabled: update_rule
     Enabled --> Archived: archive_rule
     Disabled --> Archived: archive_rule
     Archived --> Enabled: install_rule (numbering continues)
 ```
 
 - **Enabled** rules are evaluated, and their runs executed.
-- **Disabled** rules behave as a disabled code rule does. The cursor holds, nothing is evaluated, and waiting runs wait.
-- **Archived** rules are gone from evaluation and listings. Their unfinished runs are cancelled, and their scope states cleared. The versions and the generation are kept, so a rule installed again under the same name continues its numbering and never reuses a firing id.
+- **Disabled** rules behave as a disabled code rule does, through the same `enabled` field. The cursor holds, nothing is evaluated, and waiting runs wait.
+- **Archived** rules are gone from evaluation and listings. Their unfinished runs are cancelled, and their scope states cleared. The rule's progress row is kept, and with it its generation, so a rule installed again under the same name never reuses a firing id. Its version numbering continues too.
+
+Every change makes a new version, numbered from 1 for each workspace and name.
 
 ### Where the pieces go
 
 | Piece | Package |
 |---|---|
-| `Provenance`, `RuleVersion`, `RuleLimits` and its pure check, the `cap` stage, `ActionRef.params`, the `reflexr:rule_installed` and `reflexr:rule_archived` facts | `reflexr.core` |
-| Stored rules and their versions, in memory and in SQL, and due runs that see them | the storage port, `InMemoryStorage`, `reflexr.sql` |
-| `Workspaces(rule_policy=)`, the handle's changes and reads, and the reactor and executor reading stored rules | `reflexr.workspace` |
-| The commands, reads and tools | `reflexr.fastapi`, `reflexr.mcp` |
-| The stored-rule metric attribute, the views and the dashboards | `reflexr.telemetry`, `reflexr.otel`, `deploy/grafana/` |
+| The stored name pattern, `ActionRef.params`, `RuleLimits` and its pure check, the `reflexr:rule_installed` and `reflexr:rule_archived` facts | `reflexr.core` |
+| One table of stored rules, in memory and in SQL, and due runs that see them | the storage port, `InMemoryStorage`, `reflexr.sql` |
+| `Workspaces(rule_policy=)`, the handle's changes and read, and the reactor and executor reading stored rules | `reflexr.workspace` |
+| The commands, the read and the tools | `reflexr.fastapi`, `reflexr.mcp` |
 
 ## Decision points
 
-Each question below has options, their trade-offs, and a recommendation in bold. The maintainer decides each one. This RFC is then updated to the decisions and accepted, and ADRs record them as they are built.
+Each question below has options, their trade-offs, and a recommendation in bold. Options that add surface without a present need are marked **deferred**, with what would bring them back, and [Deferred](#deferred) collects them. The maintainer decides each question. This RFC is then updated to the decisions and accepted, and ADRs record them as they are built.
 
 | # | Question | Recommendation |
 |---|---|---|
 | D1a | How far a stored rule reaches | One workspace |
 | D1b | Names, and code rules of the same name | Qualified names for stored rules. Code rules keep bare names and can't be overridden |
-| D2a | What a version is | Every change is a new, immutable version |
-| D2b | What resets a rule | `Rule.definition()`, as today: a new condition or scope. The reset happens in the change's transaction |
-| D2c | Replay on install | None, unless the installer asks to rebuild. Never refire |
-| D2d | Which version a waiting run executes | The current one. The run records the version that fired it |
+| D2a | What is kept of versions | The current rule and its version number. The log's facts are the history |
+| D2b | What resets a rule | `Rule.definition()`, as today, with the existing `begin` and `reset` called in the change's transaction |
+| D2c | Replay on install | None. `replay_rule` exists for warming a rule |
+| D2d | Which version a waiting run executes | The current one, as for code rules |
 | D3a | Which actions a stored rule may use | The allowlist the rule policy returns, per tenant, workspace and installer |
 | D3b | Parameters | Typed: each action declares a parameters model, checked at install |
-| D3c | Which event types a stored rule may watch | The namespaces, and single types, the rule policy grants. Types resolve in the `Workspaces` registry, at install and again when a reactor loads the version |
-| D4a | The commands | Five: install, update, disable, enable, archive |
-| D4b | Who may change rules | A `rule_policy` hook on `Workspaces`, asked for every change, refusing everything by default |
+| D3c | Which event types a stored rule may watch | The namespaces the rule policy grants. Types resolve in the `Workspaces` registry, as for code rules |
+| D4a | The commands | Three: install, update, archive |
+| D4b | Who may change rules | A `rule_policy` hook on `Workspaces`, refusing everything by default |
 | D4c | Idempotency | A change that matches the current version is a duplicate, and changes may carry `expected_version` |
-| D4d | Provenance | Typed, generic fields, plus a small map |
-| D5 | How running reactors learn of changes | Read from storage on every pass, cached by version. Facts in the log for everyone else |
-| D6a | The required throttle | A cap across all of the rule's scopes |
-| D6b | The depth limit | No field on rules. The policy may lower the limit for stored rules |
+| D4d | Provenance | An opaque, bounded map, stored and returned |
+| D5 | How running reactors learn of changes | Read from storage on every pass. Facts in the log for everyone else |
+| D6a | The required throttle | The existing per-scope throttle, required, with no scope fields unless the policy allows them |
+| D6b | The depth limit | Nothing new: rules have no depth field, so none can raise it |
 | D6c | Where the limits live | In the limits the policy returns, with defaults |
-| D6d | How many rules | A limit per workspace, enforced by reflexr. A tenant-wide limit is the policy's |
+| D6d | How many rules | A limit per workspace, enforced by reflexr |
 | D7 | Listing and tenancy | `GET /v1/rules` unchanged. Stored rules only in their workspace's reads |
-| D8 | Rules as a metric label | A bounded label for stored rules. Their names go in a separate attribute, which views keep only when asked |
+| D8 | Rules as a metric label | A stored rule's namespace, such as `chat:*` |
 
 ### D1. Where stored rules live, and how they're scoped
 
@@ -183,82 +182,79 @@ Each question below has options, their trade-offs, and a recommendation in bold.
 | Option | Commands and `authorize` | Its facts | Its rows | Reaching every workspace |
 |---|---|---|---|---|
 | **One workspace (recommended)** | The workspace's own commands, which `authorize` already guards | In the workspace's log, in the change's transaction | Keyed by tenant and workspace, as every table is ([ADR-0030][adr-0030]) | Install it in each |
-| The tenant | A tenant-level route and a new hook. Nothing asks `authorize` without a workspace today | No single log. Written to every workspace, or to none | Keyed by tenant only, with no workspace lock to serialize a change with evaluation | Automatic, including workspaces created later |
-| The tenant, with target workspaces, as schedules have | As for the tenant | As for the tenant | As for the tenant | Chosen per rule |
+| The tenant. **Deferred** until a tenant needs one rule in every workspace | A tenant-level route and a new hook. Nothing asks `authorize` without a workspace today | No single log. Written to every workspace, or to none | Keyed by tenant only, with no workspace lock to serialize a change with evaluation | Automatic, including workspaces created later |
+| The tenant, with target workspaces, as schedules have. **Deferred**, as above | As for the tenant | As for the tenant | As for the tenant | Chosen per rule |
 
-**Recommended: one workspace.** A draft is written in one artifactr workspace, and the reflexr workspace with the same id is the one it's about. Everything a rule does in a workspace is already the workspace's: its cursor, state, runs and dead letters ([ADR-0016][adr-0016]). A change takes the workspace's lock, so it is atomic with its fact and the rule's progress, and serialized with evaluation. A tenant that wants the same rule everywhere installs it in each workspace. Tenant-wide rules are left as an [unresolved question](#unresolved-questions).
+**Recommended: one workspace.** A draft is written in one artifactr workspace, and the reflexr workspace with the same id is the one it's about. Everything a rule does in a workspace is already the workspace's: its cursor, state, runs and dead letters ([ADR-0016][adr-0016]). A change takes the workspace's lock, so it is atomic with its fact and the rule's progress, and serialized with evaluation. A tenant that wants the same rule everywhere installs it in each workspace.
 
 #### D1b: names, and code rules of the same name
 
-A rule's name keys its progress, scope states, runs, dead letters and firing ids, and appears in metrics, spans and the D2 actor of stackr's RFC-0002 (`reflexr:<rule>`). Within a workspace, a stored rule and a code rule can't share one.
-
-ADR-0039 qualifies every event type. It says nothing about rule names, which are a separate matter.
+A rule's name keys its progress, scope states, runs, dead letters and firing ids, and appears in metrics, spans and the D2 actor of stackr's RFC-0002 (`reflexr:<rule>`). Within a workspace, a stored rule and a code rule can't share one. ADR-0039 qualifies every event type, but it says nothing about rule names, which are a separate matter.
 
 | Option | A clash at install | A later deploy adds a code rule a stored rule already has | Seen at a glance |
 |---|---|---|---|
 | One name space; installing a code rule's name is refused | Refused | No good answer. Either the stored rule is shadowed, or startup fails because of a tenant's data. A tenant can take names the application will want | No |
 | **Qualified names for stored rules; code rules stay bare (recommended)** | Can't happen | Can't happen | Yes: in logs, runs, spans and dashboards |
-| Every rule name qualified, as every event type now is: code rules in the application's namespace, stored rules in namespaces the policy grants | Refused if the policy grants a namespace code rules use | The same squatting as the first option, unless rule namespaces are declared as event namespaces are | Yes |
+| Every rule name qualified, as every event type now is | Refused if the policy grants a namespace code rules use | The same squatting as the first option, unless rule namespaces are declared as event namespaces are | Yes |
 | A stored rule overrides the code rule of the same name in its workspace | Intended | The code rule quietly stops running in that workspace | No |
 
 **Recommended: qualified names for stored rules, bare names for code rules.**
 
-- A stored rule's name is `namespace:name`, such as `chat:prod-deploy-failures`, with ADR-0039's `:` and namespace grammar.
-- Code rules keep bare names. The rule name pattern already refuses a `:`, so no code rule is renamed, and nothing keyed by a code rule's name has to migrate: progress, runs, dead letters, metrics, Langfuse traces and LiteLLM tags.
-- The two have different owners. The application is the only owner of code rules, while stored rules come from many installers, and the namespace says which.
-- Rule namespaces aren't event namespaces. `chat:` says where a rule came from, and `artifactr:` who publishes a type. The rule policy says which rule namespaces an installer may use: relayr would use `chat`. The `reflexr` namespace is reserved.
-- #72's publish policy sees a run's `AgentActor`, whose `rule` is qualified for a stored rule. So the policy can refuse runs of stored rules a namespace that code rules' runs may publish into.
-- Code rules can't be overridden or changed through the API: a change that names one is `forbidden`. Turning a code rule off in one workspace is an [unresolved question](#unresolved-questions).
+- A stored rule's name is `namespace:name`, such as `chat:prod-deploy-failures`, with ADR-0039's `:` and namespace grammar. The pattern is `^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9._-]*$`, at most 100 characters in all, as today.
+- Code rules keep bare names. The rule name pattern already refuses a `:`, so no code rule is renamed, and nothing keyed by a code rule's name has to migrate.
+- The rule policy says which namespaces an installer may use: relayr would use `chat`. The `reflexr` namespace is reserved. Rule namespaces aren't event namespaces: `chat:` says where a rule came from, and `artifactr:` who publishes a type.
+- It costs a pattern, and it's what lets D8 bound the metric label without a new attribute.
+- Code rules can't be overridden or changed through the API: a change that names one is `forbidden`.
 
-The stored grammar is `^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9._-]*$`, at most 100 characters in all, as today. stackr's actor for the example becomes `reflexr:chat:prod-deploy-failures`, which artifactr treats as an opaque string.
+stackr's actor for the example becomes `reflexr:chat:prod-deploy-failures`, which artifactr treats as an opaque string.
 
 ### D2. Versioning
 
-#### D2a: what a version is
+#### D2a: what is kept of versions
 
 | Option | History | Drift detection (D5) | Cost |
 |---|---|---|---|
-| **Every change is a new, immutable version, enabling and disabling included (recommended)** | Every version, with who made it and its provenance | relayr compares the current version with the one it installed | A row per change |
-| Only changes to the rule's definition are versions. `enabled` and the policy fields change in place | Partial | Changes made in place show only in the log | Fewer rows |
-| The current rule only; the log's facts are the history | In the log, until retention compacts it | From the log | Least storage |
+| **The current rule and its version number; the log's facts are the history (recommended)** | Every version, in its `reflexr:rule_installed` fact, with who made it and its provenance | `expected_version`, and the facts | One row per rule |
+| Every version in a table of its own as well. **Deferred** until retention compacts logs, since the facts hold everything until then | The same, and kept after compaction | The same | A second table, and reads and a route for it |
+| Versions only for definition changes; `enabled` changes in place | Partial | Changes made in place show only as facts | Two kinds of change |
 
-**Recommended: every change is a version.** Versions count from 1 for each workspace and name, and are never reused. A run records the version that fired it (`Run.rule_version`, `null` for code rules), so feedback, acceptance rates and dead letters can be told apart by version. Rolling back is installing an earlier version's rule again, which makes a new version.
+**Recommended: the current rule and its version number.**
+
+- Every change is a new version, enabling and disabling included. Versions count from 1 for each workspace and name, and are never reused.
+- Each version is a `reflexr:rule_installed` fact that carries the whole rule and its provenance, attributed to whoever made it. So the log answers "which version fired this run": the latest fact for the rule before the run's firing.
+- Rolling back is an `update_rule` with an earlier version's rule, taken from its fact.
+- Recording the version on each run (`Run.rule_version`) is **deferred**, since the log already answers it.
 
 #### D2b: what resets a rule
 
-`Rule.definition()` hashes the condition and the scope. When the hash changes, the rule's state no longer applies. The rule starts a new generation at the head of the log, and `reflexr:rule_reset` records it ([ADR-0026][adr-0026]).
+`Rule.definition()` hashes the condition and the scope. When the hash changes, the rule's state no longer applies. The rule starts a new generation, and `reflexr:rule_reset` records it ([ADR-0026][adr-0026]).
 
 | Option | Behaviour |
 |---|---|
-| **`Rule.definition()`, as for code rules (recommended)** | A new condition or scope resets. The action, parameters, retries, ordering, timeout, description and `enabled` don't |
+| **`Rule.definition()`, applied in the change's transaction (recommended)** | The same `begin` and `reset` from core, called where `meet_rules` and `replay_rule` already call them. The rule starts or resets at its own fact, so nothing published after the change is missed |
+| `Rule.definition()`, applied lazily by the reactor, as for code rules | No new call site. But the reactor starts or resets a rule at the head of the log when it next looks, so events published in between are skipped: the gap ADR-0026 closed for new workspaces |
 | Any change resets | Fixing a typo in the description loses a half-counted window |
-| The definition and the action | The action doesn't change what the rule decides, and waiting runs would run the new action anyway ([D2d](#d2d-which-version-a-waiting-run-executes)) |
 
-**Recommended: the definition, as today.** One difference from code rules: the reset happens eagerly, in the change's transaction, rather than when the reactor next notices the hash. The log reads `reflexr:rule_installed`, then `reflexr:rule_reset` (reason `changed`). The generation goes up by one, the cursor moves to the fact, and the scope states are cleared. The reactor's lazy check stays as a backstop, and still serves code rules.
+**Recommended: the definition, in the change's transaction.** A new condition or scope resets; the action, parameters, retries, ordering, timeout, description and `enabled` don't, as for code rules. The log reads `reflexr:rule_installed`, then `reflexr:rule_reset` (reason `changed`). The reactor's lazy check stays, and still serves code rules.
 
 #### D2c: replay on install
 
 | Option | A new count or sequence window | Acts on the past |
 |---|---|---|
-| **None by default, with `rebuild_from_seq` on request (recommended)** | Empty, unless rebuilt | Never |
-| Always rebuild from a window, such as the last day | Warm | Never |
-| Refire allowed, through `start="beginning"` or a replay in `refire` mode | Warm | Yes. A chat rule would act on the whole history |
+| **None; `replay_rule` in `rebuild` mode warms a rule when needed (recommended)** | Empty, unless replayed | Never |
+| `rebuild_from_seq` on install and update. **Deferred**: a second way to do what `replay_rule` does | Warm | Never |
+| Refire allowed, through `start="beginning"` | Warm | Yes. A chat rule would act on the whole history |
 
-**Recommended: none by default.**
-
-- A stored rule's `start` must be `now`.
-- `install_rule` and `update_rule` take an optional `rebuild_from_seq`. It rebuilds the rule's state quietly from that `seq` up to its fact, with `silent_through`, as `replay_rule(mode="rebuild")` does.
-- The policy bounds how far back a rebuild may go.
-- `replay_rule` works on stored rules as on code rules, but for a stored rule it is a change the rule policy authorizes. So refiring is for operators the policy allows, never chat.
+**Recommended: none.** A stored rule's `start` must be `now`. `replay_rule` works on stored rules as on code rules. Like every operator command, it's guarded by `authorize` ([ADR-0024][adr-0024]), and an application that must keep some actors from refiring a rule checks the command in its route, as the security guide already says for run operations.
 
 #### D2d: which version a waiting run executes
 
 | Option | Behaviour |
 |---|---|
-| **The current version (recommended)** | A fix to the action or its parameters reaches runs already waiting, as a deploy does for code rules. Disabling holds them |
-| The version that fired it | Each run does exactly what was approved when it fired, but a fix never reaches the runs already waiting |
+| **The current version (recommended)** | The executor reads the rule when it claims a run, as it does for code rules. A fix to the action or its parameters reaches runs already waiting, and disabling holds them |
+| The version that fired it. **Deferred** with the versions table it needs | Each run does exactly what was approved when it fired, but a fix never reaches the runs already waiting |
 
-**Recommended: the current version.** The executor reads it in the claim's transaction. The run keeps the version that fired it, and the attempt's span records the version that ran it (`reflexr.rule.version`).
+**Recommended: the current version**, read in the claim's transaction.
 
 ### D3. What a stored rule may use
 
@@ -272,26 +268,26 @@ Stored rules name registered actions and never carry code ([ADR-0006][adr-0006])
 | **The allowlist the rule policy returns for each change (recommended)** | The application, per change | Yes |
 | The installer sends the list with each install | The installer | Yes, but it limits nothing, since whoever installs chooses |
 
-**Recommended: the rule policy returns it**, in the `RuleLimits` it answers each change with ([D4b](#d4b-who-may-change-rules)). A fixed list is a policy that returns the same limits for everyone.
+**Recommended: the rule policy returns it**, in the `RuleLimits` it answers each change with ([D4b](#d4b-who-may-change-rules)). A fixed list is a policy that returns the same limits for everyone, so the first option is a case of this one.
 
 - **Predicates** are registered code too, so they follow the same allowlist. It's empty by default.
-- **Checking** reuses `Rule.check(events=, actions=, predicates=)`, with the allowlist as the registered names. So a draft gets the same `InvalidRule` list of problems a code rule does, and relayr's artifact type can check a draft before it's proposed.
-- **Rolling deploys.** Actions are registered on the reactor, which may not be in the process that installs ([ADR-0026][adr-0026]). A reactor that meets a stored rule whose action it doesn't have declines its runs, and doesn't cancel them. The workspace's rule status lists the problem.
+- **Checking** is `Rule.check(events=, actions=, predicates=)`, with the allowlist as the registered names. So a draft gets the same `InvalidRule` list of problems a code rule does, and relayr's artifact type can check a draft before it's proposed.
+- **Rolling deploys.** Actions are registered on the reactor, which may not be in the process that installs ([ADR-0026][adr-0026]). A reactor that loads a stored rule checks it against its own actions. If the action is missing, the reactor doesn't evaluate the rule, declines its runs rather than cancelling them, and logs why. Showing that in the rule status is **deferred**.
 - **A policy that later narrows** doesn't touch rules already installed. It applies from their next change.
 
 #### D3b: parameters
 
-`ActionRef` names an action and nothing else, so today one action can't serve rules that differ only in a thread or a channel.
+`ActionRef` names an action and nothing else. "Tell me here" needs the rule to name its thread: the chain begins at a deploy, not in a thread, and stackr's RFC-0002 lets a run act "in one [thread] the rule names".
 
 | Option | Checked | "Tell me here" |
 |---|---|---|
-| None: one registered action per behaviour | Nothing to check | An action per thread, or the thread in the description for an agent to find |
-| Free JSON, passed to the action | By the action, when it runs | Works, but a bad draft fails only when it fires |
-| **Typed: each action declares a parameters model (recommended)** | At install, and when code rules are registered | `{"action": "notify", "params": {"thread_id": "thr_4"}}` |
+| None: one registered action per behaviour | Nothing to check | An action per thread, which a chat rule can't register |
+| Free JSON, passed to the action | By the action, when it runs | Works, but a draft a person accepted fails only when it fires |
+| **Typed: each action declares a parameters model (recommended)** | By `Rule.check`, at install and when code rules are registered | `{"action": "notify", "params": {"thread_id": "thr_4"}}` |
 
 **Recommended: typed parameters.**
 
-- An action declares a Pydantic model, as in `FunctionAction(notify, params=NotifyParams)` and `AgentAction(..., params=...)`. Code rules write `run(notify, thread_id="thr_4")`.
+- An action declares a Pydantic model, as in `FunctionAction(notify, params=NotifyParams)`. Code rules write `run(notify, thread_id="thr_4")`.
 - Actions receive the validated model as `Reaction.params`.
 - The policy's allowlist maps each action to its model, so an install is checked without a reactor. With a fixed policy, the reactor confirms at startup that each model is the one its action declares.
 - Parameters aren't part of the definition, so changing them never resets the rule.
@@ -299,26 +295,25 @@ Stored rules name registered actions and never carry code ([ADR-0006][adr-0006])
 
 #### D3c: which event types a stored rule may watch
 
-A stored rule sees only its own workspace's log, which everyone who may use the workspace can read anyway. But what it watches decides what it acts on, and how often. A chat rule on `reflexr:run_dead_lettered` would act on every failure of every rule in the workspace. And an application may keep a namespace for its own rules, such as a payments integration's.
+A stored rule sees only its own workspace's log, which everyone who may use the workspace can read anyway. But what it watches decides what it acts on, and how often. A chat rule on `reflexr:run_dead_lettered` would act on every failure of every rule in the workspace.
 
 | Option | For | Against |
 |---|---|---|
 | Any type the `Workspaces` accepts, as for code rules | Nothing new | A chat rule may react to anything, reflexr's facts included |
-| **The namespaces, and single types, the rule policy grants (recommended)** | Least privilege, per tenant and installer. The same shape as #72's publish policy: namespaces, with per-type exceptions | One more list in `RuleLimits` |
+| **The namespaces the rule policy grants (recommended)** | Least privilege, per tenant and installer. It reuses the names `Rule.check` already collects from `on` filters | One set in `RuleLimits` |
+| Namespaces, with grants of single types as well. **Deferred** until a chat rule needs one type of a namespace it may not otherwise watch | Finer, the same shape as #72's publish policy | More to configure |
 | The namespaces the tenant may publish into, from #72's policy | One policy for both | Watching isn't publishing. Chat rules watch `artifactr:` types, which only relayr may publish |
 
-**Recommended: what the rule policy grants**, closed by default.
+**Recommended: the namespaces the rule policy grants**, none by default.
 
-- `RuleLimits.watch` names namespaces, such as `artifactr` and `oncall`, and single types, such as `reflexr:run_succeeded`.
-- Every type a stored rule's filter or sequence steps name must be granted.
+- `RuleLimits.watch` names namespaces, such as `artifactr` and `oncall`. Every type a stored rule's filter or sequence steps name must be in one of them.
 - A stored rule's filter must name its types. A filter that admits every type, such as one with no `on`, or a `not` around one, is refused. `admitted` already computes what a filter admits.
-- A rule never sees facts about itself, whatever it watches ([D5](#d5-how-running-reactors-learn-of-changes)).
+- A rule never sees facts about itself, whatever it watches.
 
-**Where types resolve.** ADR-0039 gives each `Workspaces` its own registry, with the global one as the default. A stored rule is data in storage, and any reactor over that storage may evaluate it:
+**Where types resolve.** ADR-0039 gives each `Workspaces` its own registry, with the global one as the default. Nothing new is needed here:
 
-- At install, the rule's types and fields are checked against the registry, and the accepted and emitted types, of the `Workspaces` the change goes through, as code rules are at construction.
-- When a reactor loads a version, it checks the rule again against its own `Workspaces`, and caches the result with the version.
-- The two agree in a correct deployment. If they don't, the rule isn't evaluated, and its status lists the problem, as for a missing action ([D3a](#d3a-the-allowlist)). That happens when two `Workspaces` with different registries share a storage, or a deploy removes a type.
+- At install, `Rule.check` resolves the rule's types and fields in the registry, and the accepted and emitted types, of the `Workspaces` the change goes through, as it does for code rules at construction.
+- A reactor checks a stored rule again when it loads it, against its own `Workspaces`. In a correct deployment the two are the same. If they aren't, as when a deploy removes a type, the rule isn't evaluated, as for a missing action ([D3a](#d3a-the-allowlist)).
 - A name the registry doesn't know is refused with ADR-0039's "did you mean" hint. A draft that writes `deploy.completed` learns that it means `oncall:deploy.completed`.
 
 ### D4. The API
@@ -327,18 +322,18 @@ A stored rule sees only its own workspace's log, which everyone who may use the 
 
 | Option | For | Against |
 |---|---|---|
-| **Five commands on the one handler (recommended)** | Each change is checked and recorded as what it is. Same on every surface ([ADR-0011][adr-0011]) | Five commands to learn |
-| One `put_rule` upsert, with `enabled` and `archived` in the body | One command | An update meant for an existing rule silently creates one, and archiving becomes a field |
+| **Three commands on the one handler: install, update, archive (recommended)** | Each change is checked and recorded as what it is, the same on every surface ([ADR-0011][adr-0011]). Disabling reuses the rule's own `enabled` | Disabling means sending the whole rule |
+| Five, with `disable_rule` and `enable_rule` as well. **Deferred**: relayr sends whole rules, and an operator who must stop a rule at once can archive it | A change without sending the rule | Two more commands, tools and contract tests |
+| One `put_rule` upsert, with `archived` in the body | One command | An update meant for an existing rule silently creates one, and archiving becomes a field |
 | REST resources: `PUT` and `DELETE` on `/rules/{name}` | Familiar REST | A second path beside the commands, and nothing over the WebSocket or MCP |
 
-**Recommended: five commands**, through `reflexr.workspace.execute` like every other command, and as `Workspace` methods in process:
+**Recommended: three commands**, through `reflexr.workspace.execute` like every other command, and as `Workspace` methods in process:
 
 | Command | Fields | Outcome |
 |---|---|---|
-| `install_rule` | `rule`, `provenance?`, `rebuild_from_seq?` | `rule_version`: `{rule, version, seq, duplicate}`. Version 1, or the next version of an archived rule. An active rule of that name is `invalid_state` |
-| `update_rule` | `rule`, `expected_version?`, `provenance?`, `rebuild_from_seq?` | `rule_version`. A new version, reset if the definition changed |
-| `disable_rule`, `enable_rule` | `rule` (the name), `expected_version?`, `provenance?`, `reason?` | `rule_version`. A new version with `enabled` changed |
-| `archive_rule` | `rule`, `expected_version?`, `provenance?`, `reason?` | `rule_version`. The rule is archived, and its unfinished runs cancelled |
+| `install_rule` | `rule`, `provenance?` | `rule_version`: `{rule, version, seq, duplicate}`. Version 1, or the next version of an archived rule. An active rule of that name is `invalid_state` |
+| `update_rule` | `rule`, `expected_version?`, `provenance?` | `rule_version`. A new version, reset if the definition changed. `enabled` in the rule disables or enables it |
+| `archive_rule` | `rule` (the name), `expected_version?`, `reason?` | `rule_version`. The rule is archived, and its unfinished runs cancelled with core's `cancel` |
 
 Rejections are the protocol's own:
 
@@ -361,46 +356,34 @@ Rejections are the protocol's own:
 RulePolicy = Callable[[TenantId, WorkspaceId, Actor, RuleChange], Awaitable[RuleLimits | None]]
 ```
 
-- `RuleChange` says what is being done (install, update, disable, enable, archive or replay), to which rule, and the new rule, if there is one.
+- `RuleChange` says what is being done (install, update or archive), to which rule, and the new rule, if there is one.
 - The hook returns the limits the change must meet ([D3a](#d3a-the-allowlist), [D6](#d6-limits)), or `None` to refuse it with `forbidden`.
 - `Workspaces` without a policy refuses every change, so no application gets stored rules without choosing to.
 - The surfaces ask `authorize` first, as for any command that names a workspace.
-- The policy sees the actor that makes the change. For relayr that is its `install-rule` run's `AgentActor`, and the person who approved goes in the provenance ([D4d](#d4d-provenance)).
+- The policy sees the actor that makes the change. For relayr that is its `install-rule` run's `AgentActor`, and the person who approved goes in the provenance.
 
 #### D4c: idempotency
 
 | Option | Durable | Surfaces |
 |---|---|---|
 | `command_id` only | No: it's kept in memory, per process | REST and the WebSocket. MCP and in-process calls have none |
-| **A change that matches the current version is a duplicate, and changes may carry `expected_version` (recommended)** | Yes | All, and in process |
-| An explicit idempotency key per change, stored with the version | Yes | All, but with one more column and lookup |
+| **A change that matches the current version is a duplicate, and changes may carry `expected_version` (recommended)** | Yes, with nothing stored beyond the rule | All, and in process |
+| An explicit idempotency key per change, stored | Yes | All, but with one more column and lookup |
 
 **Recommended: match the current version, and check `expected_version`.**
 
-- A change whose resulting rule equals the current version's creates nothing, appends nothing, and answers with the current version and `duplicate: true`. That's checked before `expected_version`, so a retry of a change that succeeded is a duplicate, not a conflict.
-- `expected_version` is optimistic concurrency. relayr passes the version it last installed, and an `invalid_state` tells it someone else changed the rule. That is D5's drift detection from the artifact's side ([D5](#d5-how-running-reactors-learn-of-changes)).
+- A change whose resulting rule equals the current one creates nothing, appends nothing, and answers with the current version and `duplicate: true`. That's checked before `expected_version`, so a retry of a change that succeeded is a duplicate, not a conflict.
+- `expected_version` is optimistic concurrency. relayr passes the version it last installed, and an `invalid_state` tells it someone else changed the rule. That is D5's drift detection from the artifact's side.
 
 #### D4d: provenance
 
-| Option | reflexr knows | Finding a rule from its source |
+| Option | reflexr knows | Cost |
 |---|---|---|
-| An opaque map, `metadata: {str: str}` | Nothing | Not possible |
-| **Typed, generic fields, plus a small map (recommended)** | Where the rule came from and who approved it, without naming artifactr | Indexed by source and record |
-| Typed artifactr fields, such as `artifact_id` and `proposal_id` | Exactly | Names artifactr in reflexr, against [ADR-0003][adr-0003] |
+| **An opaque, bounded map, stored and returned (recommended)** | Nothing: it records what the installer says, and relayr reads back its own keys | A JSON column, and a size limit |
+| Typed, generic fields (`source`, `record`, `approved_by`), indexed to find a rule from its source. **Deferred** until reflexr has to read provenance itself | Where a rule came from, in a shape every installer shares | A model, an index and a lookup route |
+| Typed artifactr fields, such as `artifact_id` | Exactly | Names artifactr in reflexr, against [ADR-0003][adr-0003] |
 
-**Recommended: typed, generic fields.**
-
-```python
-class Provenance(BaseModel):
-    source: str  # the system the rule came from: "artifactr", "admin-ui"
-    record: str | None = None  # its id there: the artifact
-    record_version: int | None = None  # the record's version
-    approval: str | None = None  # what approved it: the proposal
-    approved_by: Actor | None = None  # who approved it
-    metadata: dict[str, str] = {}  # anything else, bounded in size
-```
-
-Provenance is what the installer says. reflexr stores it and doesn't check it against the source. The installer itself is the envelope's actor, which reflexr authenticated.
+**Recommended: an opaque map**, `dict[str, JsonValue]`, at most 4 KiB, on the stored rule and on each `reflexr:rule_installed` fact. reflexr doesn't check it against the source. Who made the change is the envelope's actor, which reflexr authenticated.
 
 ### D5. How running reactors learn of changes
 
@@ -408,47 +391,42 @@ Today each reactor holds the rules in memory from startup, and evaluation takes 
 
 | Option | Staleness | Cost | SQLite and PostgreSQL alike |
 |---|---|---|---|
-| Each process loads stored rules into memory, and reloads them on a timer | Up to the timer. A process can evaluate a replaced or archived version | A query per timer | Yes |
-| **Read each workspace's stored rules from storage on every pass, caching each parsed version (recommended)** | None: each batch reads its rule in its own transaction | One indexed query per workspace per pass, and one row per batch | Yes |
+| Each process loads stored rules into memory, and reloads them on a timer | Up to the timer. A process can evaluate a replaced or archived version | A query per timer, and a cache to invalidate | Yes |
+| **Read each workspace's stored rules from storage on every pass (recommended)** | None: each batch reads its rule in its own transaction | One indexed query per workspace per pass, and one row per batch | Yes |
 | Follow the facts in each log | None, once read | The reactor would scan every log for facts that every rule's cursor has passed | Yes |
 | PostgreSQL `LISTEN/NOTIFY` | Immediate | A connection and a dialect branch | No ([ADR-0030][adr-0030]) |
 
-**Recommended: read from storage, and cache by version.** Versions never change, so a parsed and checked rule is cached by tenant, workspace, name and version for as long as the process lives. A pass reads only which versions are current.
+**Recommended: read from storage.** A parsed and checked rule may be cached by workspace, name and version, since a version never changes, but that is an optimization, not a mechanism.
 
 The effects on leases, cursors and runs:
 
 - **No new lease.** A change takes the workspace's lock, as a publish does. It lands between two of the evaluator's batches, never inside one, and doesn't wait for the evaluation lease.
 - **Batches read their rule.** Each batch reads the stored rule's current version inside its transaction. A rule changed or archived after the pass began is seen at its next batch.
-- **Where a rule's cursor goes.**
+- **Where a rule's cursor goes**, with core's `begin` and `reset` ([D2b](#d2b-what-resets-a-rule)):
   - A new rule starts at its own fact.
-  - A rule whose definition changed resets there too ([D2b](#d2b-what-resets-a-rule)).
+  - A rule whose definition changed resets there too.
   - An update that keeps the definition keeps the cursor, state and generation.
-  - A disabled rule's cursor holds.
-- **A rule doesn't see its own changes.** Its `reflexr:rule_installed` and `reflexr:rule_archived` are facts about it, so it never sees them, as with its other facts ([ADR-0010][adr-0010]). Other rules can watch them, if they may ([D3c](#d3c-which-event-types-a-stored-rule-may-watch)).
-- **Due runs.** `Storage.due_runs` takes a `RunPolicy` of rule names, since storage doesn't see code rules. It can see stored rules, so for them it reads `enabled`, `ordering` and `on_dead_letter` from the stored rule itself, in the same query. The claim reads the current version in its transaction and remains the authority.
+  - A disabled rule's cursor holds, as a disabled code rule's does.
+- **A rule doesn't see its own changes.** Its `reflexr:rule_installed` and `reflexr:rule_archived` are facts about it, so it never sees them, as with its other facts ([ADR-0010][adr-0010]). Other rules can watch them, if they may.
+- **Due runs keep their contract.** `Storage.due_runs` takes a `RunPolicy`, since storage doesn't see code rules. It does see stored rules, so for them it reads `enabled`, `ordering` and `on_dead_letter` from their rows, in the same query. Without that, a disabled or backlogged stored rule's runs would take up the executor's limit, the starvation [#57][issue-57] fixed. The claim reads the current version in its transaction and remains the authority.
 - **No orphan races.** Today the executor cancels a run whose rule it doesn't know. For a stored rule it never does. `archive_rule` cancels the runs, in its own transaction, so a process that hasn't seen a new rule can't cancel its runs.
 - **Latency.** A change takes effect at the next pass: within `serve()`'s poll interval, one second by default.
-- **Everyone else follows the log.** The facts are for observers: the WebSocket, an audit, and relayr's drift detection. A relayr rule that watches `reflexr:rule_installed` and finds a version it didn't make proposes the same change to the artifact. That is D5's drift detection from reflexr's side.
+- **Everyone else follows the log.** The facts are for observers: the WebSocket, an audit, and relayr's drift detection. A relayr rule that watches `reflexr:rule_installed` and finds a version whose provenance isn't its own proposes the same change to the artifact. That is D5's drift detection from reflexr's side.
 
 ### D6. Limits
 
 #### D6a: the required throttle
 
-A throttle limits firings **per scope**. A rule scoped by service, with a throttle of one firing per 15 minutes, still fires 200 times when 200 services fail at once.
+A throttle limits firings **per scope**. A rule scoped by service, with a throttle of one firing per 15 minutes, still fires 200 times when 200 services fail at once. A rule with no scope fields has one scope, the workspace, so its throttle bounds the whole rule.
 
-| Option | Bounds a burst across scopes | Change |
+| Option | Bounds a burst | Change |
 |---|---|---|
-| A per-scope throttle is required, as stackr's RFC-0002 words it | No | None |
-| **A cap across the rule's scopes is required (recommended)** | Yes | A new optional stage in core, with conformance cases |
+| **The existing throttle, required, and no scope fields unless the policy allows them (recommended)** | Yes, by default. A policy that allows scope fields accepts a throttle per scope | None in core |
+| A throttle, required, with any scope | No: one firing per scope, however many scopes | None |
+| A new cap across all of a rule's scopes. **Deferred** until a chat rule needs its own scopes with a bound across them | Yes, with scopes too | A new stage in core, with its state and conformance cases |
 | A rate limit on the rule's runs, in the executor | Spend, yes. But firings and waiting runs still pile up | The executor's per-rule limits, which are still to come |
 
-**Recommended: a required cap.**
-
-- `cap: {at_most, per}` allows at most so many firings of the rule, across all its scopes, in any period of `per`. The builder is `.capped(10, per=hour)`.
-- Its state is the times of its recent firings, at most `at_most` of them, in `RuleProgress`. It's saved with the cursor and decided by the log's clock, so replays still reproduce firings.
-- A firing over the cap is dropped, as a throttled one is.
-- The per-scope throttle stays optional, and the policy may require it too.
-- Code rules may use the cap as well.
+**Recommended: the existing throttle, required, and no scope fields by default.** The example needs none: one notice per 15 minutes, whichever service failed.
 
 #### D6b: the depth limit
 
@@ -456,11 +434,11 @@ Rules have no depth field. `Workspaces(max_depth=8)` holds the limit, so a store
 
 | Option | Behaviour |
 |---|---|
-| **No field on rules, and the policy may set a lower limit for stored rules (recommended)** | The reactor passes the lower limit to `evaluate(max_depth=)`, which already takes one |
-| A per-rule `max_depth` that may only lower the limit | A field on every rule, for what the policy can do |
-| Nothing: the workspace's limit applies | Chat rules that answer each other get all eight steps |
+| **Nothing new: the workspace's limit applies (recommended)** | Nothing to build. Facts about a firing are one step deeper than what fired, so chat rules that answer each other stop at the limit ([ADR-0026][adr-0026]) |
+| The policy sets a lower limit for stored rules, through `evaluate(max_depth=)`. **Deferred** until chat rules are seen answering each other | A shorter chain for chat rules | A field in `RuleLimits`, and a limit per rule in the reactor |
+| A per-rule `max_depth` that may only lower the limit | The same, per rule | A field on every rule |
 
-**Recommended: the policy may lower it.** A firing beyond the lower limit is refused and dead-lettered, as at the workspace's limit.
+**Recommended: nothing new.**
 
 #### D6c: where the limits live
 
@@ -470,24 +448,22 @@ Rules have no depth field. `Workspaces(max_depth=8)` holds the limit, so a store
 | **The limits the policy returns, with defaults (recommended)** | Per tenant, plan or installer. The defaults are safe for chat | Applications can loosen them |
 | Documented only | Nothing to build | Nothing enforced |
 
-**Recommended: `RuleLimits`, with these defaults.** A pure function in core checks a rule against them and lists every problem.
+**Recommended: `RuleLimits`, with these defaults.** A pure function in core checks a rule against them and lists every problem, beside `Rule.check`'s.
 
 | Limit | Default | Why |
 |---|---|---|
 | Actions and predicates | None allowed | D3a |
-| Event namespaces and types watched | None allowed, and the filter must name its types | D3c |
-| Namespaces | None allowed | D1b |
-| `cap` | Required, at most 60 firings an hour | D6a |
+| Event namespaces watched | None allowed, and the filter must name its types | D3c |
+| Rule namespaces | None allowed | D1b |
+| `throttle` | Required, at most 60 firings an hour | D6a |
+| Scope fields | None allowed | D6a |
 | `retry.max_attempts` | At most 5 | Retries repeat spend |
 | `timeout` | Required, at most 5 minutes | An attempt can't run forever |
-| Windows: `within`, a dedupe window, a throttle's or cap's `per` | At most 1 day | Keeps per-scope state small |
-| `count.at_least`, sequence steps, filter nodes | At most 1,000, 10 and 50 | Keeps state and evaluation small. Evaluation holds the workspace's lock |
-| The `matches` operator | Not allowed | Python's `re` has no timeout, and a pathological pattern would hold the lock |
+| Windows: `within`, a dedupe window, a throttle's `per` | At most 1 day | Keeps state small |
+| The `matches` operator | Not allowed | Python's `re` has no timeout, and a pathological pattern would hold the workspace's lock |
 | `start` | `now` only | D2c |
-| `rebuild_from_seq` | At most 10,000 envelopes back | D2c |
 | `description` | At most 2,000 characters | It goes into agent prompts |
-| The rule's JSON | At most 16 KiB | |
-| Depth | The workspace's limit | D6b |
+| The rule's JSON | At most 16 KiB | Also bounds its filters and steps |
 | Active rules per workspace | 50 | D6d |
 
 Usage limits aren't part of a rule. They belong to the registered action, such as `AgentAction(usage_limits=...)`, and the tenant's gateway budget applies through the `[litellm]` extra, so a stored rule can't raise either.
@@ -496,11 +472,12 @@ Usage limits aren't part of a rule. They belong to the registered action, such a
 
 | Option | Enforced | Races |
 |---|---|---|
-| **Per workspace, by reflexr, with a tenant-wide limit in the policy (recommended)** | In the change's transaction, under the workspace's lock | None per workspace. The tenant-wide count is a soft limit |
+| **Per workspace, by reflexr (recommended)** | In the change's transaction, under the workspace's lock | None |
 | Per tenant, by reflexr | Across the tenant's workspaces | No lock spans them, so two installs in different workspaces can both pass |
-| No limit | | Rules, series and evaluation time grow without bound |
+| A tenant-wide count offered to the policy. **Deferred** until a tenant has enough workspaces to need it | A soft limit the policy enforces | A storage read across a tenant's workspaces |
+| No limit | | Rules and evaluation time grow without bound |
 
-**Recommended: per workspace, by reflexr.** Active rules count, disabled included and archived not. reflexr gives the policy a count of a tenant's stored rules, for a tenant-wide limit of its own.
+**Recommended: per workspace, by reflexr.** Active rules count, disabled included and archived not.
 
 ### D7. Listing and tenancy
 
@@ -508,24 +485,17 @@ Usage limits aren't part of a rule. They belong to the registered action, such a
 |---|---|---|
 | **`GET /v1/rules` unchanged; stored rules only in the workspace's reads, behind `authorize` (recommended)** | Every authenticated client, as today | Only those who may use the workspace |
 | `GET /v1/rules` adds the caller's tenant's stored rules | As today | The whole tenant, without `authorize`, so every workspace's rules to anyone in the tenant |
-| A tenant-level route listing every workspace's stored rules | As today | Needs a tenant-level authorization hook, which doesn't exist |
+| A tenant-level route listing every workspace's stored rules. **Deferred** with tenant-wide rules (D1a) | As today | Needs a tenant-level authorization hook, which doesn't exist |
 
-**Recommended: only in the workspace's reads.** Stored rules are keyed by tenant and workspace, so no read can reach another tenant's.
+**Recommended: only in the workspace's reads.** Stored rules are keyed by tenant and workspace, so no read can reach another tenant's. One read is new, since `GET /v1/rules` can't show a stored rule:
 
 | Read | REST | MCP |
 |---|---|---|
 | Code rules, for every tenant | `GET /v1/rules`, unchanged | `list_rules`, unchanged |
-| Each rule's status: `enabled`, cursor, lag, generation, dead letters, and now `origin` (`code` or `stored`), `version` and any `problems` | `GET /v1/workspaces/{workspace_id}/rules` | `rule_status` |
-| One rule: its current definition, and for a stored rule its version, provenance, and who made it and when | `GET /v1/workspaces/{workspace_id}/rules/{rule}` | `get_rule` |
-| Versions, newest first, by rule, or by provenance `source` and `record` | `GET /v1/workspaces/{workspace_id}/rule-versions?rule=&source=&record=&limit=` | `rule_versions` |
+| Each rule's status, as today, plus `origin` (`code` or `stored`) and `version` | `GET /v1/workspaces/{workspace_id}/rules` | `rule_status` |
+| One rule: its definition, and for a stored rule its version and provenance | `GET /v1/workspaces/{workspace_id}/rules/{rule}` | `get_rule` |
 
-Where else a stored rule's name appears:
-
-- in the workspace's log, in facts about it
-- in spans, Langfuse traces (named after the rule) and LiteLLM metadata (tagged `rule:<name>`)
-- in metrics, only as D8 says
-
-Those are operators' tools, not tenants'. The security guide will say that a stored rule's name and description may reach them, so tenants shouldn't put secrets there.
+A stored rule's name also appears in the workspace's log, in spans, in Langfuse traces (named after the rule), in LiteLLM metadata (tagged `rule:<name>`), and in metrics as D8 says. Those are operators' tools, not tenants'. The security guide will say that a stored rule's name and description may reach them, so tenants shouldn't put secrets there.
 
 ### D8. Rules as a metric label
 
@@ -533,21 +503,34 @@ The registry's cardinality policy allows rule names as metric attributes, "since
 
 - **Seven metrics carry `reflexr.rule`:** `reflexr.evaluation.lag`, `reflexr.firings`, `reflexr.rule.errors`, `reflexr.runs`, `reflexr.run.duration`, `reflexr.run.attempts` and `reflexr.dead_letters`.
 - **About 60 series per rule and workspace.** Most come from the duration histogram's buckets by status. So 1,000 workspaces with 20 stored rules each would add about 1.2 million series to Prometheus.
-- **Every name ever used stays.** Under cumulative temporality, the SDK keeps a series for each attribute set for the life of the process. A rule archived and installed again under another name leaves both behind.
+- **Every name ever used stays.** Under cumulative temporality, the SDK keeps a series for each attribute set for the life of the process.
 
 | Option | Series per stored rule | Per-rule detail in Grafana | Change |
 |---|---|---|---|
-| Record stored names as `reflexr.rule`, bounded by D6d's limit | About 60 per workspace | Yes | None |
-| Record every stored rule as one value, such as `stored` | None of its own | No: traces, Langfuse and the status read have it | The value |
-| **A bounded `reflexr.rule` for stored rules, with the name in a separate attribute that views keep only when asked (recommended)** | None by default. About 60 per workspace when kept | When the deployment asks | A new attribute, a detail setting, the views and a dashboard row |
+| Stored names as `reflexr.rule`, bounded by D6d's limit | About 60 per workspace | Yes | None |
+| **The rule's namespace as `reflexr.rule`, such as `chat:*` (recommended)** | None of its own: one series per namespace, which the policy bounds | No. Traces, Langfuse and the status read have it | The value recorded |
+| The namespace, plus the full name in a new attribute that SDK views keep only when asked ([ADR-0029][adr-0029]). **Deferred** until a deployment needs per-rule metrics for stored rules | None by default | When asked | An attribute, a detail setting, views and a dashboard row |
 
-**Recommended: a bounded label, and the name kept only when asked.**
+**Recommended: the namespace.** The dashboards' queries don't change: stored rules show as one series per namespace, and the dashboard test ([ADR-0038][adr-0038]) is unaffected. Spans keep the full name. A deployment whose trace backend derives metrics from span names, such as `invoke_workflow {rule}`, should bound them there.
 
-- A stored rule records `reflexr.rule` as its namespace, such as `chat:*`, which the policy's namespaces bound.
-- A new attribute, `reflexr.rule.stored`, holds the full name. Code rules don't record it.
-- `kept_attributes` drops `reflexr.rule.stored` unless the deployment asks for it, with `configure_telemetry(stored_rule_detail=True)`. The SDK views do the dropping, as they do for tenant and workspace ([ADR-0029][adr-0029]), so reflexr still records every declared attribute.
-- The Rules and Runs dashboards keep their queries: stored rules show as one series per namespace. A new "Stored rules" row, keyed on `reflexr.rule.stored`, fills in when it's kept. The dashboard test checks the new label like any other ([ADR-0038][adr-0038]).
-- Spans keep the full name. Tempo's span metrics, if a deployment derives them from span names such as `invoke_workflow {rule}`, need the same care in Tempo's own configuration.
+## Deferred
+
+Each of these adds surface without a present need. The option tables above mark them, and each comes back when its trigger does.
+
+| Deferred | Until |
+|---|---|
+| Tenant-wide rules, and a tenant-level listing (D1a, D7) | A tenant needs one rule in every workspace |
+| A table of every version, and a route to read it (D2a) | Retention compacts logs, and with them the facts that hold the history |
+| `Run.rule_version`, and running the version that fired a run (D2a, D2d) | Evaluation needs results by version, and the log's answer is too slow |
+| `rebuild_from_seq` on install (D2c) | Installing and then replaying proves awkward |
+| Showing a rule the reactor can't run in its status (D3a) | Operators miss the log line |
+| Grants of single event types (D3c) | A chat rule needs one type of a namespace it may not otherwise watch |
+| `disable_rule` and `enable_rule` (D4a) | Operators need to stop a rule without sending it whole |
+| Typed provenance, and finding a rule from its source (D4d) | reflexr has to read provenance itself |
+| A cap across all of a rule's scopes (D6a) | A chat rule needs scopes with a bound across them |
+| A lower depth limit for stored rules (D6b) | Chat rules are seen answering each other |
+| A tenant-wide count of rules (D6d) | A tenant has enough workspaces to need it |
+| Per-rule metrics for stored rules (D8) | A deployment needs them |
 
 ## Storage
 
@@ -556,77 +539,68 @@ The registry's cardinality policy allows rule names as metric attributes, "since
 The storage port gains what stored rules need, and the behaviour suite covers it on every adapter:
 
 - **`Transaction`:**
-  - `stored_rule(name)`: the current version, or `None`
-  - `stored_rules()`: every active rule, for counting
-  - `save_stored_rule(rule, version)`: the current rule and its new version, in one call
-- **`Storage`:**
-  - `stored_rules(workspace)`: the names and current versions, for the reactor's pass
-  - `rule_versions(workspace, rule=, source=, record=, limit=)`
-  - `count_stored_rules(tenant_id)`: for a tenant-wide limit in the policy
+  - `stored_rule(name)`: the current stored rule, or `None`
+  - `stored_rules()`: every active one, for the count and the status
+  - `save_stored_rule(stored)`: insert or update it
+- **`Storage`:** `stored_rules(workspace)`, for the reactor's pass and the reads.
 - **`due_runs`** reads stored rules' `enabled`, `ordering` and `on_dead_letter` itself ([D5](#d5-how-running-reactors-learn-of-changes)).
 
 ### Schema sketch
 
-Two tables, with keys led by tenant and workspace, as every table's are ([ADR-0030][adr-0030]):
+One table, with its key led by tenant and workspace, as every table's is ([ADR-0030][adr-0030]):
 
 | Table | Primary key | Columns beside the JSON |
 |---|---|---|
 | `reflexr_rules`: one row per stored rule, holding its current version | tenant, workspace, `name` | `version`, `status` (`active` or `archived`), `enabled`, `ordering`, `on_dead_letter`, `position` |
-| `reflexr_rule_versions`: every version, never changed | tenant, workspace, `name`, `version` | `definition`, `source`, `record`, `seq` (of its fact), `at` |
 
-- `reflexr_rules.rule` holds the current version's `Rule` as JSON. `enabled`, `ordering` and `on_dead_letter` are copied beside it for `due_runs`, which joins the table for runs of stored rules.
-- `reflexr_rule_versions` holds the version's `rule`, `provenance` and `actor` as JSON.
-- Indexes:
-  - `ix_reflexr_rules_active` on tenant, workspace and `status`, for the reactor's pass
-  - `ix_reflexr_rule_versions_record` on tenant, workspace, `source` and `record`, for finding a rule from where it came from
+- `rule` holds the current `Rule` as JSON, and `provenance` its map. `enabled`, `ordering` and `on_dead_letter` are copied beside it for `due_runs`, which joins the table for runs of stored rules.
+- `ix_reflexr_rules_active`, on tenant, workspace and `status`, serves the reactor's pass.
 - `position` comes from the workspace row's counter, as for runs, so listings keep the order rules were installed in.
-- A rule's progress row, in `reflexr_rule_progress`, isn't deleted when the rule is archived. It keeps the generation ([D2b](#d2b-what-resets-a-rule)).
+- A rule's progress row in `reflexr_rule_progress` isn't deleted when the rule is archived. It keeps the generation ([D2b](#d2b-what-resets-a-rule)).
 
-`InMemoryStorage` keeps the same records in dictionaries.
+`InMemoryStorage` keeps the same records in a dictionary.
 
 ### Migrations
 
-- **One new migration** creates both tables and their indexes. It changes no existing rows: code rules, runs and progress are untouched, and a run's `rule_version` lives in its JSON.
-- **Its number.** ADR-0039's migration 0004 rewrites the stored event types to qualified names. This one is 0005.
-- **Its downgrade** drops the tables, and with them every stored rule and version. Their facts stay in the logs. The migration's docstring and the storage guide say so.
-- **The order with #45.** #45 is decided, and stackr's RFC-0002 builds it before relayr's phase 1, while this RFC serves its phase 5. So stored rules are born with qualified type names, and migration 0004 has nothing of theirs to rewrite. If this were built first, 0004 would also have to rewrite the type names inside stored rules, their versions and their facts, and every stored rule whose `on` filters changed would reset.
+- **One new migration, 0005,** creates the table and its index. ADR-0039's migration 0004 comes first. This one changes no existing rows: code rules, runs and progress are untouched.
+- **Its downgrade** drops the table, and with it every stored rule. Their facts stay in the logs. The migration's docstring and the storage guide say so.
+- **The order with #45.** #45 is decided, and stackr's RFC-0002 builds it before relayr's phase 1, while this RFC serves its phase 5. So stored rules are born with qualified type names, and migration 0004 has nothing of theirs to rewrite. If this were built first, 0004 would also have to rewrite the type names inside stored rules and their facts, and every stored rule whose `on` filters changed would reset.
 
 ## Protocol and JSON Schema changes
 
 | Where | Change |
 |---|---|
-| Commands | `install_rule`, `update_rule`, `disable_rule`, `enable_rule`, `archive_rule` ([D4a](#d4a-the-commands)) |
+| Commands | `install_rule`, `update_rule`, `archive_rule` ([D4a](#d4a-the-commands)) |
 | Outcomes | `rule_version`: `{rule, version, seq, duplicate}` |
-| reflexr's facts | `reflexr:rule_installed`: `rule`, `version`, `previous_version`, `definition` (the hash), `reset` (whether a `reflexr:rule_reset` follows), `spec` (the rule), `provenance`. `reflexr:rule_archived`: `rule`, `version`, `reason?`, `cancelled` (how many runs) |
-| `Run` | `rule_version`: the version that fired it, or `null` for a code rule |
-| Rule statuses | `origin`, `version` and `problems` |
-| Rules schema | A rule name may be `namespace:name`. `ActionRef` gains `params`, and `Condition` gains `cap`. Type names in `on` filters already carry ADR-0039's pattern |
-| Protocol schema | The above, and `Provenance`. `StoredRule` and `RuleVersion` for the reads |
-| REST | `GET .../rules/{rule}` and `GET .../rule-versions` ([D7](#d7-listing-and-tenancy)) |
-| MCP | `install_rule`, `update_rule`, `disable_rule`, `enable_rule`, `archive_rule`, `get_rule`, `rule_versions` |
+| reflexr's facts | `reflexr:rule_installed`: `rule`, `version`, `reset` (whether a `reflexr:rule_reset` follows), `spec` (the rule), `provenance`. `reflexr:rule_archived`: `rule`, `version`, `reason?`, `cancelled` (how many runs) |
+| Rule statuses | `origin` and `version` |
+| Rules schema | A rule name may be `namespace:name`, and `ActionRef` gains `params`. Type names in `on` filters already carry ADR-0039's pattern |
+| Protocol schema | The above. `StoredRule` for the read |
+| REST | `GET /v1/workspaces/{workspace_id}/rules/{rule}` ([D7](#d7-listing-and-tenancy)) |
+| MCP | `install_rule`, `update_rule`, `archive_rule`, `get_rule` |
 | Rejections | None new |
 
-Every change is additive, so the protocol stays `reflexr.v1`. Widening the rule name pattern accepts more than before. A client that validates rule names against the old schema should regenerate its types. Both schemas are regenerated with `make schema`, and CI's drift check covers them.
+Every change is additive, so the protocol stays `reflexr.v1`. Widening the rule name pattern accepts more than before, so a client that validates rule names against the old schema should regenerate its types. Both schemas are regenerated with `make schema`, and CI's drift check covers them.
 
 ## Security
 
 - **Tenancy is structural.** A stored rule's key starts with its tenant and workspace, and every read and write goes through a handle bound to them. Stored rules never appear in `GET /v1/rules` or `list_rules`.
 - **Closed by default.** Without a `rule_policy`, every change is `forbidden`. With one, the surfaces still ask `authorize` first.
-- **Only registered code runs.** A stored rule names allowlisted actions and predicates and passes them checked parameters. The allowlist shouldn't include actions that change rules, and stackr's D7 keeps turn-starting a per-rule permission in relayr.
-- **Bounded cost.** The cap, the retry and timeout limits, the windows and the rule count bound what a rule can spend. Refusing `matches` avoids regular expressions that could hold a workspace's lock.
-- **Loops stay bounded.** Facts about a firing are one step deeper than what fired ([ADR-0026][adr-0026]), `reflexr:rule_installed` continues the chain of the run that installed it, and the policy can lower the depth limit for stored rules.
+- **Only registered code runs.** A stored rule names allowlisted actions and predicates, and passes them checked parameters. The allowlist shouldn't include actions that change rules, and stackr's D7 keeps turn-starting a per-rule permission in relayr.
+- **Watching is granted.** A stored rule watches only the namespaces the policy grants, and its filter must name its types ([D3c](#d3c-which-event-types-a-stored-rule-may-watch)).
+- **Bounded cost.** The required throttle over the whole rule, the retry, timeout and window limits, and the rule count bound what a rule can spend, beside the action's usage limits and the tenant's gateway budget. Refusing `matches` avoids regular expressions that could hold a workspace's lock.
+- **Loops stay bounded.** Facts about a firing are one step deeper than what fired ([ADR-0026][adr-0026]), and `reflexr:rule_installed` continues the chain of the run that installed it.
 - **Untrusted text.** A rule's description reaches agent prompts, and was drafted from what people typed. The rule's gateway guardrails apply as for any run. Names and descriptions are length-limited, and may reach operators' tools ([D7](#d7-listing-and-tenancy)).
-- **Provenance is a claim.** reflexr records who installed a rule and what they said about it. It doesn't verify an approval. relayr re-reads artifactr before installing, as stackr's RFC-0002 requires.
-- **Forged triggers (#72).** relayr's `install-rule` fires on `artifactr:proposal_resolved`. #45's decision puts who may publish into a namespace in a policy on `Workspaces`, which [#72][issue-72] builds, so the `artifactr` namespace can be reserved to relayr. Until then, any client allowed to publish could forge one. Either way, installing needs the rule policy's consent, and relayr never installs on a bridged event alone, so a forged event costs a re-read, not a rule.
-- **Watching is granted.** A stored rule watches only the namespaces and types the policy grants ([D3c](#d3c-which-event-types-a-stored-rule-may-watch)), and #72's publish policy can refuse runs of stored rules, whose names are qualified, a namespace that code rules' runs may publish into.
+- **Provenance is a claim.** reflexr records who made a change and what they said about it. It doesn't verify an approval. relayr re-reads artifactr before installing, as stackr's RFC-0002 requires.
+- **Forged triggers (#72).** relayr's `install-rule` fires on `artifactr:proposal_resolved`. #45's decision puts who may publish into a namespace in a policy on `Workspaces`, which [#72][issue-72] builds, so the `artifactr` namespace can be reserved to relayr. Until then, any client allowed to publish could forge one. Either way, installing needs the rule policy's consent, and relayr never installs on a bridged event alone, so a forged event costs a re-read, not a rule. #72's policy also sees a run's `AgentActor`, whose `rule` is qualified for a stored rule, so it can refuse runs of stored rules a namespace that code rules' runs may publish into.
 
 ## What the siblings need
 
 - **relayr** (stackr RFC-0002, phase 5):
-  - installs with provenance and `expected_version`
-  - maps an archived artifact to `disable_rule`, as the RFC says
-  - watches `reflexr:rule_installed` for versions it didn't make, and proposes them to the artifact
-  - gives its drafts the policy's allowlist and each action's parameters schema
+  - installs with its provenance, and updates with `expected_version`
+  - maps an archived artifact to `update_rule` with `enabled: false`, as the RFC says
+  - watches `reflexr:rule_installed` for versions whose provenance isn't its own, and proposes them to the artifact
+  - gives its drafts the policy's allowlist, namespaces and each action's parameters schema
 - **artifactr:** nothing.
 - **stackr:**
   - RFC-0002's unresolved "How far does a chat rule reach?" is answered by D1a
@@ -637,10 +611,10 @@ Every change is additive, so the protocol stays `reflexr.v1`. Widening the rule 
 
 #45 was [decided][issue-45-decided] on 2026-09-29, and this RFC is written in its terms:
 
-- **Every event type is qualified.** The example watches `oncall:deploy.completed`, and relayr's install rule `artifactr:proposal_resolved`. Install checks names against ADR-0039's grammar, which both schemas carry, and refuses an unknown one with its "did you mean" hint.
+- **Every event type is qualified.** The example watches `oncall:deploy.completed`, and relayr's install rule `artifactr:proposal_resolved`. `Rule.check` resolves names in ADR-0039's grammar, which both schemas carry, and refuses an unknown one with its "did you mean" hint.
 - **reflexr's facts are in `reflexr:`.** This RFC adds `reflexr:rule_installed` and `reflexr:rule_archived`, beside `reflexr:rule_reset`.
-- **A registry per `Workspaces`.** A stored rule's types resolve in the registry of the `Workspaces` it's installed through, and again in each reactor's when it loads the version ([D3c](#d3c-which-event-types-a-stored-rule-may-watch)).
-- **Namespaces for watching.** The rule policy grants namespaces, with per-type exceptions, the same shape as the publish policy #45 decided (D3c).
+- **A registry per `Workspaces`.** A stored rule's types resolve in the registry of the `Workspaces` it's installed through, and again in each reactor's when it loads the rule ([D3c](#d3c-which-event-types-a-stored-rule-may-watch)).
+- **Namespaces for watching.** The rule policy grants event namespaces, as the publish policy #45 decided grants publishing. Grants of single types, which that policy has, are deferred here (D3c).
 - **The separator.** Stored rule names use ADR-0039's `:` and namespace grammar. ADR-0039 doesn't decide rule names: D1b keeps code rules bare, and lists qualifying every rule name as an option.
 - **The order.** #45 is built first, so its migration 0004 has nothing of this RFC's to rewrite, and this RFC's migration is 0005 ([Migrations](#migrations)).
 
@@ -651,16 +625,16 @@ Every change is additive, so the protocol stays `reflexr.v1`. Widening the rule 
 - **Tenants get behaviour that runs.** It is bounded by allowlists, limits, review and a policy that is closed by default, but it is a new surface to defend.
 - **Two kinds of rule.** Readers learn which is which, though qualified names make it plain.
 - **More work per pass.** The reactor makes one more query per workspace per pass, and one more read per batch and per claim.
-- **Less detail in metrics.** Per-rule metrics for stored rules are off by default. Their detail is in traces, Langfuse and the status reads.
-- **More in core.** The `cap` stage, typed parameters and the name grammar change core and both schemas, and each needs conformance cases.
-- **A bigger log.** Every change appends a fact that carries the whole rule.
+- **Less detail in metrics.** Stored rules share a series per namespace. Their detail is in traces, Langfuse and the status read.
+- **Chat rules without scopes, by default.** A chat rule can't throttle per service unless its policy allows scope fields, and then its throttle no longer bounds the whole rule.
+- **A bigger log.** Every change appends a fact that carries the whole rule, which is also the only history until versions get a table of their own.
 - **Downgrading loses stored rules.** A deployment that rolls back past the migration drops them.
 
 ## Alternatives
 
 - **Tenant-wide rules.** See D1a. They could come later as a helper that installs into each workspace, or as their own RFC.
 - **Hot-reloading code rules.** The application rebuilds `Workspaces` from a file or table when it changes. That means no per-tenant rules, no versions and no facts, and every process must restart or swap state.
-- **Rules only in the log.** Here the table would be a projection of `reflexr:rule_installed` facts. It's the same data, but the executor's due runs across workspaces would have to scan logs. The recommended table is that projection, written in the same transaction.
+- **Rules only in the log**, with no table. The facts already hold every version, but the executor's due runs across workspaces would have to scan logs to learn each rule's policy. The recommended table is a projection of the facts, written in the same transaction.
 - **reflexr reads rules from artifactr.** stackr's D5 and reflexr's ADR-0003 rule this out.
 - **A separate rule service.** Another process and API, and a network hop between a rule and the lock it's evaluated under.
 - **Code in stored rules**, such as sandboxed Python, WebAssembly or an expression language. ADR-0006 keeps rules as data with named escape hatches. The allowlisted predicates are that escape hatch.
@@ -668,13 +642,10 @@ Every change is additive, so the protocol stays `reflexr.v1`. Widening the rule 
 
 ## Unresolved questions
 
-- **Tenant-wide rules**, installed once for every workspace, and perhaps for workspaces created later.
 - **Turning a code rule off in one workspace.** Today `enabled` is the code's, for every workspace.
-- **A preview read.** relayr previews a draft by replaying the recent log through `core.evaluate`. A read-only `preview_rule`, which evaluates a draft over a window of the log and saves nothing, would serve any client.
-- **Retention of versions.** Versions are kept forever. The architecture's open question on retention applies to them and to their facts.
+- **A preview read.** relayr previews a draft by replaying the recent log through `core.evaluate`. A read-only `preview_rule`, which evaluates a draft over a window of the log and saves nothing, would serve any client. It could be added without changing anything here.
 - **How often a rule may change.** Each change appends a fact, and a changed definition resets state. The policy could limit changes per hour.
-- **Counting what throttles and caps drop.** Neither is visible in a metric today, and a rule held at its cap is worth an alert.
-- **Suspended rules.** How a stored rule that no longer checks is shown and brought back, such as one whose action a deploy removed. The status's `problems` is the proposal here.
+- **Counting what throttles drop.** It's not visible in a metric today, and a rule held at its throttle is worth an alert.
 
 ## Phases
 
@@ -682,12 +653,11 @@ Each phase is a series of small pull requests to `main`.
 
 | Phase | Deliverable | Exit criteria |
 |---|---|---|
-| 1. Core | `Provenance`, `RuleVersion`, the stored name grammar, `ActionRef.params` and actions' parameters models, the `cap` stage, the `reflexr:rule_installed` and `reflexr:rule_archived` facts, `RuleLimits` and its pure check | Conformance cases for the cap, replayed in any batching. A table of bad rules, each refused with every problem listed |
-| 2. Storage | The port's additions, in memory and in SQL, the migration, and due runs that see stored rules | The behaviour suite passes on memory, SQLite and PostgreSQL. The migrations don't drift from the models |
-| 3. Workspace and reactor | `Workspaces(rule_policy=)`, the five changes and the reads on `Workspace`, eager resets, the reactor's pass and the executor's claims reading stored rules with the version cache, and archiving | A rule installed while two reactors serve fires on the next matching event. An archived rule's runs are cancelled, and a rule installed again under its name never reuses a firing id |
-| 4. Surfaces | The commands, outcomes and facts in the protocol and its schema, the REST reads, the MCP tools | Contract tests for each command's outcomes and rejections on every surface. No surface lists a stored rule to another tenant or another workspace |
-| 5. Telemetry and dashboards | `reflexr.rule.stored`, the detail setting and its views, and the dashboards' stored-rules row | The dashboard test passes. At the default detail, a thousand stored rules add no series of their own |
-| 6. Docs and oncall | ADRs for the decisions, and the architecture, protocol and guides (rules, reactor, security, serving, MCP, observability). oncall installs a stored rule | `make docs` passes. oncall's smoke test installs a rule over REST and sees it fire |
+| 1. Core | The stored name pattern, `ActionRef.params` and actions' parameters models, the `reflexr:rule_installed` and `reflexr:rule_archived` facts, `RuleLimits` and its pure check | A table of bad rules, each refused with every problem listed. The facts round-trip through the schema |
+| 2. Storage | The table, in memory and in SQL, migration 0005, and due runs that see stored rules | The behaviour suite passes on memory, SQLite and PostgreSQL. The migrations don't drift from the models. A disabled stored rule's runs don't take up `due_runs`' limit |
+| 3. Workspace and reactor | `Workspaces(rule_policy=)`, the three changes and the read on `Workspace`, `begin` and `reset` in the change's transaction, the reactor and executor reading stored rules, archiving, and the namespace as the metric label | A rule installed while two reactors serve fires on the next matching event, even one published before either reactor's next pass. An archived rule's runs are cancelled, and a rule installed again under its name never reuses a firing id |
+| 4. Surfaces | The commands, outcome and facts in the protocol and its schema, the REST read, the MCP tools | Contract tests for each command's outcomes and rejections on every surface. No surface lists a stored rule to another tenant or workspace |
+| 5. Docs and oncall | ADRs for the decisions, and the architecture, protocol and guides (rules, reactor, security, serving, MCP, observability). oncall installs a stored rule | `make docs` passes. oncall's smoke test installs a rule over REST and sees it fire |
 
 ## Tracking
 
@@ -698,8 +668,7 @@ Each phase is a series of small pull requests to `main`.
 - [ ] Phase 2: storage and the migration
 - [ ] Phase 3: workspace and reactor
 - [ ] Phase 4: surfaces
-- [ ] Phase 5: telemetry and dashboards
-- [ ] Phase 6: docs, ADRs and oncall
+- [ ] Phase 5: docs, ADRs and oncall
 - [ ] stackr RFC-0002's prerequisite row for #21 marked done, unblocking its phase 5
 
 [adr-0003]: ../adr/0003-independent-sibling-of-artifactr.md
@@ -708,6 +677,7 @@ Each phase is a series of small pull requests to `main`.
 [adr-0010]: ../adr/0010-loop-and-spend-safety.md
 [adr-0011]: ../adr/0011-surfaces.md
 [adr-0016]: ../adr/0016-tenants-and-workspaces-like-artifactr.md
+[adr-0024]: ../adr/0024-causal-chains-and-operator-actions.md
 [adr-0026]: ../adr/0026-the-reactors-evaluation.md
 [adr-0029]: ../adr/0029-metric-detail-through-sdk-views.md
 [adr-0030]: ../adr/0030-sql-storage.md
@@ -716,6 +686,7 @@ Each phase is a series of small pull requests to `main`.
 [issue-21]: https://github.com/alexnodeland/reflexr/issues/21
 [issue-45]: https://github.com/alexnodeland/reflexr/issues/45
 [issue-45-decided]: https://github.com/alexnodeland/reflexr/issues/45#issuecomment-5899233517
+[issue-57]: https://github.com/alexnodeland/reflexr/issues/57
 [issue-72]: https://github.com/alexnodeland/reflexr/issues/72
 [pr-74]: https://github.com/alexnodeland/reflexr/pull/74
 [s-rfc-0002]: https://github.com/alexnodeland/stackr/blob/main/docs/rfcs/0002-the-combined-system.md
