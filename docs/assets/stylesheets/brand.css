@@ -1,0 +1,84 @@
+/*
+ * reflexr's colours on the Zensical theme. The palette and its rules are in
+ * docs/assets/brand/README.md: the overprint is the working colour, the darker ink
+ * marks interaction, and the lighter ink highlights code.
+ */
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #b3122e;
+  --md-primary-fg-color--light: #c93a53;
+  --md-primary-fg-color--dark: #8c0c22;
+  --md-primary-bg-color: #ffffff;
+  --md-primary-bg-color--light: #ffffffb3;
+  --md-accent-fg-color: #c2006a;
+  --md-accent-fg-color--transparent: #c2006a1a;
+  --md-typeset-a-color: #b3122e;
+  --md-code-bg-color: #f8f2f0;
+  --md-code-hl-color: #ffc400;
+  --md-code-hl-color--light: #ffc4002e;
+  --md-mermaid-node-bg-color: #b3122e12;
+  --md-mermaid-node-fg-color: #b3122e;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-hue: 350deg;
+  --md-default-bg-color: #1f1317;
+  --md-default-bg-color--light: #1f1317b3;
+  --md-default-bg-color--lighter: #1f13174d;
+  --md-default-bg-color--lightest: #1f13171f;
+  --md-primary-fg-color: #ff9d93;
+  --md-primary-fg-color--light: #ffbdb5;
+  --md-primary-fg-color--dark: #f2766a;
+  --md-primary-bg-color: #1f1317;
+  --md-primary-bg-color--light: #1f1317b3;
+  --md-accent-fg-color: #ff4da6;
+  --md-accent-fg-color--transparent: #ff4da61a;
+  --md-typeset-a-color: #ff9d93;
+  --md-code-bg-color: #2b1a1f;
+  --md-code-hl-color: #ffd54a;
+  --md-code-hl-color--light: #ffd54a1f;
+  --md-mermaid-node-bg-color: #ff9d931f;
+  --md-mermaid-node-fg-color: #ff9d93;
+  --md-footer-bg-color: #170d10;
+  --md-footer-bg-color--dark: #10090b;
+}
+
+/* The header logo: the mark's overprint is ink on paper, and light on screen. */
+[data-md-color-scheme="slate"] .md-logo img {
+  content: url("../brand/mark-dark.svg");
+}
+
+/* Headings in the text face, set a little tighter than body text. */
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* The home page's title is the lockup; its heading stays for screen readers. */
+.md-typeset .reflexr-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* The home page's opening: the lockup and the one-line description. */
+.md-typeset .reflexr-hero {
+  margin: 0.5rem 0 2rem;
+}
+
+.md-typeset .reflexr-hero img {
+  width: min(22rem, 100%);
+  height: auto;
+}
+
+.md-typeset .reflexr-hero p {
+  max-width: 34em;
+  font-size: 1.15em;
+  line-height: 1.55;
+}

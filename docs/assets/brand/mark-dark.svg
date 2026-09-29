@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+<title id="title">reflexr</title>
+<polygon fill="#FFD54A" points="6,5 6,19 44.52,39 58,32"/>
+<polygon fill="#FF4DA6" points="6,59 6,45 44.52,25 58,32"/>
+<polygon fill="#FFE1DA" points="58,32 44.52,39 31.04,32 44.52,25"/>
+</svg>

@@ -1,6 +1,6 @@
 # Architecture
 
-> **Status:** accepted design, being built in the phases tracked by [RFC-0001](rfcs/0001-v0.1-implementation-plan.md). This document is evergreen: it is updated in the same pull request as the code that changes it, and the table below shows what exists today. Decisions are recorded in [`adr/`](adr/README.md), proposals in [`rfcs/`](rfcs/README.md), and the wire protocol in [`protocol.md`](protocol.md).
+> **Status:** v0.1 is built, as planned in [RFC-0001](rfcs/0001-v0.1-implementation-plan.md), and not yet released. This document is evergreen: it is updated in the same pull request as the code that changes it, and the table below shows what exists today. Decisions are recorded in [`adr/`](adr/README.md), proposals in [`rfcs/`](rfcs/README.md), and the wire protocol in [`protocol.md`](protocol.md).
 
 | Package | Status |
 |---|---|
@@ -346,7 +346,7 @@ LLM workflows triggered by events can loop and can spend ([ADR-0010](adr/0010-lo
 - **Causation depth.** An event emitted by a run carries the depth of its causal chain. Publishing beyond the workspace's limit (8 by default) is rejected, so a rule whose action triggers itself stops instead of running away. reflexr's facts about a firing or run are as deep as the run's events, and a firing whose facts would exceed the limit is refused and dead-lettered, so rules that trigger each other through `rule_fired` or `run_succeeded` stop too. Errors about other rules' errors are dead-lettered without becoming new facts ([ADR-0026](adr/0026-the-reactors-evaluation.md)).
 - **Throttles** on rules cap how often a rule can fire per scope.
 - **Emit allowlists** on the `EventContext` capability limit which event types an agent can publish.
-- **Concurrency limits** per reactor, per rule and per workspace bound how many runs execute at once. Agent actions accept pydantic-ai `UsageLimits`.
+- **Concurrency limits** bound how many runs execute at once: `Reactor(concurrency=)` per reactor today, with limits per rule and per workspace still to come. Agent actions accept pydantic-ai `UsageLimits`.
 - **Tenancy**: every handle is scoped to one tenant and workspace.
 
 ## Tenancy and concurrency
@@ -464,7 +464,7 @@ erDiagram
 
 ## Dependencies
 
-Python 3.12+. Runtime: `pydantic` (core); `opentelemetry-api` (telemetry and workspace); `cronsim` (schedules); `pydantic-ai-slim` and `pydantic-graph` (agent). Extras: `sql` (`sqlalchemy[asyncio]` and `alembic`), `postgres` (`sql` and asyncpg) and `sqlite` (`sql` and aiosqlite), `fastapi`, `mcp`. Tooling: uv, ruff, pyright in strict mode, pytest, and Zensical with mkdocstrings for the documentation site.
+Python 3.12+. Runtime: `pydantic` (core); `opentelemetry-api` (telemetry and workspace); `cronsim` (schedules); `pydantic-ai-slim` and `pydantic-graph` (agent). Extras: `sql` (`sqlalchemy[asyncio]` and `alembic`), `postgres` (`sql` and asyncpg) and `sqlite` (`sql` and aiosqlite), `fastapi`, `mcp`, `otel` (the OpenTelemetry SDK, OTLP exporters and instrumentations), `langfuse`, `litellm` (pydantic-ai's OpenAI-compatible models) and `evals` (evalr). Tooling: uv, ruff, pyright in strict mode, pytest, and Zensical with mkdocstrings for the documentation site.
 
 ## Testing
 
@@ -509,8 +509,12 @@ Coverage is 100% of lines and branches, and pyright runs in strict mode with no 
 | [0026](adr/0026-the-reactors-evaluation.md) | The reactor's evaluation: rules on workspaces, the depth of reflexr's facts, and rebuilds |
 | [0027](adr/0027-executing-runs.md) | Executing runs |
 | [0028](adr/0028-schedules-and-cronsim.md) | Schedules, with cronsim for cron expressions |
+| [0029](adr/0029-metric-detail-through-sdk-views.md) | Metric detail through SDK views, and the OpenTelemetry and Langfuse adapters |
 | [0030](adr/0030-sql-storage.md) | SQL storage with one dialect-neutral implementation |
 | [0031](adr/0031-the-reference-implementations-events-and-rules.md) | The reference implementation's events and rules |
+| [0032](adr/0032-documentation-site.md) | The documentation site, and a brand shared by the family |
+| [0033](adr/0033-publishing-the-documentation-site.md) | Publishing the documentation site from main |
+| [0036](adr/0036-typed-run-failures.md) | Typed run failures |
 
 ## Open questions
 
