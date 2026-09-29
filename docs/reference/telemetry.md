@@ -43,6 +43,8 @@ These are what reflexr's components record with. Applications rarely need them, 
 
 ::: reflexr.telemetry.chain_attributes
 
+::: reflexr.telemetry.current_trace_id
+
 ::: reflexr.telemetry.current_traceparent
 
 ::: reflexr.telemetry.parse_traceparent

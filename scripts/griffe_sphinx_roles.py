@@ -35,6 +35,7 @@ _PUBLIC_MODULES = frozenset(
         "reflexr.mcp",
         "reflexr.otel",
         "reflexr.langfuse",
+        "reflexr.litellm",
         "reflexr.evals",
     }
 )

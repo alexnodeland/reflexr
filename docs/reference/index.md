@@ -18,6 +18,7 @@ The packages are layers. Each depends only on the ones below it, so each is usab
 | [`reflexr.mcp`](mcp.md) | An MCP server for external agents | `mcp` extra |
 | [`reflexr.otel`](otel.md) | `configure_telemetry`: the OpenTelemetry SDK, OTLP export, instrumentations and metric views | `otel` extra |
 | [`reflexr.langfuse`](langfuse.md) | Langfuse: whole traces, each run's session and trace attributes, and feedback as scores | `langfuse` extra |
+| [`reflexr.litellm`](litellm.md) | The LLM gateway: models over a LiteLLM proxy, with tenancy, keys and guardrails on every request | `litellm` extra |
 | [`reflexr.evals`](evals.md) | evalr for reflexr: feedback as examples, evaluators as rules, replay experiments and end-to-end measures | `evals` extra |
 
 The wire formats have their own pages: the [stream protocol](../protocol.md), and the [JSON Schemas](schema.md) of rules and of the protocol's frames.

@@ -132,7 +132,7 @@ Acting is at least once ([ADR-0027](../adr/0027-executing-runs.md)). A firing cr
 2. **Act.** The action runs outside any transaction, with a [`Reaction`](actions.md#the-reaction), inside an `invoke_workflow {rule}` span. The reactor renews the run's lease every third of `lease_ttl` while the action works.
 3. **Record.** One transaction appends `run_succeeded`, `run_retrying` or `run_dead_lettered`, but only if the run is still running this attempt. An executor that lost its lease, or whose run an operator cancelled, cannot overwrite a newer state.
 
-An action returns the run's output, or raises to fail the attempt. The output must be JSON-compatible data or a Pydantic model, which is dumped as JSON; anything else fails the attempt with "the action returned a value that is not JSON". A rule's `timeout` bounds each attempt: an action that runs longer is cancelled, and the attempt fails with "the action timed out after ...". Cancelling a running run (`workspace.cancel_run`) stops its action within a third of `lease_ttl`.
+An action returns the run's output, or raises to fail the attempt. The output must be JSON-compatible data or a Pydantic model, which is dumped as JSON; anything else fails the attempt with "the action returned a value that is not JSON". A rule's `timeout` bounds each attempt: an action that runs longer is cancelled, and the attempt fails with "the action timed out after ..." and the reason `timeout`. Cancelling a running run (`workspace.cancel_run`) stops its action within a third of `lease_ttl`.
 
 Every transition of a run is a pure function in `reflexr.core`, applied inside a transaction together with the fact it appends:
 
@@ -176,7 +176,33 @@ policy = RetryPolicy(max_attempts=3, backoff=timedelta(seconds=10))
 [policy.delay(n) for n in (1, 2, 3)]  # 10, 20 and 40 seconds
 ```
 
-A failure appends `run_retrying`, with the error and the time of the next attempt. When no attempts are left, the run's status becomes `dead` and `run_dead_lettered` is appended. A dead-lettered run stays in storage, with its last error, until someone acts on it:
+A failure appends `run_retrying`, with the error and the time of the next attempt. When no attempts are left, the run's status becomes `dead` and `run_dead_lettered` is appended.
+
+An action that knows why it failed says so by raising `RunFailure` with a **reason**: a short, stable code, as opposed to the message, which is for people ([ADR-0036](../adr/0036-typed-run-failures.md)). A failure that retrying cannot fix is **permanent**, and is dead-lettered at once, whatever the retry policy allows:
+
+```python
+from reflexr.workspace import RunFailure
+
+
+async def page(reaction: Reaction[AppDeps]) -> None:
+    service = str(reaction.scope["service"])
+    if service == "legacy":
+        raise RunFailure(f"{service} has no on-call rotation", reason="no_rotation", permanent=True)
+    if not await reaction.deps.pager.is_up():
+        raise RunFailure("the pager is down", reason="pager_down")
+    await reaction.deps.pager.notify(service, key=reaction.run_id)
+```
+
+With the pager down, an error from `legacy` and one from `auth` leave their runs like this after one attempt each:
+
+| Scope | Status | Attempts | Reason | Error |
+|---|---|---|---|---|
+| `legacy` | `dead` | 1 | `no_rotation` | legacy has no on-call rotation |
+| `auth` | `retrying` | 1 | `pager_down` | the pager is down |
+
+The reason is recorded on the run (`run.reason`, cleared when it succeeds), on its `run_retrying` and `run_dead_lettered` events, and as the `reflexr.run.reason` attribute of the `reflexr.runs` metric, so dashboards can break failures down by it. Keep reasons to a small set of codes, since each becomes a metric series. reflexr uses two of its own: `timeout`, for an attempt that exceeded the rule's `timeout`, and `abandoned`, for an attempt whose executor stopped. Any other exception fails the attempt without a reason, and is retried. The [LLM gateway](gateway.md)'s guardrail blocks are permanent failures of this kind, with the reason `guardrail_blocked`.
+
+A dead-lettered run stays in storage, with its last error and reason, until someone acts on it:
 
 ```python
 ada = workspace.as_actor(UserActor(id="ada"))
@@ -236,4 +262,4 @@ Any number of reactors, in any number of processes, can share the work, as long 
 - **One executor per run.** A run's lease is taken before its attempt and renewed while the action works.
 - **One publisher per tick.** Ticks have ids derived from the schedule and the time, so replicas never publish one twice.
 
-A lease lapses when its holder stops renewing it for `lease_ttl`. If a reactor dies, or is stopped, in the middle of a run, the run becomes due again once its lease lapses or is released, and the next claim records the abandoned attempt as a failed one ("the attempt was abandoned: its executor stopped"). So the retry policy also bounds actions that keep crashing their process. Give each process its own `holder`, so the leases say which process holds what.
+A lease lapses when its holder stops renewing it for `lease_ttl`. If a reactor dies, or is stopped, in the middle of a run, the run becomes due again once its lease lapses or is released, and the next claim records the abandoned attempt as a failed one ("the attempt was abandoned: its executor stopped", with the reason `abandoned`). So the retry policy also bounds actions that keep crashing their process. Give each process its own `holder`, so the leases say which process holds what.

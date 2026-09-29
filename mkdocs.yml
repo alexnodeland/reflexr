@@ -136,6 +136,7 @@ nav:
       - External agents over MCP: guides/mcp.md
       - Multi-tenancy and security: guides/security.md
       - Observability: guides/observability.md
+      - The LLM gateway: guides/gateway.md
       - Feedback and evaluation: guides/evaluation.md
       - Loop and spend safety: guides/safety.md
       - Testing your application: guides/testing.md
@@ -151,6 +152,7 @@ nav:
       - reflexr.mcp: reference/mcp.md
       - reflexr.otel: reference/otel.md
       - reflexr.langfuse: reference/langfuse.md
+      - reflexr.litellm: reference/litellm.md
       - reflexr.evals: reference/evals.md
       - Stream protocol: protocol.md
       - JSON Schemas: reference/schema.md
@@ -190,6 +192,7 @@ nav:
           - adr/0030-sql-storage.md
           - adr/0032-documentation-site.md
           - adr/0033-publishing-the-documentation-site.md
+          - adr/0036-typed-run-failures.md
           - adr/template.md
       - RFCs:
           - rfcs/README.md

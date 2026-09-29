@@ -143,9 +143,9 @@ reflexr records what it decides and does in the same log, as events of its own. 
 | `rule_reset` | `RuleReset` | `rule`, `generation`, `reason`, `from_seq`, `silent_through` | A rule's definition changed (`"changed"`) or someone replayed it (`"replayed"`) |
 | `run_started` | `RunStarted` | `run_id`, `rule`, `scope_key`, `attempt` | An attempt of a run began |
 | `run_progressed` | `RunProgressed` | `run_id`, `rule`, `step` | A graph run completed a step and saved a checkpoint |
-| `run_retrying` | `RunRetrying` | `run_id`, `rule`, `attempt`, `error`, `next_attempt_at` | An attempt failed, and the run will be tried again |
+| `run_retrying` | `RunRetrying` | `run_id`, `rule`, `attempt`, `error`, `next_attempt_at`, `reason` | An attempt failed, and the run will be tried again. `reason` is a stable code for why, such as `timeout`, when there is one |
 | `run_succeeded` | `RunSucceeded` | `run_id`, `rule`, `output` | A run finished |
-| `run_dead_lettered` | `RunDeadLettered` | `run_id`, `rule`, `attempts`, `error` | A run exhausted its retries |
+| `run_dead_lettered` | `RunDeadLettered` | `run_id`, `rule`, `attempts`, `error`, `reason` | A run exhausted its retries, or failed in a way retrying cannot fix, such as a `guardrail_blocked` failure ([ADR-0036](../adr/0036-typed-run-failures.md)) |
 | `run_cancelled`, `run_skipped` | `RunCancelled`, `RunSkipped` | `run_id`, `rule`, `reason` | Someone cancelled or skipped a run |
 | `run_requeued` | `RunRequeued` | `run_id`, `rule` | Someone made a run runnable again |
 | `feedback_given` | `FeedbackGiven` | `feedback_type`, `target`, `value` | A person or an evaluator judged a run, a firing or a chain |

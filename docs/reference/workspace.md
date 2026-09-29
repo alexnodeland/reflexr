@@ -36,6 +36,8 @@ The action port, and what every action receives. See [Actions](../guides/actions
 
 ::: reflexr.workspace.Reaction
 
+::: reflexr.workspace.RunFailure
+
 ::: reflexr.workspace.RunContext
 
 ## Commands

@@ -115,7 +115,7 @@ reflexr's metrics are declared in a registry, `reflexr.telemetry.METRICS`, with 
 | `reflexr.evaluation.duration` | histogram | `s` | |
 | `reflexr.firings` | counter | `{firing}` | `reflexr.rule` |
 | `reflexr.rule.errors` | counter | `{error}` | `reflexr.rule` |
-| `reflexr.runs` | counter | `{run}` | `reflexr.rule`, `reflexr.run.status`, `reflexr.actor.kind` |
+| `reflexr.runs` | counter | `{run}` | `reflexr.rule`, `reflexr.run.status`, `reflexr.actor.kind`, `reflexr.run.reason` |
 | `reflexr.run.duration` | histogram | `s` | `reflexr.rule`, `reflexr.run.status` |
 | `reflexr.run.attempts` | counter | `{attempt}` | `reflexr.rule` |
 | `reflexr.dead_letters` | counter | `{run}` | `reflexr.rule` |
@@ -124,7 +124,7 @@ reflexr's metrics are declared in a registry, `reflexr.telemetry.METRICS`, with 
 | `reflexr.stream.connections` | up-down counter | `{connection}` | |
 | `reflexr.stream.disconnects` | counter | `{connection}` | `reflexr.stream.close_code` |
 
-`reflexr.evaluation.lag` is how far each rule was behind the head of the log when an evaluation began: the first thing to watch when rules fall behind. `reflexr.runs` counts runs reaching each status, and its `reflexr.actor.kind` tells the reactor's transitions from an operator's retries and skips. The histograms advise bucket boundaries suited to them: a millisecond to ten seconds for evaluation, and fifty milliseconds to ten minutes for run attempts. Each `Metric` also names its Prometheus series (`prometheus_name`), which is what dashboards are tested against.
+`reflexr.evaluation.lag` is how far each rule was behind the head of the log when an evaluation began: the first thing to watch when rules fall behind. `reflexr.runs` counts runs reaching each status, and its `reflexr.actor.kind` tells the reactor's transitions from an operator's retries and skips. A run that is retrying or dead-lettered after an attempt that failed with a reason also carries `reflexr.run.reason`, so dashboards can break failures down by cause: `timeout` and `abandoned` from the reactor, `guardrail_blocked` from the [LLM gateway](gateway.md), or the code an action gives when it raises `RunFailure(message, reason=..., permanent=...)` ([ADR-0036](../adr/0036-typed-run-failures.md)). Reasons are stable codes, so they are safe as a metric attribute; the message is for people, and stays on the run and its facts. The histograms advise bucket boundaries suited to them: a millisecond to ten seconds for evaluation, and fifty milliseconds to ten minutes for run attempts. Each `Metric` also names its Prometheus series (`prometheus_name`), which is what dashboards are tested against.
 
 Run, firing, event, chain and scope values are never metric attributes; they are in the traces. Rule names are, since code bounds them. Tenant and workspace are recorded on every metric, which suits most deployments. With many workspaces, keep less detail ([ADR-0029](../adr/0029-metric-detail-through-sdk-views.md)):
 
@@ -141,6 +141,8 @@ pydantic-ai's instrumentation records metrics of its own too, such as `gen_ai.cl
 A **causal chain** is everything one triggering event led to: the events a run emitted, reflexr's facts about the run, the feedback given on it, and whatever those caused in turn. Its id, an envelope's `correlation_id`, is the id of the first event in it ([Causal chains](workspaces.md#causal-chains)). reflexr uses the chain as the **session**: every span with a chain carries it as `session.id` and `gen_ai.conversation.id`, and an agent action runs in the chain's pydantic-ai conversation. A backend that groups traces by session, as Langfuse does, shows one incident, from the error that completed the spike to the feedback on its triage, as one session.
 
 During a run attempt the chain is also in OpenTelemetry baggage as `session.id`. `configure_telemetry` adds a `BaggageSpanProcessor` that copies it onto every span started in the attempt, so the database queries and HTTP calls an action makes carry the session too, not only reflexr's and pydantic-ai's spans. Baggage travels on outgoing HTTP requests, to model providers for example, so it holds only the chain's id: no tenant, user or content.
+
+With the `litellm` extra, the [LLM gateway](gateway.md) goes one step further for model calls: it sends the chain as LiteLLM's `session_id`, with the tenant, workspace, rule, run and the attempt's trace, so the proxy's own logs join the run's trace and session.
 
 ## The run context
 
@@ -219,6 +221,8 @@ async def page(reaction: Reaction[AppDeps]) -> None:
         )
         await reaction.deps.pager.notify(str(reaction.scope["service"]), reaction.run_id)
 ```
+
+To hand the current trace to another system, so its records can point back at the run, `current_trace_id()` returns the current span's trace id as 32 hex digits, and `current_traceparent()` its W3C trace context; inside an action, that is the attempt's trace, the same id the run records in `trace_ids`.
 
 ## Testing
 
