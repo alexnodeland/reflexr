@@ -3,7 +3,7 @@
 **Status:** Discussion
 **Author:** Alex Nodeland
 **Created:** 2026-09-29
-**Discussion:** the pull request, from [issue #21][issue-21]
+**Discussion:** [#75](https://github.com/alexnodeland/reflexr/pull/75), from [issue #21][issue-21]
 **Siblings:**
 
 - [stackr RFC-0002][s-rfc-0002], the combined system, accepted on 2026-09-29. Its phase 5 installs rules that people accept in chat through the API proposed here. Its decision D5 makes the artifact the reviewed record and reflexr's store the running definition.
