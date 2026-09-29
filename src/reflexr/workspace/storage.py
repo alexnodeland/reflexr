@@ -6,11 +6,11 @@ reflexr ships :class:`~reflexr.workspace.InMemoryStorage` for tests and examples
 implementation must do.
 """
 
-from collections.abc import AsyncGenerator, Collection, Mapping, Sequence
+from collections.abc import AsyncGenerator, Collection, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Protocol
+from typing import Protocol, Self
 
 from reflexr.core import (
     Actor,
@@ -19,6 +19,7 @@ from reflexr.core import (
     EvaluationError,
     Event,
     EventId,
+    Rule,
     RuleName,
     RuleProgress,
     Run,
@@ -46,6 +47,49 @@ class WorkspaceRef:
 def run_lease(run_id: RunId) -> str:
     """Return the lease key an executor holds on a run while it runs it."""
     return f"run:{run_id}"
+
+
+@dataclass(frozen=True)
+class RunPolicy:
+    """What :meth:`Storage.due_runs` needs to know about the rules to find runs that can start.
+
+    Storage does not see the rules, so the executor describes them with :meth:`of`. A rule
+    named in no set has all of its due runs returned, which is always safe: the executor checks
+    every run again as it claims it, so a set that says too little costs claims that are
+    declined, never a run that is not attempted.
+    """
+
+    disabled: frozenset[RuleName] = frozenset()
+    """Rules whose runs wait, and are left out altogether."""
+
+    ordered: frozenset[RuleName] = frozenset()
+    """Rules whose runs execute in firing order per scope (``ordering="scope"``)."""
+
+    blocking: frozenset[RuleName] = frozenset()
+    """Ordered rules whose dead-lettered runs hold back their scope (``on_dead_letter="block"``)."""
+
+    @classmethod
+    def of(cls, rules: Iterable[Rule]) -> Self:
+        """Describe the given rules."""
+        chosen = list(rules)
+        ordered = [rule for rule in chosen if rule.ordering == "scope"]
+        return cls(
+            disabled=frozenset(rule.name for rule in chosen if not rule.enabled),
+            ordered=frozenset(rule.name for rule in ordered),
+            blocking=frozenset(rule.name for rule in ordered if rule.on_dead_letter == "block"),
+        )
+
+    def holds(self, run: Run) -> bool:
+        """Whether a run holds back the later runs of its scope.
+
+        A pending, retrying or running run of an ordered rule does, and so does a dead-lettered
+        one if the rule blocks.
+        """
+        if run.rule not in self.ordered:
+            return False
+        return run.status in ("pending", "retrying", "running") or (
+            run.status == "dead" and run.rule in self.blocking
+        )
 
 
 @dataclass(frozen=True)
@@ -196,13 +240,17 @@ class Storage(Protocol):
         ...
 
     async def due_runs(
-        self, *, now: datetime, limit: int, disabled: Collection[RuleName] = ()
+        self, *, now: datetime, limit: int, policy: RunPolicy
     ) -> list[tuple[WorkspaceRef, Run]]:
         """Return the runs to attempt now, across workspaces, oldest first.
 
-        These are pending and retrying runs due by ``now``, and running runs whose
-        :func:`run_lease` has lapsed, because their executor stopped. Runs of the ``disabled``
-        rules are left out, so they wait without taking up the ``limit``.
+        These are the pending and retrying runs due by ``now`` that can start, and running
+        runs whose :func:`run_lease` has lapsed, because their executor stopped. A pending or
+        retrying run of an ordered rule can start only if no earlier run of its scope, in
+        firing order (``fired_seq``, then creation), :meth:`~RunPolicy.holds` the scope, so a
+        scope's backlog yields one run however deep it is. Runs of the disabled rules are left
+        out. So neither the runs waiting behind others nor those of disabled rules take up the
+        ``limit``.
         """
         ...
 

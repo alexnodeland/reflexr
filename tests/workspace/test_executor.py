@@ -1,7 +1,7 @@
 """The reactor's execution: runs attempted at least once, under leases, in order per scope."""
 
 import asyncio
-from collections.abc import AsyncIterator, Collection
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -36,6 +36,7 @@ from reflexr.workspace import (
     Reaction,
     Reactor,
     RunFailure,
+    RunPolicy,
     Settled,
     Storage,
     Workspace,
@@ -183,6 +184,42 @@ async def test_runs_of_a_scope_run_in_firing_order(build: Build, clock: FakeCloc
     assert {r.status for r in await workspace.runs()} == {"succeeded"}
 
 
+async def test_a_scopes_backlog_does_not_hold_up_other_scopes(build: Build) -> None:
+    workspaces = build([rule()])
+    deps = Deps()
+    workspace = await open_(workspaces)
+    await workspace.publish_many([Deploy(service="busy") for _ in range(150)])
+    await workspace.publish(Deploy(service="quiet"))
+    executor = reactor(workspaces, deps)
+    await executor.evaluate()
+    # More runs of busy wait than execute's limit (100), and quiet's one run fired last.
+    assert await executor.execute() == 2
+    assert [r.scope["service"] for r in deps.calls] == ["busy", "quiet"]
+
+
+@pytest.mark.parametrize("depth", [2, 25])
+async def test_each_pass_claims_one_run_per_scope_however_deep_the_backlog(
+    build: Build, telemetry: Telemetry, depth: int
+) -> None:
+    workspaces = build([rule()])
+    workspace = await open_(workspaces)
+    services = ["auth", "billing"] * depth + ["db"]
+    await workspace.publish_many([Deploy(service=service) for service in services])
+    executor = reactor(workspaces, Deps())
+    await executor.evaluate()
+
+    def claims() -> int:
+        spans = telemetry.spans.get_finished_spans()
+        return sum(span.name == "invoke_workflow page" for span in spans)
+
+    passes: list[int] = []
+    while attempts := await executor.execute():
+        assert claims() - sum(passes) == attempts  # every claim was an attempt
+        passes.append(attempts)
+    assert passes == [3] + [2] * (depth - 1)
+    assert claims() == len(services)
+
+
 async def test_timeouts_and_bad_outputs_fail_the_attempt(build: Build) -> None:
     class Paged(BaseModel):
         service: str
@@ -321,7 +358,7 @@ class StaleDue(InMemoryStorage):
     stale: list[tuple[WorkspaceRef, Run]] | None = None
 
     async def due_runs(
-        self, *, now: object, limit: int, disabled: Collection[str] = ()
+        self, *, now: object, limit: int, policy: RunPolicy
     ) -> list[tuple[WorkspaceRef, Run]]:
         return self.stale or []
 

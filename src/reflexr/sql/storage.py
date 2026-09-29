@@ -14,10 +14,22 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from itertools import batched
 
-from sqlalchemy import ColumnElement, Select, and_, delete, insert, or_, select, update
+from sqlalchemy import (
+    ColumnElement,
+    Exists,
+    Select,
+    and_,
+    delete,
+    exists,
+    insert,
+    or_,
+    select,
+    tuple_,
+    update,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import InstrumentedAttribute
+from sqlalchemy.orm import InstrumentedAttribute, aliased
 
 from reflexr.core import (
     Envelope,
@@ -42,7 +54,7 @@ from reflexr.sql.tables import (
     StateRow,
     WorkspaceRow,
 )
-from reflexr.workspace import Clock, Entry, WorkspaceRef, run_lease, utc_now
+from reflexr.workspace import Clock, Entry, RunPolicy, WorkspaceRef, run_lease, utc_now
 
 _PAGE = 500
 """How many envelopes a subscription reads at a time."""
@@ -52,6 +64,9 @@ _CHUNK = 500
 
 _RUN_LEASE = run_lease("")
 """The prefix of a run's lease key, which ends with the run's id."""
+
+_HOLDING = ("pending", "retrying", "running")
+"""The statuses in which a run of an ordered rule holds back the later runs of its scope."""
 
 
 class _Transaction:
@@ -399,12 +414,14 @@ class SqlStorage:
         return [WorkspaceRef(row.tenant_id, row.workspace_id) for row in await self._all(query)]
 
     async def due_runs(
-        self, *, now: datetime, limit: int, disabled: Collection[RuleName] = ()
+        self, *, now: datetime, limit: int, policy: RunPolicy
     ) -> list[tuple[WorkspaceRef, Run]]:
-        """Return the runs to attempt now, across workspaces, oldest first.
+        """Return the runs to attempt now that can start, across workspaces, oldest first.
 
-        A running run is due when its lease is missing or has expired by ``now``. Runs of the
-        ``disabled`` rules are left out.
+        A running run is due when its lease is missing or has expired by ``now``. A pending or
+        retrying run of an ordered rule is due only if no earlier run of its scope holds it, as
+        a ``NOT EXISTS`` over ``ix_reflexr_runs_scope_head`` finds. Runs of the disabled rules
+        are left out.
         """
         lease = and_(
             LeaseRow.tenant_id == RunRow.tenant_id,
@@ -412,12 +429,14 @@ class SqlStorage:
             LeaseRow.key == _RUN_LEASE + RunRow.id,
         )
         waiting = and_(RunRow.status.in_(("pending", "retrying")), RunRow.next_attempt_at <= now)
+        if policy.ordered:
+            waiting = and_(waiting, _first_in_scope(policy))
         orphaned = and_(
             RunRow.status == "running", or_(LeaseRow.key.is_(None), LeaseRow.expires_at <= now)
         )
         due = or_(waiting, orphaned)
-        if disabled:
-            due = and_(due, RunRow.rule.not_in(tuple(disabled)))
+        if policy.disabled:
+            due = and_(due, RunRow.rule.not_in(sorted(policy.disabled)))
         query = (
             select(RunRow)
             .outerjoin(LeaseRow, lease)
@@ -474,3 +493,40 @@ class SqlStorage:
 
 def _lease(workspace: WorkspaceRef, key: str) -> tuple[ColumnElement[bool], ...]:
     return (*_in_workspace(LeaseRow, workspace), LeaseRow.key == key)
+
+
+def _first_in_scope(policy: RunPolicy) -> ColumnElement[bool]:
+    """Whether no earlier run of the outer run's scope holds it, as ``RunPolicy.holds`` says.
+
+    A dead-lettered run holds the scopes of the blocking rules only, so their runs are checked
+    apart from the other ordered rules', each with a plain list of statuses that the index can
+    seek to.
+    """
+    blocking = policy.ordered & policy.blocking
+    groups = [(policy.ordered - blocking, _HOLDING), (blocking, (*_HOLDING, "dead"))]
+    return or_(
+        RunRow.rule.not_in(sorted(policy.ordered)),
+        *(
+            and_(RunRow.rule.in_(sorted(rules)), ~_held_back(statuses))
+            for rules, statuses in groups
+            if rules
+        ),
+    )
+
+
+def _held_back(statuses: Sequence[str]) -> Exists:
+    """Whether an earlier run of the outer run's scope, in firing order, has one of ``statuses``.
+
+    Firing order is ``fired_seq``, then creation position, as in ``scope_runs``. The status
+    comes before ``fired_seq`` in ``ix_reflexr_runs_scope_head``, so each probe seeks once per
+    status and never reads the scope's succeeded runs.
+    """
+    earlier = aliased(RunRow)
+    return exists().where(
+        earlier.tenant_id == RunRow.tenant_id,
+        earlier.workspace_id == RunRow.workspace_id,
+        earlier.rule == RunRow.rule,
+        earlier.scope_key == RunRow.scope_key,
+        earlier.status.in_(statuses),
+        tuple_(earlier.fired_seq, earlier.position) < tuple_(RunRow.fired_seq, RunRow.position),
+    )

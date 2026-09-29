@@ -107,6 +107,17 @@ class RunRow(ScopedRow):
         ),
         # Due runs are found across workspaces.
         Index("ix_reflexr_runs_due", "status", "next_attempt_at"),
+        # Whether an earlier run holds a scope, found without reading its succeeded runs.
+        Index(
+            "ix_reflexr_runs_scope_head",
+            "tenant_id",
+            "workspace_id",
+            "rule",
+            "scope_key",
+            "status",
+            "fired_seq",
+            "position",
+        ),
     )
 
     id: Mapped[str] = mapped_column(primary_key=True)

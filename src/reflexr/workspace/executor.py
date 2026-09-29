@@ -50,7 +50,7 @@ from reflexr.telemetry import attributes as a
 from reflexr.telemetry.metrics import DEAD_LETTERS, RUN_ATTEMPTS, RUN_DURATION, RUNS
 from reflexr.telemetry.telemetry import Attributes
 from reflexr.workspace.actions import Action, Reaction, RunContext, RunFailure
-from reflexr.workspace.storage import Entry, Transaction, WorkspaceRef, run_lease
+from reflexr.workspace.storage import Entry, RunPolicy, Transaction, WorkspaceRef, run_lease
 from reflexr.workspace.workspace import Workspaces
 
 EXECUTOR = SystemActor(name="reactor")
@@ -92,14 +92,14 @@ class Executor[D]:
         self._run_context = run_context
 
     async def execute(self, *, limit: int) -> int:
-        """Attempt up to ``limit`` due runs, ``concurrency`` at a time.
+        """Attempt up to ``limit`` of the runs that can start, ``concurrency`` at a time.
 
         Returns:
             How many attempts finished, whether they succeeded or failed.
         """
-        disabled = [name for name, rule in self._workspaces.rules.items() if not rule.enabled]
+        rules = self._workspaces.rules.values()
         due = await self._workspaces.storage.due_runs(
-            now=self._workspaces.clock(), limit=limit, disabled=disabled
+            now=self._workspaces.clock(), limit=limit, policy=RunPolicy.of(rules)
         )
         gate = asyncio.Semaphore(self._concurrency)
 

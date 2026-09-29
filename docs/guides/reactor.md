@@ -71,7 +71,7 @@ Settled(ticks=0, firings=1, attempts=1)
 | `settle(max_rounds=)` | The same, until a round does nothing; returns `Settled(ticks, firings, attempts)` |
 | `tick()` | Publishes the [schedules](schedules.md)' due ticks; returns how many |
 | `evaluate(workspace=None)` | Evaluates every enabled rule over new envelopes, in one workspace or in all; returns how many times rules fired |
-| `execute(limit=100)` | Attempts up to `limit` due runs; returns how many attempts finished |
+| `execute(limit=100)` | Attempts up to `limit` due runs that can start; returns how many attempts finished |
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -149,7 +149,7 @@ The workspace's rule status, `GET /v1/workspaces/{workspace_id}/rules` or the MC
 
 ## Execution
 
-Acting is at least once ([ADR-0027](../adr/0027-executing-runs.md)). A firing creates a pending **run** whose id is the firing's id. `execute()` finds due runs of enabled rules across workspaces and attempts up to `concurrency` of them at a time. Each attempt has three steps:
+Acting is at least once ([ADR-0027](../adr/0027-executing-runs.md)). A firing creates a pending **run** whose id is the firing's id. `execute()` finds the due runs of enabled rules that can start, across workspaces, and attempts up to `concurrency` of them at a time. With `ordering="scope"` that is the first unfinished run of each scope, so a backlog in one scope takes one place in `limit` and does not hold up the others ([Ordering](#ordering)). Each attempt has three steps:
 
 1. **Claim.** Under the run's lease, one transaction checks that the run is still due and first in its scope, and appends `run_started`.
 2. **Act.** The action runs outside any transaction, with a [`Reaction`](actions.md#the-reaction), inside an `invoke_workflow {rule}` span. The reactor renews the run's lease every third of `lease_ttl` while the action works.
