@@ -6,6 +6,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+import reflexr.fastapi
+import reflexr.workspace
 from reflexr.workspace import Reactor, Workspaces
 from tests.fastapi.conftest import build
 
@@ -120,6 +122,7 @@ async def test_commands_are_idempotent_and_map_rejections_to_statuses(app: App) 
 
 
 async def test_requests_are_authenticated_and_authorized(app: App) -> None:
+    assert reflexr.fastapi.Authorize is reflexr.workspace.Authorize  # every surface's hook
     client, _, _ = app
     bad = await client.get("/workspaces/prod/events", headers={"x-token": "bad"})
     assert (bad.status_code, bad.json()["detail"]) == (401, "bad token")

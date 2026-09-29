@@ -29,13 +29,10 @@ from reflexr.core import (
 )
 from reflexr.fastapi.stream import Stream
 from reflexr.telemetry import actor_attributes, workspace_attributes
-from reflexr.workspace import Schedule, Workspace, Workspaces, execute
+from reflexr.workspace import Authorize, Schedule, Workspace, Workspaces, execute
 
 ResolveActor = Callable[[HTTPConnection], Awaitable[tuple[TenantId, Actor]]]
 """Authenticates a request or connection: returns its tenant and actor, or raises Unauthorized."""
-
-Authorize = Callable[[TenantId, WorkspaceId, Actor], Awaitable[bool]]
-"""Decides whether an actor may use a workspace of its tenant."""
 
 STATUS_CODES: dict[str, int] = {
     "not_found": 404,

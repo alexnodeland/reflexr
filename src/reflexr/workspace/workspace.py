@@ -5,7 +5,7 @@ events, giving feedback, and operating runs. Each write is attributed to the han
 each is traced (ADR-0018).
 """
 
-from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
@@ -72,6 +72,13 @@ from reflexr.workspace.schedules import Schedule
 from reflexr.workspace.storage import Entry, Storage, Transaction, WorkspaceRef
 
 type _Transition = Callable[[Run, datetime], tuple[Run, RunRequeued | RunSkipped | RunCancelled]]
+
+Authorize = Callable[[TenantId, WorkspaceId, Actor], Awaitable[bool]]
+"""Decides whether an actor may use a workspace of its tenant.
+
+The surfaces that serve workspaces, the FastAPI router and the MCP server, take one as their
+``authorize`` hook, and ask it before opening a workspace for a request.
+"""
 
 
 @dataclass(frozen=True)
