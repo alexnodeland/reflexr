@@ -251,6 +251,11 @@ class Workspace:
         return self._actor
 
     @property
+    def telemetry(self) -> Telemetry:
+        """The tracer and instruments reflexr records with, for actions' own spans."""
+        return self._context.telemetry
+
+    @property
     def causation(self) -> Causation | None:
         """What caused the events this handle publishes, if a run did."""
         return self._cause.causation if self._cause else None

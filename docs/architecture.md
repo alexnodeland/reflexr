@@ -7,7 +7,7 @@
 | `reflexr.core` | Implemented |
 | `reflexr.telemetry` | Implemented: spans, attributes and the metric registry |
 | `reflexr.workspace` | Implemented: storage protocol, in-memory storage, workspace handles, the `Reactor` (evaluation, execution and schedules) and function actions |
-| `reflexr.agent` | In progress (phase 3): agent actions and the `EventContext` capability implemented; graph actions planned |
+| `reflexr.agent` | Implemented: agent actions with the `EventContext` capability, and checkpointed graph actions |
 | `reflexr.sql` | Planned (phase 4) |
 | `reflexr.fastapi`, `reflexr.mcp` | Planned (phase 5) |
 | `examples/oncall` | Planned (phase 6) |
@@ -300,7 +300,7 @@ runbook = GraphAction(runbook_graph, name="runbook", state=RunbookState, inputs=
 ```
 
 - **Agents** are plain pydantic-ai `Agent`s with `deps_type=Reaction[...]`, wrapped in an `AgentAction`. By default its prompt describes the firing: the rule and its description, the scope, and the matched events. The `EventContext` capability gives the agent `read_events`, to read back through the workspace's log, and `emit_event`, to publish events of the types it is allowed, validated against their schemas, with refused calls retried by the model. The agent's output is the run's output. Each run is in its causal chain's conversation (pydantic-ai's `conversation_id`), and the capability attributes pydantic-ai's `invoke_agent` span to the tenant, workspace, rule, run and attempt. `usage_limits` bound each attempt.
-- **Graphs** are pydantic-graph graphs built with `GraphBuilder`. reflexr drives them step by step and saves the graph state and pending tasks to the run after every step. A retry, or another executor after a crash, resumes from the last completed step instead of starting over ([ADR-0009](adr/0009-graph-checkpoints.md)).
+- **Graphs** are pydantic-graph graphs built with `GraphBuilder`, with the `Reaction` as their deps, wrapped in a `GraphAction(graph, state=, inputs=)`. reflexr drives them step by step and, at every boundary where nothing runs in parallel, saves the graph state and the next task to the run (`Reaction.checkpoint`, which appends `run_progressed`). A retry, or another executor after a crash, resumes after the last saved step instead of starting over; inside a fork it resumes from before the fork ([ADR-0009](adr/0009-graph-checkpoints.md)). Each step is an `execute_step {node}` span.
 - **Functions** are `async def` over a `Reaction`.
 
 A `Reaction` carries the workspace (acting as the run's `AgentActor`, so what it publishes records the run as its cause and joins the run's chain), the run (its scope, matched `seq`s, attempt and chain), the rule, the matched envelopes, and the application's `deps`. `reaction.emit(event)` publishes with an id derived from the run, so a retried attempt does not emit twice. An action returns the run's output (JSON, or a Pydantic model), or raises to fail the attempt; a rule's `timeout` bounds it.

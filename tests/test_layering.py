@@ -22,7 +22,7 @@ LAYERS: dict[str, tuple[set[str], set[str]]] = {
     ),
     "agent": (
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.agent"},
-        {"pydantic", "opentelemetry", "pydantic_ai", "pydantic_graph"},
+        {"pydantic", "pydantic_core", "opentelemetry", "pydantic_ai", "pydantic_graph"},
     ),
 }
 
