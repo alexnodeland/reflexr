@@ -8,13 +8,14 @@ state.
 """
 
 import asyncio
-from collections.abc import Mapping
-from contextlib import suppress
+from collections.abc import Coroutine, Mapping
+from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass
 from datetime import timedelta
 from time import perf_counter
-from typing import Literal
+from typing import Any, Literal
 
+from opentelemetry import baggage, context
 from opentelemetry.trace import Span, Status, StatusCode
 from opentelemetry.util.types import AttributeValue
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
@@ -48,7 +49,7 @@ from reflexr.telemetry import (
 from reflexr.telemetry import attributes as a
 from reflexr.telemetry.metrics import DEAD_LETTERS, RUN_ATTEMPTS, RUN_DURATION, RUNS
 from reflexr.telemetry.telemetry import Attributes
-from reflexr.workspace.actions import Action, Reaction
+from reflexr.workspace.actions import Action, Reaction, RunContext
 from reflexr.workspace.storage import Entry, Transaction, WorkspaceRef, run_lease
 from reflexr.workspace.workspace import Workspaces
 
@@ -78,6 +79,7 @@ class Executor[D]:
         holder: str,
         lease_ttl: timedelta,
         concurrency: int,
+        run_context: RunContext | None = None,
     ) -> None:
         self._workspaces = workspaces
         self._actions = dict(actions)
@@ -85,6 +87,7 @@ class Executor[D]:
         self._holder = holder
         self._lease_ttl = lease_ttl
         self._concurrency = concurrency
+        self._run_context = run_context
 
     async def execute(self, *, limit: int) -> int:
         """Attempt up to ``limit`` due runs, ``concurrency`` at a time.
@@ -201,7 +204,22 @@ class Executor[D]:
             deps=self._deps,
         )
         action = self._actions[rule.then.action]
-        task = asyncio.create_task(self._call(action, reaction))
+        # The chain is the session: in baggage, an SDK's baggage processor can copy it onto
+        # every span the action causes, such as its database and HTTP calls.
+        token = context.attach(baggage.set_baggage(a.SESSION_ID, run.correlation_id))
+        try:
+            async with AsyncExitStack() as scope:
+                if self._run_context is not None:
+                    await scope.enter_async_context(self._run_context(reaction))
+                return await self._supervise(ref, run, self._call(action, reaction))
+        finally:
+            context.detach(token)
+
+    async def _supervise(
+        self, ref: WorkspaceRef, run: Run, attempt: Coroutine[Any, Any, _Outcome]
+    ) -> _Outcome:
+        """Run an attempt while keeping its lease, stopping it if the run is cancelled."""
+        task = asyncio.create_task(attempt)
         keeper = asyncio.create_task(self._keep(ref, run, task))
         try:
             return await task

@@ -4,7 +4,9 @@ The action is a port (ADR-0025): an async callable over a ``Reaction``. Function
 as they are; ``reflexr.agent`` adapts pydantic-ai agents and pydantic-graph graphs to it.
 """
 
-from typing import Protocol
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
+from typing import Any, Protocol
 
 from pydantic import JsonValue
 
@@ -92,3 +94,12 @@ class Action[D](Protocol):
     async def __call__(self, reaction: Reaction[D], /) -> object:
         """Respond to a firing, returning the run's output or None."""
         ...
+
+
+type RunContext = Callable[[Reaction[Any]], AbstractAsyncContextManager[object]]
+"""A context entered around each run attempt, inside its span, given the attempt's reaction.
+
+It is a port (ADR-0025): a backend that attributes a run in its own way, such as Langfuse's
+propagated trace attributes, implements it, and the reactor stays free of the backend. It
+matches artifactr's ``TurnContext``.
+"""

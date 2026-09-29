@@ -1,10 +1,14 @@
 """The reactor's execution: runs attempted at least once, under leases, in order per scope."""
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
+from typing import Any
 
 import pytest
+from opentelemetry import baggage
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.trace import StatusCode
 from pydantic import BaseModel
@@ -487,3 +491,28 @@ async def test_a_stale_attempt_cannot_checkpoint(build: Build, storage: Storage)
         await workspace.checkpoint_run(pending.id, attempt=1, step="s", state=None)
     with pytest.raises(NotFound, match="run nope"):
         await workspace.checkpoint_run("nope", attempt=1, step="s", state=None)
+
+
+async def test_each_attempt_runs_inside_the_run_context_with_its_chain_in_baggage(
+    build: Build,
+) -> None:
+    entered: list[tuple[str, int]] = []
+    seen: list[object] = []
+
+    @asynccontextmanager
+    async def attribute(reaction: Reaction[Any]) -> AsyncIterator[None]:
+        entered.append((reaction.run_id, reaction.attempt))
+        yield
+
+    async def look(reaction: Reaction[None]) -> None:
+        seen.append(baggage.get_baggage(a.SESSION_ID))
+
+    workspaces = build([rule(then=run("look"))])
+    workspace = await open_(workspaces)
+    deploy = (await workspace.publish(Deploy(service="auth"))).envelope
+    executor = Reactor(workspaces, actions={"look": look}, run_context=attribute)
+    await executor.settle()
+    [done] = await workspace.runs()
+    assert entered == [(done.id, 1)]
+    assert seen == [deploy.id]
+    assert baggage.get_baggage(a.SESSION_ID) is None  # detached after the attempt
