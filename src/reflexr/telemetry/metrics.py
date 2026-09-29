@@ -112,7 +112,7 @@ EVALUATION_LAG = _reflexr(
     "reflexr.evaluation.lag",
     "gauge",
     "{envelope}",
-    "How many envelopes a rule was behind the head of the log when an evaluation began.",
+    "How many envelopes an enabled rule was behind the head of the log when an evaluation began.",
     a.RULE,
 )
 EVALUATION_DURATION = _reflexr(

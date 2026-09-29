@@ -84,6 +84,10 @@ def test_the_definition_changes_only_with_what_the_rule_decides() -> None:
     assert rule.definition() != spike(scope=by(F.region)).definition()
 
 
+def test_turning_a_rule_off_and_on_keeps_its_definition() -> None:
+    assert spike(enabled=False).definition() == spike().definition()
+
+
 def test_a_valid_rule_passes_its_check() -> None:
     spike().check(events=event_types(), actions={"triage"})
     watch = Rule(

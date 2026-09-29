@@ -195,11 +195,14 @@ class Storage(Protocol):
         """Return every workspace with a log, for the reactor to evaluate."""
         ...
 
-    async def due_runs(self, *, now: datetime, limit: int) -> list[tuple[WorkspaceRef, Run]]:
+    async def due_runs(
+        self, *, now: datetime, limit: int, disabled: Collection[RuleName] = ()
+    ) -> list[tuple[WorkspaceRef, Run]]:
         """Return the runs to attempt now, across workspaces, oldest first.
 
         These are pending and retrying runs due by ``now``, and running runs whose
-        :func:`run_lease` has lapsed, because their executor stopped.
+        :func:`run_lease` has lapsed, because their executor stopped. Runs of the ``disabled``
+        rules are left out, so they wait without taking up the ``limit``.
         """
         ...
 

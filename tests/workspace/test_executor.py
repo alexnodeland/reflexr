@@ -1,7 +1,7 @@
 """The reactor's execution: runs attempted at least once, under leases, in order per scope."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Collection
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -320,7 +320,9 @@ class StaleDue(InMemoryStorage):
 
     stale: list[tuple[WorkspaceRef, Run]] | None = None
 
-    async def due_runs(self, *, now: object, limit: int) -> list[tuple[WorkspaceRef, Run]]:
+    async def due_runs(
+        self, *, now: object, limit: int, disabled: Collection[str] = ()
+    ) -> list[tuple[WorkspaceRef, Run]]:
         return self.stale or []
 
 
@@ -337,6 +339,36 @@ async def test_runs_changed_since_they_were_found_due_are_skipped(clock: FakeClo
     storage.stale = [(ACME, second), (ACME, first), (ACME, orphan)]
     assert await reactor(workspaces, Deps()).execute() == 0
     assert [r.status for r in await storage.runs(ACME)] == ["succeeded", "pending", "dead"]
+
+
+async def test_runs_of_a_disabled_rule_wait_without_holding_others_up(build: Build) -> None:
+    errors = rule(name="errors", when=on(ServiceError))
+    workspaces = build([rule(), errors])
+    workspace = await open_(workspaces)
+    await workspace.publish(Deploy(service="auth"))
+    await workspace.publish(ServiceError(service="auth"))
+    deps = Deps()
+    await reactor(workspaces, deps).evaluate()
+    paused = reactor(build([rule(enabled=False), errors]), deps)
+    assert await paused.execute(limit=1) == 1  # the older run's rule is disabled, so it waits
+    assert await paused.execute() == 0
+    assert {r.rule: r.status for r in await workspace.runs()} == {
+        "page": "pending",
+        "errors": "succeeded",
+    }
+    assert await reactor(workspaces, deps).execute() == 1  # enabled again, it runs
+    assert [r.status for r in await workspace.runs(rule="page")] == ["succeeded"]
+
+
+async def test_a_disabled_rules_run_found_due_is_left_waiting(clock: FakeClock) -> None:
+    storage = StaleDue(clock=clock)  # a storage that does not leave disabled rules' runs out
+    workspaces = Workspaces(storage, rules=[rule(enabled=False)], clock=clock)
+    waiting = fired("r1", rule="page")
+    async with storage.transaction(ACME) as transaction:
+        await transaction.save_runs([waiting])
+    storage.stale = [(ACME, waiting)]
+    assert await reactor(workspaces, Deps()).execute() == 0
+    assert [r.status for r in await storage.runs(ACME)] == ["pending"]
 
 
 async def test_runs_of_rules_no_longer_registered_are_cancelled(

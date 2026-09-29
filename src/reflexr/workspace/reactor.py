@@ -269,7 +269,7 @@ class Reactor[D]:
         return len(entries)
 
     async def evaluate(self, workspace: WorkspaceRef | None = None) -> int:
-        """Evaluate every rule over new envelopes until each is caught up with the log.
+        """Evaluate every enabled rule over new envelopes until each is caught up with the log.
 
         Args:
             workspace: One workspace to evaluate. Defaults to every workspace with a log.
@@ -317,6 +317,8 @@ class Reactor[D]:
         while True:
             advanced = False
             for rule in self._workspaces.rules.values():
+                if not rule.enabled:
+                    continue  # its cursor holds until it is enabled again
                 evaluation = await self._evaluate_batch(ref, rule)
                 if evaluation is None:
                     continue
@@ -398,7 +400,9 @@ class Reactor[D]:
         storage = self._workspaces.storage
         head = await storage.head_seq(ref)
         progress = await storage.progress(ref)
-        for name in self._workspaces.rules:
+        for name, rule in self._workspaces.rules.items():
+            if not rule.enabled:
+                continue  # behind by choice, so not a lag to alert on
             cursor = progress[name].cursor if name in progress else 0
             self._workspaces.telemetry.record(
                 EVALUATION_LAG,

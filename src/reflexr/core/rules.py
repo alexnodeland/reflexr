@@ -143,12 +143,17 @@ class Rule(BaseModel):
     """How long one attempt of the action may take before it is cancelled and counts as failed."""
 
     enabled: bool = True
+    """Whether the reactor evaluates the rule and executes its runs.
+
+    A disabled rule stays registered and checked, but its cursor holds, it records no firings,
+    and its pending and retrying runs wait. Enabling it again resumes from its cursor.
+    """
 
     def definition(self) -> str:
         """Return a hash of what the rule decides (its condition and scope).
 
         When it changes, the rule's state no longer applies and is reset. Changes to the action,
-        retries or ordering do not reset it.
+        retries, ordering or whether it is enabled do not reset it.
         """
         decided = {"when": self.when.model_dump(mode="json"), "scope": self.scope.fields}
         canonical = json.dumps(decided, sort_keys=True, separators=(",", ":"))

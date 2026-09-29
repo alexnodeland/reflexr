@@ -70,7 +70,7 @@ Settled(ticks=0, firings=1, attempts=1)
 | `serve(poll_interval=)` | `tick`, `evaluate` and `execute` in a loop, until cancelled |
 | `settle(max_rounds=)` | The same, until a round does nothing; returns `Settled(ticks, firings, attempts)` |
 | `tick()` | Publishes the [schedules](schedules.md)' due ticks; returns how many |
-| `evaluate(workspace=None)` | Evaluates every rule over new envelopes, in one workspace or in all; returns how many times rules fired |
+| `evaluate(workspace=None)` | Evaluates every enabled rule over new envelopes, in one workspace or in all; returns how many times rules fired |
 | `execute(limit=100)` | Attempts up to `limit` due runs; returns how many attempts finished |
 
 | Option | Default | Meaning |
@@ -121,12 +121,35 @@ Each rule has its own cursor in each workspace, so rules start, catch up and res
 | A new workspace | Every registered rule starts at the workspace's first event |
 | A rule added to workspaces that already have events | At the head of the log with `start="now"` (the default), or at the beginning with `start="beginning"` |
 | A rule whose definition changed | Afresh at the head of the log, with a new generation and a `rule_reset` event (`reason: "changed"`) |
+| A disabled rule added to workspaces that already have events | Nowhere until it is enabled; then as a rule added later |
 
-A rule's definition is its condition and its scope; a hash of them is stored with its cursor. Changing its action, retry policy, ordering or timeout does not reset it. To evaluate history again after a change, [replay the rule](#replaying-a-rule).
+A rule's definition is its condition and its scope; a hash of them is stored with its cursor. Changing its action, retry policy, ordering or timeout, or disabling it, does not reset it. To evaluate history again after a change, [replay the rule](#replaying-a-rule).
+
+## Disabling a rule
+
+A rule with `enabled=False` stays registered: `Workspaces` checks it, the reactor checks that its action is given, it is listed by `GET /rules`, and it can be replayed. The reactor leaves it be. It does not evaluate the rule, so the rule's cursor holds and it records no firings, and it does not claim the rule's pending or retrying runs, which wait without holding up any other rule's runs. A new workspace still meets it at its first event, as it meets every rule.
+
+```python
+error_spike = Rule(
+    name="error-spike",
+    when=on(ServiceError).where(F.severity >= 7).count(at_least=3, within=timedelta(minutes=1)),
+    scope=by(F.service),
+    then=run("page"),
+    enabled=False,  # while the pager is being replaced
+)
+```
+
+Enabling it again resumes it from its cursor: it evaluates everything that arrived while it was off and fires for what it finds, late, and its waiting runs are attempted. That is at least once, as everything the reactor does. `enabled` is not part of the rule's [definition](#where-a-rule-starts), so turning a rule off and on never resets its state. To skip the backlog instead, replay the rule quietly from the head of the log in each workspace, just before enabling it:
+
+```python
+await workspace.replay_rule("error-spike", from_seq=await workspace.head_seq(), mode="rebuild")
+```
+
+A disabled rule's lag grows in the workspace's rule status, but the `reflexr.evaluation.lag` metric leaves it out, since it is behind by choice.
 
 ## Execution
 
-Acting is at least once ([ADR-0027](../adr/0027-executing-runs.md)). A firing creates a pending **run** whose id is the firing's id. `execute()` finds due runs across workspaces and attempts up to `concurrency` of them at a time. Each attempt has three steps:
+Acting is at least once ([ADR-0027](../adr/0027-executing-runs.md)). A firing creates a pending **run** whose id is the firing's id. `execute()` finds due runs of enabled rules across workspaces and attempts up to `concurrency` of them at a time. Each attempt has three steps:
 
 1. **Claim.** Under the run's lease, one transaction checks that the run is still due and first in its scope, and appends `run_started`.
 2. **Act.** The action runs outside any transaction, with a [`Reaction`](actions.md#the-reaction), inside an `invoke_workflow {rule}` span. The reactor renews the run's lease every third of `lease_ttl` while the action works.

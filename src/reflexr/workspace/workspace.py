@@ -103,7 +103,8 @@ class Workspaces:
         emitted: Event types only runs may publish, such as an incident a triage agent opens.
             Clients, over REST, the WebSocket or MCP, are refused them.
         rules: The rules every workspace evaluates. Each is checked against the event types
-            and predicates when the workspaces are created, so a mistake fails at startup.
+            and predicates when the workspaces are created, so a mistake fails at startup. A
+            disabled rule is registered and checked too, but the reactor leaves it be.
         predicates: The Python predicates rules refer to, by name. They must be pure.
         schedules: The schedules that publish ticks into the workspaces.
         clock: Returns the current time for run transitions. Defaults to the system clock.
