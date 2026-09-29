@@ -393,9 +393,9 @@ await workspace.give_feedback(Triage(correct=True, severity="high"), on=RunTarge
 await workspace.skip_run(run_id, reason="duplicate incident")
 ```
 
-- **Publishing** checks the event's type against the allowlist (`not_found` otherwise) and refuses reflexr's own events (`forbidden`). Types in `Workspaces(emitted=[...])` may be published only by runs; clients are refused them (`forbidden`). Publishing an id already in the log appends nothing and returns the logged envelope with `duplicate=True`. `publish_many` is atomic. An event starts a new causal chain unless it names one with `correlation_id=`, or the handle belongs to a run.
+- **Publishing** checks the event's type against the allowlist (`not_found` otherwise) and refuses reflexr's own events (`forbidden`). Types in `Workspaces(emitted=[...])` may be published only by runs; clients are refused them (`forbidden`). Publishing an id already in the log appends nothing and returns the logged envelope with `duplicate=True`. `publish_many` is atomic. An event starts a new causal chain unless it names one with `correlation_id=`, by the id of the chain's first event (a later event's id is `validation_failed`, naming its chain), or the handle belongs to a run.
 - **Run handles.** `workspace.as_actor(AgentActor(...)).caused_by(causation, correlation_id=...)` gives a run a handle whose events record their causation and continue the run's chain; beyond `max_depth` they are rejected with `depth_exceeded`.
-- **Feedback** is validated against its type's targets and must find its target; it joins the target's chain.
+- **Feedback** is validated against its type's targets and must find its target (a chain by its first event's id); it joins the target's chain.
 - **Operations** (`retry_run`, `skip_run`, `cancel_run`, `replay_rule`) apply core's transitions in one transaction and append the resulting event, attributed to the handle's actor.
 - **Reads**: `read`, `subscribe`, `head_seq`, `run`, `runs` (newest first), `dead_letters`, `rule_progress`.
 

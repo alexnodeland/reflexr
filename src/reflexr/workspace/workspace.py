@@ -288,6 +288,8 @@ class Workspace:
 
         Raises:
             NotFound: If the event's type is not accepted, or the chain does not exist.
+            ValidationFailed: If ``correlation_id`` names an event that did not start its
+                chain. The message names the chain it belongs to.
             Forbidden: If the event is one reflexr records itself.
             DepthExceeded: If a run's event would extend its chain beyond the limit.
         """
@@ -356,7 +358,8 @@ class Workspace:
         session.
 
         Raises:
-            ValidationFailed: If the feedback's type cannot be given on this kind of target.
+            ValidationFailed: If the feedback's type cannot be given on this kind of target, or
+                a chain target names an event that did not start its chain.
             NotFound: If the target does not exist.
         """
         kind = on.kind
@@ -575,16 +578,12 @@ class Workspace:
     async def _chain(self, transaction: Transaction, correlation_id: str | None) -> str | None:
         if correlation_id is None:
             return self._cause.correlation_id if self._cause else None
-        if await transaction.envelope(correlation_id) is None:
-            raise NotFound("chain", correlation_id)
-        return correlation_id
+        return await _existing_chain(transaction, correlation_id)
 
     @staticmethod
     async def _target_chain(transaction: Transaction, target: FeedbackTarget) -> str:
         if isinstance(target, ChainTarget):
-            if await transaction.envelope(target.correlation_id) is None:
-                raise NotFound("chain", target.correlation_id)
-            return target.correlation_id
+            return await _existing_chain(transaction, target.correlation_id)
         # A firing's id is its run's id, so both resolve through the run.
         run_id = target.run_id if isinstance(target, RunTarget) else target.firing_id
         run = await transaction.run(run_id)
@@ -677,6 +676,20 @@ class Workspace:
             workspace_id=self.workspace_id,
             attributes=attributes,
         )
+
+
+async def _existing_chain(transaction: Transaction, correlation_id: str) -> str:
+    """Return a chain's id, having checked that it is the id of the chain's first event."""
+    envelope = await transaction.envelope(correlation_id)
+    if envelope is None:
+        raise NotFound("chain", correlation_id)
+    if envelope.correlation_id != envelope.id:
+        raise ValidationFailed(
+            f"event {correlation_id} did not start a causal chain: it belongs to chain "
+            f"{envelope.correlation_id}",
+            [],
+        )
+    return correlation_id
 
 
 async def meet_rules(transaction: Transaction, rules: Iterable[Rule]) -> None:

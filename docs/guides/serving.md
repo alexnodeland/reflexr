@@ -99,7 +99,7 @@ curl -X POST localhost:8000/v1/workspaces/prod/events \
 [{"type": "published", "seq": 1, "id": "alert-7", "duplicate": false}]
 ```
 
-The id makes publishing idempotent: sending `alert-7` again appends nothing and answers with the logged event's `seq` and `"duplicate": true`, so a producer can retry until it hears back. Without an id the server generates one. A batch is published atomically and in order, all of it or none of it, and `correlation_id` puts every event in an existing causal chain ([Workspaces and the log](workspaces.md#causal-chains)):
+The id makes publishing idempotent: sending `alert-7` again appends nothing and answers with the logged event's `seq` and `"duplicate": true`, so a producer can retry until it hears back. Without an id the server generates one. A batch is published atomically and in order, all of it or none of it, and `correlation_id` puts every event in an existing causal chain, named by the id of its first event ([Workspaces and the log](workspaces.md#causal-chains)):
 
 ```json
 {
@@ -117,6 +117,7 @@ The response lists one `published` outcome per event. A request that cannot be p
 |---|---|
 | 404 `not_found` | The event's type is not one the `Workspaces` accepts, or the `correlation_id` names no event |
 | 403 `forbidden` | The event is one of reflexr's own, such as `rule_fired`, which only reflexr records |
+| 422 `validation_failed` | The `correlation_id` names a later event of a chain rather than its first; the message names the chain that event belongs to |
 | 422 | The body does not validate, such as an event missing a field of its type; the detail lists Pydantic's errors |
 
 Senders that cannot speak this format, such as a vendor's webhook, get a route of their own that turns their payload into an event. Use the sender's own id for the event, so a redelivery appends nothing:

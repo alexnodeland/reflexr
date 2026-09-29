@@ -70,7 +70,7 @@ Every envelope belongs to a causal chain, named by its `correlation_id`: the id 
 - **A firing joins the chain of the latest envelope it matched,** and its run carries that chain ([ADR-0024](../adr/0024-causal-chains-and-operator-actions.md)). For an absence, that is the last envelope the rule saw.
 - **Events a run publishes continue its chain.** The reactor gives each run a handle made with `caused_by(causation, correlation_id=...)`, so its events record the firing and run that caused them, one step deeper in the chain.
 - **reflexr's facts about a firing or run,** operators' actions on a run, and feedback on it all join the run's chain.
-- **A producer can join an existing chain** with `publish(..., correlation_id="alert-7")`. The chain must exist, or the publish is rejected with `NotFound`.
+- **A producer can join an existing chain** with `publish(..., correlation_id="alert-7")`, naming the chain by the id of its first event. An id that is not in the log is rejected with `NotFound`, and the id of a later event in a chain with `ValidationFailed`, whose message names the chain that event belongs to, so the producer can join it by that id. Feedback on a `ChainTarget` names its chain the same way.
 
 With a rule that runs `triage` on every severe error, and a `triage` action that opens an incident, the whole story of one alert is one chain:
 
@@ -178,7 +178,7 @@ except NotFound as rejection:
 |---|---|---|---|
 | `NotFound` | `not_found` | Something the command names does not exist, such as a run, a rule or a chain, or an event type is not accepted (`entity`, `id`) | 404 |
 | `InvalidState` | `invalid_state` | The command does not fit the current state, such as skipping a run that succeeded | 409 |
-| `ValidationFailed` | `validation_failed` | The data does not validate, such as feedback that does not fit its type or a replay beyond the head of the log (`errors`) | 422 |
+| `ValidationFailed` | `validation_failed` | The data does not validate, such as feedback that does not fit its type, a replay beyond the head of the log, or a `correlation_id` naming a later event of a chain rather than its first (`errors`) | 422 |
 | `Forbidden` | `forbidden` | The actor may not do this, such as publishing one of reflexr's own events | 403 |
 | `DepthExceeded` | `depth_exceeded` | A run's event would extend its causal chain beyond `max_depth` (`depth`, `limit`) | 422 |
 | `UnsupportedProtocol` | `unsupported_protocol` | A client asked for another protocol version | 400 |

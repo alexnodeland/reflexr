@@ -141,7 +141,7 @@ class ReflexrMcp:
             """Publish an event, an object with its ``type`` and fields.
 
             Publishing an ``id`` that is already in the log adds nothing. ``correlation_id``
-            joins the causal chain that event started.
+            joins the causal chain that event started; a later event of a chain is refused.
             """
             try:
                 loaded = load_event(event)

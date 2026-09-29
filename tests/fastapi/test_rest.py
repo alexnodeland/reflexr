@@ -34,6 +34,10 @@ async def test_producers_publish_events_one_at_a_time_or_in_batches(app: App) ->
     assert [(o["seq"], o["duplicate"]) for o in batch.json()] == [(1, True), (2, False)]
     events = (await client.get("/workspaces/prod/events", params={"after_seq": 1})).json()
     assert [(e["seq"], e["correlation_id"], e["actor"]["id"]) for e in events] == [(2, "e1", "ada")]
+    later = {"events": [{"event": ERROR}], "correlation_id": events[0]["id"]}
+    wrong = await client.post("/workspaces/prod/events", json=later)
+    assert (wrong.status_code, wrong.json()["detail"]["type"]) == (422, "validation_failed")
+    assert wrong.json()["detail"]["message"].endswith("it belongs to chain e1")
     refused = await client.post(
         "/workspaces/prod/events", json={"event": {"type": "rule_fired", "rule": "x"}}
     )

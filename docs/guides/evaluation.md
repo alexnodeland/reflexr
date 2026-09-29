@@ -33,7 +33,7 @@ class Resolution(Feedback, name="resolution", targets={"chain"}):
 |---|---|
 | `RunTarget(run_id)` | One run: a workflow's execution for one firing, over all its attempts. Was the triage right? |
 | `FiringTarget(firing_id)` | One firing: should the rule have fired at all? A firing's id is its run's id |
-| `ChainTarget(correlation_id)` | A causal chain: everything one triggering event led to, such as a whole incident |
+| `ChainTarget(correlation_id)` | A causal chain: everything one triggering event led to, such as a whole incident. `correlation_id` is the id of the chain's first event |
 
 A type must declare at least one target, or defining it raises `TypeError`; an intermediate base class passes `abstract=True` instead. Choose field types for how they will be scored ([Scores](#scores)): `bool` is yes or no, `Literal` and `Enum` are categories, bounded numbers are numeric, and `str` is free text.
 
@@ -53,7 +53,7 @@ await ada.give_feedback(
 )
 ```
 
-The handle checks that the type can be given on the target's kind (`ValidationFailed` otherwise) and that the target exists (`NotFound`), then appends a `feedback_given` event with the validated value. Whoever gave it is the envelope's actor. The feedback joins the causal chain of what it is about, so it appears in that chain's session in your traces, and it is traced as `reflexr.feedback {type}` and counted in the `reflexr.feedback` metric ([Observability](observability.md)).
+The handle checks that the type can be given on the target's kind (`ValidationFailed` otherwise) and that the target exists (`NotFound`), and that a chain target names the first event of its chain (`ValidationFailed`, naming the chain, otherwise), then appends a `feedback_given` event with the validated value. Whoever gave it is the envelope's actor. The feedback joins the causal chain of what it is about, so it appears in that chain's session in your traces, and it is traced as `reflexr.feedback {type}` and counted in the `reflexr.feedback` metric ([Observability](observability.md)).
 
 Every surface has it, as the `give_feedback` command. Over REST (`POST /v1/workspaces/{workspace_id}/commands`) and the WebSocket it is a command frame; over MCP it is the `give_feedback` tool, with the same fields:
 

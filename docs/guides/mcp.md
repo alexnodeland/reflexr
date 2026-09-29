@@ -52,7 +52,7 @@ The server's instructions tell the client what it is talking to: event logs, one
 
 | Tool | Does |
 |---|---|
-| `publish_event(workspace_id, event, id=None, correlation_id=None)` | Publishes an event, an object with its `type` and fields. An `id` already in the log adds nothing; `correlation_id` joins the causal chain that event started. |
+| `publish_event(workspace_id, event, id=None, correlation_id=None)` | Publishes an event, an object with its `type` and fields. An `id` already in the log adds nothing; `correlation_id` joins the causal chain that event started, and naming a later event of a chain is refused. |
 | `read_events(workspace_id, after_seq=0, types=None, limit=50)` | Reads envelopes, oldest first, as JSON lines |
 | `list_rules()` | The rules every workspace evaluates, as JSON |
 | `rule_status(workspace_id)` | Each rule's cursor, how far it is behind the log, and its generation |
