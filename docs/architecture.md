@@ -5,7 +5,8 @@
 | Package | Status |
 |---|---|
 | `reflexr.core` | Implemented |
-| `reflexr.workspace` | Planned (phase 2) |
+| `reflexr.telemetry` | Implemented: spans, attributes and the metric registry |
+| `reflexr.workspace` | In progress (phase 2): storage protocol, in-memory storage and workspace handles implemented; the `Reactor` and schedules planned |
 | `reflexr.agent` | Planned (phase 3) |
 | `reflexr.sql` | Planned (phase 4) |
 | `reflexr.fastapi`, `reflexr.mcp` | Planned (phase 5) |
@@ -68,7 +69,9 @@ graph TD
     mcp --> workspace
     agent --> workspace["reflexr.workspace<br/>workspaces, storage protocol, Reactor"]
     sql["reflexr.sql<br/>SQLAlchemy storage"] --> workspace
+    workspace --> telemetry["reflexr.telemetry<br/>spans and the metric registry"]
     workspace --> core["reflexr.core<br/>pure, synchronous rules"]
+    telemetry --> core
 ```
 
 Dependencies point one way. Each layer is usable without the ones above it, and a test enforces the imports.
@@ -76,11 +79,28 @@ Dependencies point one way. Each layer is usable without the ones above it, and 
 | Package | Depends on | Responsibility |
 |---|---|---|
 | `reflexr.core` | pydantic | Events and envelopes, actors, conditions and their reducers, rules, evaluation, the run lifecycle and retry policy. Pure, synchronous, no I/O. |
-| `reflexr.workspace` | core | `Workspaces`, `Workspace`, the storage protocol, in-memory storage, the `Reactor`, function actions, schedules and their runner. |
+| `reflexr.telemetry` | core, opentelemetry-api | Attribute names, the metric registry and its cardinality policy, and the tracer and instruments. Never configures the SDK. |
+| `reflexr.workspace` | core, telemetry | `Workspaces`, `Workspace`, the storage protocol, in-memory storage, the `Reactor`, function actions, schedules and their runner. |
 | `reflexr.agent` | workspace, pydantic-ai, pydantic-graph | `Reaction`, agent actions with the `EventContext` capability, graph actions with checkpoints. |
 | `reflexr.sql` (extra) | workspace, SQLAlchemy 2 async, Alembic | Durable storage on PostgreSQL and SQLite, and its migrations. |
 | `reflexr.fastapi` (extra) | workspace, FastAPI | HTTP ingest, REST reads and administration, and the WebSocket stream protocol. |
 | `reflexr.mcp` (extra) | workspace, mcp | Publishing, reading and administration as MCP tools. |
+
+### Ports and adapters
+
+The core is the hexagon; everything it talks to is behind a port, a small protocol owned by the layer that needs it, with adapters in their own modules or extras ([ADR-0025](adr/0025-ports-and-adapters.md)):
+
+| Port | Adapters |
+|---|---|
+| `Storage` (driven) | `InMemoryStorage`; `SqlStorage` on PostgreSQL, Supabase's Postgres or SQLite |
+| `Clock` (driven) | `utc_now`; fake clocks in tests |
+| The OpenTelemetry API (driven) | Any SDK and exporter, such as OTLP to stackr's Collector |
+| Actions (driven) | Functions; pydantic-ai agents and pydantic-graph graphs; evaluators |
+| pydantic-ai's `Model` (driven) | Any provider, or the LiteLLM proxy |
+| Log subscribers (driven) | The Langfuse feedback mirror; evalr's `FeedbackSource` |
+| `Workspace` handles and the `Reactor` (driving) | In-process calls, REST, WebSocket, MCP, schedules |
+
+Every port has a fake or in-memory adapter and one contract suite that all its adapters pass; the storage behaviour suite is the first.
 
 ### `reflexr.core`: sans-IO
 
@@ -95,7 +115,8 @@ save(evaluation)  # scope states, the new progress and cursor, and the firings' 
 - `needs` returns the scopes a batch reads: those of the envelopes that pass the rule's filter, and those whose `absence` deadline passes during the batch. Scopes the host has no state for are new.
 - `evaluate` folds the envelopes into the rule's per-scope state and returns an `Evaluation`: the changed scope states, the new `RuleProgress` (cursor, generation, definition hash, deadlines), the firings, the evaluation errors, and the `rule_fired` and `rule_errored` events to append, in order. It reads nothing but its arguments; time is the envelopes' `ts`.
 - `begin` gives a new rule its starting progress (the head of the log, or the beginning), and `reset` starts a new generation when a rule's definition changes or it is replayed.
-- The run lifecycle is pure too: `create_run`, `start`, `checkpoint`, `succeed`, `fail` (retry under the rule's `RetryPolicy`, or dead-letter), `cancel`, `skip`, `retry`, and `runnable`, which picks the runs of a scope that may start now.
+- The run lifecycle is pure too: `create_run`, `start`, `checkpoint`, `succeed`, `fail` (retry under the rule's `RetryPolicy`, or dead-letter), `cancel`, `skip`, `retry` (appending `run_requeued`), and `runnable`, which picks the runs of a scope that may start now.
+- A firing joins the **causal chain** of the latest envelope it matched, and its run carries that chain ([ADR-0024](adr/0024-causal-chains-and-operator-actions.md)). For an absence, that is the last envelope the rule saw.
 
 Firing ids are derived from the rule, its generation, the scope and the `seq`, so evaluating the same log twice produces the same ids.
 
@@ -324,6 +345,25 @@ Every surface is a thin adapter over a `Workspace` handle ([ADR-0011](adr/0011-s
 
 Authentication is the host's: each surface takes a resolver that returns the tenant and actor for a request.
 
+## Workspace handles
+
+`Workspaces(storage, events=[...], clock=..., max_depth=8, tracer_provider=..., meter_provider=..., metrics_detail="workspace")` opens handles; each `Workspace` is bound to one tenant, workspace and actor.
+
+```python
+workspace = await workspaces.open("acme", "prod", actor=UserActor(id="ada"))
+published = await workspace.publish(ServiceError(service="auth", severity=8), id="alert-7")
+await workspace.give_feedback(Triage(correct=True, severity="high"), on=RunTarget(run_id=run_id))
+await workspace.skip_run(run_id, reason="duplicate incident")
+```
+
+- **Publishing** checks the event's type against the allowlist (`not_found` otherwise) and refuses reflexr's own events (`forbidden`). Publishing an id already in the log appends nothing and returns the logged envelope with `duplicate=True`. `publish_many` is atomic. An event starts a new causal chain unless it names one with `correlation_id=`, or the handle belongs to a run.
+- **Run handles.** `workspace.as_actor(AgentActor(...)).caused_by(causation, correlation_id=...)` gives a run a handle whose events record their causation and continue the run's chain; beyond `max_depth` they are rejected with `depth_exceeded`.
+- **Feedback** is validated against its type's targets and must find its target; it joins the target's chain.
+- **Operations** (`retry_run`, `skip_run`, `cancel_run`) apply core's transitions in one transaction and append the resulting event, attributed to the handle's actor.
+- **Reads**: `read`, `subscribe`, `head_seq`, `run`, `runs` (newest first), `dead_letters`, `rule_progress`.
+
+Every write is a span (`reflexr.publish {type}`, a producer span; `reflexr.feedback {type}`; `reflexr.skip_run` and so on) attributed to the tenant, workspace and actor and placed in its chain's session. The W3C trace context of the publishing span is stored on the envelope, so the runs it causes can link back to it. Metrics come from the registry in `reflexr.telemetry.metrics`: `reflexr.events.published`, `reflexr.feedback` and `reflexr.runs` so far.
+
 ## Storage protocol
 
 `reflexr.workspace` defines the storage protocol, and the same behaviour suite runs against every implementation:
@@ -331,7 +371,7 @@ Authentication is the host's: each surface takes a resolver that returns the ten
 - **`InMemoryStorage`**, for tests, examples and single-process prototypes.
 - **`SqlStorage`** (`reflexr.sql`), on PostgreSQL and SQLite with SQLAlchemy 2's asyncio extension, with Alembic migrations shipped in the package.
 
-A transaction is scoped to one workspace. Within it the host appends envelopes, loads and saves rule cursors and states, creates and updates runs, and dead-letters evaluation errors. Outside transactions, storage serves reads (`read`, `subscribe`, runs, dead letters), leases with an injectable clock, and schedule state.
+A transaction is scoped to one workspace (a `WorkspaceRef` of tenant and workspace) and serialized with every other transaction on it. Within it the host appends envelopes, loads and saves rule cursors and states, creates and updates runs, and dead-letters evaluation errors; it reads its own writes, commits when its block exits normally and rolls back if it raises. Appending an id that is already in the log is an error, so callers look ids up first. Outside transactions, storage serves reads (`read`, `subscribe`, runs, dead letters), discovery (`workspaces`, `due_runs`), leases with an injectable clock, and schedule state.
 
 ## Data model
 
@@ -348,7 +388,7 @@ erDiagram
 
 - **Rules live in code** (v0.1) and are identified by name. A rule's cursor row stores a hash of its definition; changing the definition resets its state and is recorded in the log.
 - **Rule state** is a JSON document per rule and scope, owned by the rule's condition, saved with its cursor.
-- **Runs** hold their status, attempts, next attempt time, lease, and for graphs the latest checkpoint.
+- **Runs** hold their status, attempts, next attempt time, causal chain, the trace id of each attempt, and for graphs the latest checkpoint.
 
 ## Aligned with artifactr
 
@@ -366,7 +406,7 @@ erDiagram
 
 ## Dependencies
 
-Python 3.12+. Runtime: `pydantic` (core); `pydantic-ai-slim` and `pydantic-graph` (agent). Extras: `sql` (`sqlalchemy[asyncio]`, `alembic`), `postgres` and `sqlite` (drivers), `fastapi`, `mcp`. Tooling: uv, ruff, pyright in strict mode, pytest, and Zensical with mkdocstrings for the documentation site.
+Python 3.12+. Runtime: `pydantic` (core); `opentelemetry-api` (telemetry and workspace); `pydantic-ai-slim` and `pydantic-graph` (agent). Extras: `sql` (`sqlalchemy[asyncio]`, `alembic`), `postgres` and `sqlite` (drivers), `fastapi`, `mcp`. Tooling: uv, ruff, pyright in strict mode, pytest, and Zensical with mkdocstrings for the documentation site.
 
 ## Testing
 
@@ -405,6 +445,8 @@ Coverage is 100% of lines and branches, and pyright runs in strict mode with no 
 | [0021](adr/0021-contributor-compose-and-dev-containers.md) | Contributor Compose and dev containers here, infrastructure in stackr |
 | [0022](adr/0022-litellm-proxy-first.md) | LiteLLM, proxy first, for routing and guardrails |
 | [0023](adr/0023-libraries-and-the-stackr-template.md) | Libraries, and stackr as the infrastructure template |
+| [0024](adr/0024-causal-chains-and-operator-actions.md) | Which chain a firing joins, and operator actions in the log |
+| [0025](adr/0025-ports-and-adapters.md) | Ports and adapters |
 
 ## Open questions
 

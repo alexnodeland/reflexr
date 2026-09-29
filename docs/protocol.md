@@ -14,8 +14,9 @@ A command is a JSON object with a `type`. Over REST and WebSocket it travels in 
 
 | Command | Fields | Outcome |
 |---|---|---|
-| `publish` | `event` (with its `type`), `id?` | `{seq, id, duplicate}`. Publishing an `id` that is already in the workspace returns the existing `seq` with `duplicate: true`. |
-| `retry_run` | `run_id` | The run becomes runnable now, whatever its status except `succeeded`. |
+| `publish` | `event` (with its `type`), `id?`, `correlation_id?` | `{seq, id, duplicate}`. Publishing an `id` that is already in the workspace returns the existing `seq` with `duplicate: true`. `correlation_id` joins an existing causal chain. A type the server does not accept is `not_found`; reflexr's own event types are `forbidden`. |
+| `give_feedback` | `feedback_type`, `target`, `value` | `{seq, id}`. The value is validated against the feedback type, which must allow the target's kind; the target must exist. |
+| `retry_run` | `run_id` | The run becomes runnable now, whatever its status except `succeeded` and `running`, and `run_requeued` is appended. |
 | `skip_run` | `run_id`, `reason?` | A pending, retrying or dead-lettered run is marked skipped, unblocking its scope. |
 | `cancel_run` | `run_id` | A running run is cancelled and recorded as cancelled. |
 | `replay_rule` | `rule`, `from_seq`, `mode` (`rebuild` or `refire`) | Resets the rule's cursor to `from_seq`. `rebuild` recomputes state and appends no `rule_fired` events and creates no runs; `refire` records the firings found and creates runs for them, with new ids. |
@@ -83,6 +84,7 @@ reflexr's own events, alongside the application's:
 | `run_succeeded` | `run_id`, `output?` |
 | `run_dead_lettered` | `run_id`, `attempts`, `error` |
 | `run_cancelled`, `run_skipped` | `run_id`, `reason?` |
+| `run_requeued` | `run_id` (someone made the run runnable again; the actor says who) |
 | `feedback_given` | `feedback_type`, `target` (`{kind: run, run_id}`, `{kind: firing, firing_id}` or `{kind: chain, correlation_id}`), `value` |
 | `tick` | `schedule`, `at` |
 

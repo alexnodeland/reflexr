@@ -21,6 +21,9 @@ class Match(_State):
 
     seq: int
     ts: AwareDatetime
+    correlation_id: str
+    """The causal chain the envelope belongs to."""
+
     depth: int = 0
 
 
@@ -114,6 +117,9 @@ class Firing(_State):
 
     depth: int = 0
     """The deepest causation depth among the matched envelopes."""
+
+    correlation_id: str
+    """The causal chain the firing joins: that of the latest envelope it matched."""
 
 
 class EvaluationError(_State):

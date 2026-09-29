@@ -21,6 +21,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "opentelemetry-api>=1.45",
     "pydantic>=2.13",
 ]
 
@@ -36,6 +37,7 @@ test = [
     "pytest-asyncio>=1.4",
     "pytest-cov>=7.1",
     "hypothesis>=6.168",
+    "opentelemetry-sdk>=1.45",
 ]
 lint = ["ruff>=0.16", "pyright>=1.1.414"]
 dev = [

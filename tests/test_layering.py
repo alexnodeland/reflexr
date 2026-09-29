@@ -15,6 +15,11 @@ SRC = Path(__file__).parent.parent / "src" / "reflexr"
 LAYERS: dict[str, tuple[set[str], set[str]]] = {
     # layer: (reflexr packages it may import, third-party packages it may import)
     "core": ({"reflexr.core"}, {"pydantic"}),
+    "telemetry": ({"reflexr.core", "reflexr.telemetry"}, {"opentelemetry"}),
+    "workspace": (
+        {"reflexr.core", "reflexr.telemetry", "reflexr.workspace"},
+        {"pydantic", "opentelemetry"},
+    ),
 }
 
 

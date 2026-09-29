@@ -34,6 +34,7 @@ from reflexr.core.events import (
     RunCancelled,
     RunDeadLettered,
     RunProgressed,
+    RunRequeued,
     RunRetrying,
     RunSkipped,
     RunStarted,
@@ -63,6 +64,9 @@ class Run(BaseModel):
     scope: dict[str, JsonValue]
     fired_seq: int
     matched: tuple[int, ...]
+    correlation_id: str
+    """The causal chain the run belongs to, which is its session in traces."""
+
     depth: int = 0
     status: RunStatus = "pending"
     attempts: int = 0
@@ -90,6 +94,7 @@ def create_run(firing: Firing, *, now: AwareDatetime) -> Run:
         scope=firing.scope,
         fired_seq=firing.seq,
         matched=firing.matched,
+        correlation_id=firing.correlation_id,
         depth=firing.depth,
         next_attempt_at=now,
         created_at=now,
@@ -159,11 +164,12 @@ def skip(run: Run, *, now: AwareDatetime, reason: str | None = None) -> tuple[Ru
     return skipped, RunSkipped(run_id=run.id, rule=run.rule, reason=reason)
 
 
-def retry(run: Run, *, now: AwareDatetime) -> Run:
+def retry(run: Run, *, now: AwareDatetime) -> tuple[Run, RunRequeued]:
     """Make a run runnable now, with a fresh retry budget if it had finished."""
     _require(run, "retry", "pending", "retrying", "dead", "cancelled", "skipped")
     attempts = 0 if run.status in FINISHED else run.attempts
-    return _update(run, now, status="pending", attempts=attempts, next_attempt_at=now)
+    requeued = _update(run, now, status="pending", attempts=attempts, next_attempt_at=now)
+    return requeued, RunRequeued(run_id=run.id, rule=run.rule)
 
 
 def runnable(runs: Sequence[Run], rule: Rule, *, now: AwareDatetime) -> list[Run]:
