@@ -17,7 +17,7 @@
 
 ### Amendment (2026-09-29): rules and schedules are shared by every tenant
 
-- **Rule and schedule definitions are the application's code, not a tenant's data.** They belong to `Workspaces`, every tenant's workspaces evaluate the same ones, and every authenticated client of any tenant may read them all: `GET /rules`, `GET /schedules` and the MCP `list_rules` tool return them whole, including the tenant and workspace ids a schedule targets, and `authorize` is not asked, since they name no workspace. This is by design, and the security guide and the protocol say so plainly; an application that must hide them does not mount those routes for some clients. What a rule does in a workspace (its cursor, state, runs and dead letters) stays the workspace's.
+- **Rule and schedule definitions are the application's code, not a tenant's data.** They belong to `Workspaces`, every tenant's workspaces evaluate the same ones, and every authenticated client of any tenant may read them all: `GET /rules`, `GET /schedules` and the MCP `list_rules` tool return them, and `authorize` is not asked, since they name no workspace. A schedule's targets are the exception, since they name tenants' workspaces: `GET /schedules` narrows them to the caller's tenant, and leaves out a schedule that targets none of its workspaces, so no tenant sees another's ids. This is by design, and the security guide and the protocol say so plainly; an application that must hide them does not mount those routes for some clients. What a rule does in a workspace (its cursor, state, runs and dead letters) stays the workspace's.
 
 ## Options considered
 

@@ -39,7 +39,7 @@ Rejections carry a stable `type` and a `message`: `not_found`, `invalid_state`, 
 | `GET /v1/workspaces/{workspace_id}/runs?rule=&scope_key=&status=&limit=` | Runs, newest first. |
 | `GET /v1/workspaces/{workspace_id}/runs/{run_id}` | A run, with its attempts, last error and checkpoint. |
 | `GET /v1/workspaces/{workspace_id}/dead-letters?rule=` | The envelopes rules could not evaluate. |
-| `GET /v1/schedules` | The registered schedules, shared by every tenant as rules are, and visible to every authenticated client of any tenant, with the workspaces they target. |
+| `GET /v1/schedules` | The registered schedules that tick in the caller's tenant, shared by every tenant as rules are. A schedule that targets particular workspaces lists only the caller's tenant's; one that targets none of them is left out. |
 | `GET /v1/workspaces/{workspace_id}/schedules` | Each schedule targeting the workspace, with its `last_tick` and `next_tick`. |
 
 Rejections map to HTTP status codes: `not_found` → 404, `invalid_state` → 409, `validation_failed` and `depth_exceeded` → 422, `forbidden` → 403, `unsupported_protocol` → 400. A body that does not validate, such as an event whose fields do not match its type, is 422. Authentication is the host's: `resolve_actor(request)` returns the tenant and actor, or raises `Unauthorized` (401); an optional `authorize(tenant, workspace, actor)` refuses a workspace (403).

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **workspace**: Join a causal chain only by its first event's id; a later event's id is `validation_failed`, naming its chain
 - **evals**: Leave evaluators' verdicts out of `LogFeedbackSource` unless `include_evaluators=True`
 - **mcp**: Ask an `authorize` hook, as the router does, on every tool call and resource read that names a workspace
+- **fastapi**: List only the schedules that tick in the caller's tenant, with their targets narrowed to its workspaces
 - **workspace**: Honour `Rule.enabled`: a disabled rule is not evaluated and its runs wait; `Storage.due_runs` takes the disabled rules (**breaking** for custom storage)
 
 ### Documentation
