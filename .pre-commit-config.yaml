@@ -5,8 +5,11 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # CHANGELOG.md is git-cliff's output, kept exactly as it generates it.
       - id: trailing-whitespace
+        exclude: ^CHANGELOG\.md$
       - id: end-of-file-fixer
+        exclude: ^CHANGELOG\.md$
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict
