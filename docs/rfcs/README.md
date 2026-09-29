@@ -39,4 +39,4 @@ RFCs are living documents while Accepted: the tracking checklist and "unresolved
 
 | RFC | Title | Status |
 |---|---|---|
-| [0001](0001-v0.1-implementation-plan.md) | v0.1 implementation plan | Discussion |
+| [0001](0001-v0.1-implementation-plan.md) | v0.1 implementation plan | Accepted |
