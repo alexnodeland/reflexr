@@ -17,6 +17,7 @@ from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.settings import ModelSettings
 
 from reflexr import ExternalAgentActor, Rule, UserActor, on, run
 from reflexr.agent import AgentAction, EventContext
@@ -65,10 +66,14 @@ class FakeProxy:
         stream = "".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n"
         return httpx2.Response(200, text=stream, headers={"content-type": "text/event-stream"})
 
-    def model(self) -> Any:
+    def model(self, settings: ModelSettings | None = None) -> Any:
         client = httpx2.AsyncClient(transport=httpx2.MockTransport(self.handle))
         return litellm_model(
-            "claude-sonnet", api_base="http://litellm.test", api_key="sk-proxy", http_client=client
+            "claude-sonnet",
+            api_base="http://litellm.test",
+            api_key="sk-proxy",
+            http_client=client,
+            settings=settings,
         )
 
 
@@ -134,6 +139,19 @@ async def test_each_request_carries_the_tenant_chain_trace_key_and_guardrails() 
     assert "sk-acme-secret" not in recorded, "keys never reach spans"
     assert "sk-acme-secret" not in log, "or the log"
     provider.shutdown()
+
+
+async def test_the_models_settings_reach_the_proxy_beside_the_gateways() -> None:
+    proxy = FakeProxy()
+    settings = ModelSettings(temperature=0.0, extra_body={"mock_response": "Looks fine."})
+    gateway = LiteLLMGateway(tenant_key=acme_key)
+    ws = await settle(review(proxy.model(settings), gateway), UserActor(id="ada"))
+    [done] = await ws.runs()
+    assert done.status == "succeeded"
+    [(body, _)] = proxy.requests
+    assert body["temperature"] == 0.0
+    assert body["mock_response"] == "Looks fine.", "a reply the proxy mocks, for smoke tests"
+    assert body["metadata"]["tenant_id"] == "acme", "beside the gateway's metadata"
 
 
 async def test_without_a_person_tenant_key_guardrails_or_trace() -> None:
