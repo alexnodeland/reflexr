@@ -91,7 +91,9 @@ The rule's cursor starts at 812, its own fact, so it acts only on deploys logged
 Stored rules are off unless `Workspaces` is given one fixed configuration:
 
 ```python
-async def allow(tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor, change: RuleChange) -> bool:
+async def allow(
+    tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor, change: RuleChange
+) -> bool:
     return isinstance(actor, AgentActor) and actor.rule == "relayr:install-rule"
 
 
@@ -99,9 +101,12 @@ workspaces = Workspaces(
     storage,
     rules=[...],
     stored_rules=StoredRules(
-        allow=allow,  # shaped like authorize, with the change
-        actions={"notify": NotifyParams},  # the fixed allowlist, with each action's parameters model
-        namespaces={"chat"},  # the rule namespaces stored rules may use
+        # Shaped like authorize, with the change.
+        allow=allow,
+        # The fixed allowlist, with each action's parameters model.
+        actions={"notify": NotifyParams},
+        # The rule namespaces stored rules may use.
+        namespaces={"chat"},
     ),
 )
 ```
