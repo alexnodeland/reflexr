@@ -35,12 +35,9 @@ error_spike = Rule(
 | `on_dead_letter` | `"continue"` | Whether a scope's later runs continue past a dead-lettered run, or `"block"` until someone retries or skips it |
 | `start` | `"now"` | Where the rule starts in a workspace whose log already has events: its head, or `"beginning"` ([Where a rule starts](reactor.md#where-a-rule-starts)) |
 | `timeout` | `None` | How long one attempt of the action may take before it is cancelled and counts as failed |
+| `enabled` | `True` | Whether the reactor evaluates the rule and executes its runs. A disabled rule stays registered and checked, its cursor holds, and its runs wait ([Disabling a rule](reactor.md#disabling-a-rule)) |
 
-Actions are code, so a rule refers to its action by name, and the [reactor](reactor.md) is given the actions by the same names. Rules are registered on `Workspaces`, which checks them when it is built ([Checking rules](#checking-rules)); every workspace evaluates every registered rule.
-
-!!! note "`enabled`"
-
-    `Rule` also has an `enabled` field, which defaults to `True`. In this version the reactor does not act on it: a rule with `enabled=False` still evaluates and fires. Leave a rule out of `Workspaces(rules=...)` to turn it off.
+Actions are code, so a rule refers to its action by name, and the [reactor](reactor.md) is given the actions by the same names. Rules are registered on `Workspaces`, which checks them when it is built ([Checking rules](#checking-rules)); every workspace evaluates every registered rule that is enabled.
 
 ## Conditions
 
@@ -105,11 +102,13 @@ on(ServiceError).where(
 
 Anything the filters cannot express can be a **predicate**: a pure Python function over the event, registered by name on `Workspaces(predicates={"business_hours": business_hours})` and used as `.where(PredicateFilter(name="business_hours"))`. The rule stays data, since it names the predicate rather than containing it. A predicate that raises is an evaluation error for that rule and that envelope.
 
-Field references are checked against the types given to `on` when the condition is built, so a typo fails at once:
+Field references are checked when the condition is built, against the event types that can reach them, so a typo fails at once:
 
 ```text
 ValueError: no field 'severty' on service.error
 ```
+
+A field is checked only on the types its own conjunction admits: the types of the `on` filters beside it in an `AllFilter`, or, without one, the types the enclosing filter admits. An either-or of `on(ServiceError).where(F.severity >= 7)` and `on(Deploy)` checks the severity on `service.error` alone, while a `where` beside an either-or of both types must be a field of both. A `NotFilter` takes away the types it rejects whatever their fields, and a `where` with no `on` to go by is not checked. At run time, a field an envelope does not have compares as false, never as an error.
 
 ## Patterns
 
@@ -142,11 +141,7 @@ heartbeat_lost = Rule(
 )
 ```
 
-A sequence's steps are filter-only conditions, such as `on(Deploy)`; a step with its own pattern, dedupe or throttle raises `ValueError`. An absence can only fire for scopes it has seen: a service that never sent a heartbeat never goes quiet. Its firing matches the last envelope it saw, the last heartbeat, not the event that happened to pass the deadline.
-
-!!! note "Filtering sequence steps"
-
-    `Rule.check` checks the fields a sequence step filters on against the event types of every step. A step such as `on(ServiceError).where(F.severity >= 7)` next to `on(Deploy)` is therefore rejected when the rule is registered (`no field 'severity' on deploy.finished`), although the condition itself builds. Until that is relaxed, filter sequence steps on fields every step's type has, such as `service`, or on a predicate.
+A sequence's steps are filter-only conditions, such as `on(Deploy)`; a step with its own pattern, dedupe or throttle raises `ValueError`. Each step may filter on the fields of its own types: in `sequence(on(Deploy), on(ServiceError).where(F.severity >= 7), within=timedelta(minutes=10))` the severity is checked on service errors only. An absence can only fire for scopes it has seen: a service that never sent a heartbeat never goes quiet. Its firing matches the last envelope it saw, the last heartbeat, not the event that happened to pass the deadline.
 
 ## Dedupe and throttle
 
@@ -195,14 +190,14 @@ bad.check(events={"service.error": ServiceError}, actions={"page"})
 reflexr.core.errors.InvalidRule: rule 'bad' is invalid: no event type 'service.eror'; no predicate 'business_hours'; no action 'triage'
 ```
 
-`InvalidRule` is a `ValueError`, and its `problems` attribute lists the problems one by one.
+`InvalidRule` is a `ValueError`, and its `problems` attribute lists the problems one by one, each once.
 
 You rarely call it yourself:
 
 - **`Workspaces(storage, events=[...], rules=[...], predicates={...})`** checks every rule against the event types it accepts (or every registered type, without an allowlist) and the predicates, and raises `InvalidRule` at startup. reflexr's own events, such as `rule_fired` and `tick`, are always available to rules. Two rules with the same name raise `ValueError`.
 - **`Reactor(workspaces, actions={...})`** checks that every rule's action is among the actions it was given.
 
-Fields are checked through nested Pydantic models. A path through a `dict` field cannot be checked, and is accepted.
+Fields are checked on the types that can reach them, as [the builder](#filters) checks them: a `where` on the types of its own conjunction, a sequence's steps on the types its filter admits, and the scope and dedupe fields on every type the filter admits. They are checked through nested Pydantic models. A path through a `dict` field cannot be checked, and is accepted.
 
 ## Rules as JSON
 
@@ -227,4 +222,4 @@ A rule serializes to plain JSON, with durations as ISO 8601 strings. This is `er
 
 `Rule.model_validate_json(text)` reads it back, equal to the rule the builder made, and `rule.model_dump_json()` writes it, with every field. The JSON Schema of a rule is generated from the models into [`schemas/reflexr.rules.v1.json`](https://github.com/alexnodeland/reflexr/blob/main/schemas/reflexr.rules.v1.json), so a form or an agent that writes rules can validate them before they reach `Rule.check` ([JSON Schemas](../reference/schema.md)).
 
-In this version rules live in code and are registered when the application starts. `rule.definition()` is a hash of what the rule decides, its condition and its scope. When a deployed rule's definition changes, its old state no longer applies, so it starts afresh; changing its action, retries or ordering keeps its state ([Where a rule starts](reactor.md#where-a-rule-starts)).
+In this version rules live in code and are registered when the application starts. `rule.definition()` is a hash of what the rule decides, its condition and its scope. When a deployed rule's definition changes, its old state no longer applies, so it starts afresh; changing its action, retries or ordering, or disabling and enabling it, keeps its state ([Where a rule starts](reactor.md#where-a-rule-starts)).

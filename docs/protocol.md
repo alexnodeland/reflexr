@@ -14,8 +14,8 @@ A command is a JSON object with a `type`. Over REST and WebSocket it travels in 
 
 | Command | Fields | Outcome |
 |---|---|---|
-| `publish` | `event` (with its `type`), `id?`, `correlation_id?` | `published`: `{seq, id, duplicate}`. Publishing an `id` that is already in the workspace returns the existing `seq` with `duplicate: true`. `correlation_id` joins an existing causal chain. A type the server does not accept is `not_found`; reflexr's own event types are `forbidden`. |
-| `give_feedback` | `feedback_type`, `target`, `value` | `recorded`: `{seq, id}`. The value is validated against the feedback type, which must allow the target's kind; the target must exist. |
+| `publish` | `event` (with its `type`), `id?`, `correlation_id?` | `published`: `{seq, id, duplicate}`. Publishing an `id` that is already in the workspace returns the existing `seq` with `duplicate: true`. `correlation_id` joins an existing causal chain by the id of its first event: an id not in the log is `not_found`, and the id of a later event in a chain is `validation_failed`, with a message naming the chain it belongs to. A type the server does not accept is `not_found`; reflexr's own event types are `forbidden`. |
+| `give_feedback` | `feedback_type`, `target`, `value` | `recorded`: `{seq, id}`. The value is validated against the feedback type, which must allow the target's kind; the target must exist, and a chain target must name its chain's first event, as `publish` does. |
 | `retry_run` | `run_id` | The run becomes runnable now, whatever its status except `succeeded` and `running`, and `run_requeued` is appended. |
 | `skip_run` | `run_id`, `reason?` | A pending, retrying or dead-lettered run is marked skipped, unblocking its scope. |
 | `cancel_run` | `run_id` | A running run is cancelled and recorded as cancelled. |
@@ -34,12 +34,12 @@ Rejections carry a stable `type` and a `message`: `not_found`, `invalid_state`, 
 | `POST /v1/workspaces/{workspace_id}/commands` | One command frame; the response body is its `command_result`. A repeated `command_id` returns the first result. |
 | `POST /v1/workspaces/{workspace_id}/events` | Publish `{"event": {...}, "id"?}`, or `{"events": [{"event", "id"?}, ...], "correlation_id"?}` atomically and in order. A convenience for producers and webhooks, equivalent to `publish` commands; the response lists each `published` outcome. |
 | `GET /v1/workspaces/{workspace_id}/events?after_seq=&limit=&type=` | A page of the log, as envelopes. `type` may repeat. |
-| `GET /v1/rules` | The registered rules, as JSON. |
-| `GET /v1/workspaces/{workspace_id}/rules` | Each rule's `cursor`, `lag` behind the head, `generation`, and `dead_letters` count. |
+| `GET /v1/rules` | The registered rules, as JSON. Rules are the application's, shared by every tenant, so every authenticated client of any tenant gets them all, and `authorize` is not asked. |
+| `GET /v1/workspaces/{workspace_id}/rules` | Whether each rule is `enabled`, and its `cursor`, `lag` behind the head, `generation`, and `dead_letters` count. A disabled rule's cursor holds. |
 | `GET /v1/workspaces/{workspace_id}/runs?rule=&scope_key=&status=&limit=` | Runs, newest first. |
 | `GET /v1/workspaces/{workspace_id}/runs/{run_id}` | A run, with its attempts, last error and checkpoint. |
 | `GET /v1/workspaces/{workspace_id}/dead-letters?rule=` | The envelopes rules could not evaluate. |
-| `GET /v1/schedules` | The registered schedules. |
+| `GET /v1/schedules` | The registered schedules, shared by every tenant as rules are, and visible to every authenticated client of any tenant, with the workspaces they target. |
 | `GET /v1/workspaces/{workspace_id}/schedules` | Each schedule targeting the workspace, with its `last_tick` and `next_tick`. |
 
 Rejections map to HTTP status codes: `not_found` → 404, `invalid_state` → 409, `validation_failed` and `depth_exceeded` → 422, `forbidden` → 403, `unsupported_protocol` → 400. A body that does not validate, such as an event whose fields do not match its type, is 422. Authentication is the host's: `resolve_actor(request)` returns the tenant and actor, or raises `Unauthorized` (401); an optional `authorize(tenant, workspace, actor)` refuses a workspace (403).
@@ -106,12 +106,12 @@ reflexr's own events, alongside the application's:
 
 ## MCP
 
-`reflexr.mcp` serves the same commands and reads to MCP clients, with the host's `resolve(ctx)` returning the client's tenant and `ExternalAgentActor`. Commands go through the same handler as REST and the WebSocket; a rejection is a tool error carrying its message.
+`reflexr.mcp` serves the same commands and reads to MCP clients, with the host's `resolve(ctx)` returning the client's tenant and `ExternalAgentActor`. An optional `authorize(tenant, workspace, actor)`, the same hook as REST's, is asked on every tool call and resource read that names a workspace, and a refusal is a tool error carrying the `forbidden` rejection's message. Commands go through the same handler as REST and the WebSocket; a rejection is a tool error carrying its message.
 
 | MCP | reflexr |
 |---|---|
 | Tools `publish_event`, `read_events` | Publish and read, with the same idempotency and filters. |
-| Tools `list_rules`, `rule_status`, `replay_rule` | Inspect and replay rules. |
+| Tools `list_rules`, `rule_status`, `replay_rule` | Inspect and replay rules. `list_rules`, like `GET /v1/rules`, gives every rule to every authenticated client of any tenant. |
 | Tools `list_runs`, `get_run`, `retry_run`, `skip_run`, `cancel_run`, `list_dead_letters` | Operate runs. |
 | Tool `give_feedback` | Typed feedback on a run, a firing or a chain. |
 | Resource template `reflexr://{tenant_id}/{workspace_id}/runs/{run_id}` | A run's current JSON, with resource-updated notifications as it progresses. Readable only by clients of that tenant. |

@@ -18,6 +18,7 @@ from reflexr.core import (
     Command,
     ExternalAgentActor,
     FeedbackTarget,
+    Forbidden,
     GiveFeedback,
     Outcome,
     Publish,
@@ -31,7 +32,7 @@ from reflexr.core import (
     load_event,
 )
 from reflexr.telemetry import actor_attributes, workspace_attributes
-from reflexr.workspace import Workspace, Workspaces, execute
+from reflexr.workspace import Authorize, Workspace, Workspaces, execute
 
 ResolveClient = Callable[[Context], Awaitable[tuple[TenantId, ExternalAgentActor]]]
 """Authenticates an MCP request: returns the client's tenant and actor."""
@@ -63,6 +64,9 @@ class ReflexrMcp:
     Args:
         workspaces: Opens tenant-scoped workspaces, and holds the rules.
         resolve: Authenticates each request.
+        authorize: Whether a client may use a workspace of its tenant, asked on every tool call
+            and resource read that names a workspace; allows everything if omitted. A refusal
+            is a tool error carrying the ``forbidden`` rejection's message.
         name: The server's name.
         bus: Where resource-change notifications go; in-process by default.
     """
@@ -72,11 +76,13 @@ class ReflexrMcp:
         workspaces: Workspaces,
         *,
         resolve: ResolveClient,
+        authorize: Authorize | None = None,
         name: str = "reflexr",
         bus: SubscriptionBus | None = None,
     ) -> None:
         self._workspaces = workspaces
         self._resolve = resolve
+        self._authorize = authorize
         self._bus = bus or InMemorySubscriptionBus()
         self._watchers: dict[tuple[TenantId, WorkspaceId], asyncio.Task[None]] = {}
         self.server = MCPServer(name=name, instructions=INSTRUCTIONS, subscriptions=self._bus)
@@ -103,10 +109,19 @@ class ReflexrMcp:
         self._watchers.clear()
 
     async def _open(self, ctx: Context, workspace_id: WorkspaceId) -> Workspace:
+        """Open a workspace for the request's client.
+
+        Raises:
+            Forbidden: If ``authorize`` refuses the client this workspace.
+        """
         tenant_id, actor = await self._resolve(ctx)
         trace.get_current_span().set_attributes(
             {**workspace_attributes(tenant_id, workspace_id), **actor_attributes(actor)}
         )
+        if self._authorize is not None and not await self._authorize(
+            tenant_id, workspace_id, actor
+        ):
+            raise Forbidden("this workspace is not yours to use")
         workspace = await self._workspaces.open(tenant_id, workspace_id, actor=actor)
         key = (tenant_id, workspace_id)
         if key not in self._watchers:
@@ -122,8 +137,12 @@ class ReflexrMcp:
                     ResourceUpdated(uri=run_uri(tenant_id, workspace.workspace_id, run_id))
                 )
 
+    async def _workspace(self, ctx: Context, workspace_id: WorkspaceId) -> Workspace:
+        """Open a workspace for a tool, whose refusal is a tool error."""
+        return await _tool(self._open(ctx, workspace_id))
+
     async def _execute(self, ctx: Context, workspace_id: WorkspaceId, command: Command) -> str:
-        workspace = await self._open(ctx, workspace_id)
+        workspace = await self._workspace(ctx, workspace_id)
         outcome: Outcome = await _tool(execute(workspace, command))
         return outcome.model_dump_json()
 
@@ -141,7 +160,7 @@ class ReflexrMcp:
             """Publish an event, an object with its ``type`` and fields.
 
             Publishing an ``id`` that is already in the log adds nothing. ``correlation_id``
-            joins the causal chain that event started.
+            joins the causal chain that event started; a later event of a chain is refused.
             """
             try:
                 loaded = load_event(event)
@@ -159,7 +178,7 @@ class ReflexrMcp:
             limit: int = 50,
         ) -> str:
             """Read envelopes from a workspace's log, oldest first, as JSON lines."""
-            workspace = await self._open(ctx, workspace_id)
+            workspace = await self._workspace(ctx, workspace_id)
             found = [
                 e
                 for e in await workspace.read(after_seq=after_seq)
@@ -176,12 +195,15 @@ class ReflexrMcp:
 
         @server.tool()
         async def rule_status(workspace_id: str, ctx: Context) -> str:
-            """Show each rule's cursor, how far it is behind the log, and its generation."""
-            workspace = await self._open(ctx, workspace_id)
+            """Show each rule's cursor, lag behind the log and generation, and if it is disabled."""
+            workspace = await self._workspace(ctx, workspace_id)
             head = await workspace.head_seq()
             progress = await workspace.rule_progress()
+            rules = self._workspaces.rules
+            disabled = {name for name, rule in rules.items() if not rule.enabled}
             lines = [
                 f"- {name}: cursor {p.cursor}, {head - p.cursor} behind, generation {p.generation}"
+                + (", disabled" if name in disabled else "")
                 for name, p in progress.items()
             ]
             return "\n".join(lines) or "No rule has evaluated this workspace yet."
@@ -207,14 +229,14 @@ class ReflexrMcp:
             limit: int = 20,
         ) -> str:
             """List runs, newest first, as JSON lines."""
-            workspace = await self._open(ctx, workspace_id)
+            workspace = await self._workspace(ctx, workspace_id)
             runs = await workspace.runs(rule=rule, status=status, limit=limit)
             return "\n".join(run.model_dump_json() for run in runs) or "No runs."
 
         @server.tool()
         async def get_run(workspace_id: str, run_id: str, ctx: Context) -> str:
             """Return a run as JSON: its status, attempts, error, output and checkpoint."""
-            workspace = await self._open(ctx, workspace_id)
+            workspace = await self._workspace(ctx, workspace_id)
             return (await _tool(workspace.run(run_id))).model_dump_json()
 
         @server.tool()
@@ -242,7 +264,7 @@ class ReflexrMcp:
             workspace_id: str, ctx: Context, rule: str | None = None
         ) -> str:
             """List the envelopes rules could not evaluate, as JSON lines."""
-            workspace = await self._open(ctx, workspace_id)
+            workspace = await self._workspace(ctx, workspace_id)
             letters = await workspace.dead_letters(rule=rule)
             return "\n".join(letter.model_dump_json() for letter in letters) or "None."
 
@@ -270,8 +292,8 @@ class ReflexrMcp:
             resolved, _ = await self._resolve(ctx)
             if resolved != tenant_id:
                 raise ResourceError(f"runs of tenant {tenant_id} are not available")
-            workspace = await self._open(ctx, workspace_id)
             try:
+                workspace = await self._open(ctx, workspace_id)
                 run = await workspace.run(run_id)
             except Rejection as rejection:
                 raise ResourceError(rejection.message) from rejection

@@ -82,7 +82,7 @@ async def authorize(tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor
 router = reflexr_router(workspaces, resolve_actor=resolve_actor, authorize=authorize)
 ```
 
-Without `authorize`, any authenticated actor may use every workspace of its own tenant.
+Without `authorize`, any authenticated actor may use every workspace of its own tenant. `ReflexrMcp` takes the same hook, so one function decides for every surface ([External agents over MCP](mcp.md#mounting-the-server)).
 
 ## Publishing over HTTP
 
@@ -99,7 +99,7 @@ curl -X POST localhost:8000/v1/workspaces/prod/events \
 [{"type": "published", "seq": 1, "id": "alert-7", "duplicate": false}]
 ```
 
-The id makes publishing idempotent: sending `alert-7` again appends nothing and answers with the logged event's `seq` and `"duplicate": true`, so a producer can retry until it hears back. Without an id the server generates one. A batch is published atomically and in order, all of it or none of it, and `correlation_id` puts every event in an existing causal chain ([Workspaces and the log](workspaces.md#causal-chains)):
+The id makes publishing idempotent: sending `alert-7` again appends nothing and answers with the logged event's `seq` and `"duplicate": true`, so a producer can retry until it hears back. Without an id the server generates one. A batch is published atomically and in order, all of it or none of it, and `correlation_id` puts every event in an existing causal chain, named by the id of its first event ([Workspaces and the log](workspaces.md#causal-chains)):
 
 ```json
 {
@@ -117,6 +117,7 @@ The response lists one `published` outcome per event. A request that cannot be p
 |---|---|
 | 404 `not_found` | The event's type is not one the `Workspaces` accepts, or the `correlation_id` names no event |
 | 403 `forbidden` | The event is one of reflexr's own, such as `rule_fired`, which only reflexr records |
+| 422 `validation_failed` | The `correlation_id` names a later event of a chain rather than its first; the message names the chain that event belongs to |
 | 422 | The body does not validate, such as an event missing a field of its type; the detail lists Pydantic's errors |
 
 Senders that cannot speak this format, such as a vendor's webhook, get a route of their own that turns their payload into an event. Use the sender's own id for the event, so a redelivery appends nothing:
@@ -180,18 +181,18 @@ Every path is relative to the router's prefix, `/v1` above:
 | `GET /workspaces/{workspace_id}/runs?rule=&scope_key=&status=&limit=` | Runs, newest first |
 | `GET /workspaces/{workspace_id}/runs/{run_id}` | One run: its status, attempts, error, output, checkpoint and each attempt's trace id |
 | `GET /workspaces/{workspace_id}/dead-letters?rule=` | The envelopes rules could not evaluate, oldest first |
-| `GET /workspaces/{workspace_id}/rules` | Each rule's `cursor`, its `lag` behind the head of the log, its `generation`, and its number of `dead_letters` |
+| `GET /workspaces/{workspace_id}/rules` | Whether each rule is `enabled`, and its `cursor`, its `lag` behind the head of the log, its `generation`, and its number of `dead_letters` |
 | `GET /workspaces/{workspace_id}/schedules` | Each schedule that ticks in the workspace, with its `last_tick` and `next_tick` |
-| `GET /rules` | The registered rules, as JSON |
-| `GET /schedules` | The registered schedules |
+| `GET /rules` | The registered rules, as JSON: the same for every tenant, and visible to every authenticated caller ([Multi-tenancy and security](security.md#tenants-and-workspaces)) |
+| `GET /schedules` | The registered schedules, likewise |
 
 A dashboard follows a rule's health with `GET /v1/workspaces/prod/rules`:
 
 ```json
-[{"rule": "error-spike", "cursor": 4, "lag": 3, "generation": 0, "dead_letters": 0}]
+[{"rule": "error-spike", "enabled": true, "cursor": 4, "lag": 3, "generation": 0, "dead_letters": 0}]
 ```
 
-A lag that keeps growing means no reactor is evaluating the workspace, or it cannot keep up. Page through a long log with `after_seq`, starting from the last `seq` you have.
+A lag that keeps growing means no reactor is evaluating the workspace, or it cannot keep up, unless the rule is [disabled](reactor.md#disabling-a-rule). Page through a long log with `after_seq`, starting from the last `seq` you have.
 
 ## The WebSocket stream
 

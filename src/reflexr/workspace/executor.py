@@ -97,7 +97,10 @@ class Executor[D]:
         Returns:
             How many attempts finished, whether they succeeded or failed.
         """
-        due = await self._workspaces.storage.due_runs(now=self._workspaces.clock(), limit=limit)
+        disabled = [name for name, rule in self._workspaces.rules.items() if not rule.enabled]
+        due = await self._workspaces.storage.due_runs(
+            now=self._workspaces.clock(), limit=limit, disabled=disabled
+        )
         gate = asyncio.Semaphore(self._concurrency)
 
         async def attempt(ref: WorkspaceRef, run: Run) -> bool:
@@ -109,12 +112,14 @@ class Executor[D]:
         return sum(task.result() for task in attempts)
 
     async def _attempt(self, ref: WorkspaceRef, run: Run) -> bool:
+        rule = self._workspaces.rules.get(run.rule)
+        if rule is not None and not rule.enabled:
+            return False  # its runs wait until it is enabled again
         storage = self._workspaces.storage
         key = run_lease(run.id)
         if not await storage.acquire_lease(ref, key, self._holder, self._lease_ttl):
             return False
         try:
-            rule = self._workspaces.rules.get(run.rule)
             if rule is None:
                 await self._cancel_orphan(ref, run)
                 return False

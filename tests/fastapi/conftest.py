@@ -1,5 +1,6 @@
 """An application built from the router, with header-based auth."""
 
+from collections.abc import Iterable
 from datetime import timedelta
 from typing import Any
 
@@ -41,11 +42,13 @@ async def authorize(tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor
     return workspace_id != "secret"
 
 
-def build(**options: Any) -> tuple[FastAPI, Workspaces, Reactor[None]]:
+def build(
+    *, rules: Iterable[Rule] = (spike,), **options: Any
+) -> tuple[FastAPI, Workspaces, Reactor[None]]:
     workspaces = Workspaces(
         InMemoryStorage(),
         events=[ServiceError, Deploy, Heartbeat],
-        rules=[spike],
+        rules=rules,
         schedules=[heartbeat],
     )
     app = FastAPI()

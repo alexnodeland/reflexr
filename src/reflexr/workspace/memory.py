@@ -259,10 +259,14 @@ class InMemoryStorage:
         """Return every workspace with a log."""
         return [ref for ref, data in self._workspaces.items() if data.log]
 
-    async def due_runs(self, *, now: datetime, limit: int) -> list[tuple[WorkspaceRef, Run]]:
+    async def due_runs(
+        self, *, now: datetime, limit: int, disabled: Collection[RuleName] = ()
+    ) -> list[tuple[WorkspaceRef, Run]]:
         """Return the runs to attempt now, across workspaces, oldest first."""
 
         def due(data: _Data, run: Run) -> bool:
+            if run.rule in disabled:
+                return False
             if run.status == "running":
                 lease = data.leases.get(run_lease(run.id))
                 return lease is None or lease[1] <= now

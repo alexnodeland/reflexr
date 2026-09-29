@@ -16,6 +16,11 @@ Separately, RFC-0002's operator intervention rate (the share of runs a person re
 - **Run operations and feedback join the run's chain,** so they appear in its session. Chain feedback joins the chain it is about.
 - **Retrying a run by hand appends `run_requeued`,** attributed to whoever did it. `core.retry` returns it, like every other transition.
 
+### Amendment (2026-09-29): a chain is joined by its first event's id
+
+- **A `correlation_id` a client gives must name the start of a chain:** an event whose envelope's `correlation_id` is its own id. Publishing with the id of a later event of a chain, and feedback on a `ChainTarget` with one, is rejected with `validation_failed`, and the message names the chain that event belongs to, so the client can correct it. Accepting any existing event id made a new chain named by an event that was already in another, split the session in two, and left chain feedback about a chain that did not exist. An id not in the log is still `not_found`.
+- The check runs before a publish's ids are looked up, so retrying a publish with such a `correlation_id` is rejected too. `errors` is empty, as for the other checks that are not Pydantic's.
+
 ## Options considered
 
 ### Option A: The latest matched envelope's chain (chosen)

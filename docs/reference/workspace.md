@@ -16,6 +16,8 @@ Tenant-scoped handles. See [Workspaces and the log](../guides/workspaces.md).
 
 ::: reflexr.workspace.Published
 
+::: reflexr.workspace.Authorize
+
 ## The reactor
 
 Evaluating rules and executing runs. See [The reactor](../guides/reactor.md).

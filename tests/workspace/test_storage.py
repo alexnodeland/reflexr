@@ -169,6 +169,17 @@ async def test_due_runs_span_workspaces_oldest_first(storage: Storage) -> None:
     assert await storage.due_runs(now=START + timedelta(seconds=10), limit=1) == [(OTHER, now)]
 
 
+async def test_due_runs_leave_out_the_runs_of_disabled_rules(storage: Storage) -> None:
+    paging = fired("r1", rule="page")
+    triage = fired("r2", scope="db")
+    abandoned, _ = start(fired("r3", rule="page", scope="billing"), now=START)
+    async with storage.transaction(ACME) as transaction:
+        await transaction.save_runs([paging, triage, abandoned])
+    assert len(await storage.due_runs(now=START, limit=10)) == 3
+    assert await storage.due_runs(now=START, limit=10, disabled={"page"}) == [(ACME, triage)]
+    assert await storage.due_runs(now=START, limit=1, disabled=["page"]) == [(ACME, triage)]
+
+
 async def test_running_runs_are_due_when_their_lease_lapses(
     storage: Storage, clock: FakeClock
 ) -> None:

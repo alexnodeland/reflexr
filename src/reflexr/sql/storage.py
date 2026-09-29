@@ -398,10 +398,13 @@ class SqlStorage:
         )
         return [WorkspaceRef(row.tenant_id, row.workspace_id) for row in await self._all(query)]
 
-    async def due_runs(self, *, now: datetime, limit: int) -> list[tuple[WorkspaceRef, Run]]:
+    async def due_runs(
+        self, *, now: datetime, limit: int, disabled: Collection[RuleName] = ()
+    ) -> list[tuple[WorkspaceRef, Run]]:
         """Return the runs to attempt now, across workspaces, oldest first.
 
-        A running run is due when its lease is missing or has expired by ``now``.
+        A running run is due when its lease is missing or has expired by ``now``. Runs of the
+        ``disabled`` rules are left out.
         """
         lease = and_(
             LeaseRow.tenant_id == RunRow.tenant_id,
@@ -412,10 +415,13 @@ class SqlStorage:
         orphaned = and_(
             RunRow.status == "running", or_(LeaseRow.key.is_(None), LeaseRow.expires_at <= now)
         )
+        due = or_(waiting, orphaned)
+        if disabled:
+            due = and_(due, RunRow.rule.not_in(tuple(disabled)))
         query = (
             select(RunRow)
             .outerjoin(LeaseRow, lease)
-            .where(or_(waiting, orphaned))
+            .where(due)
             .order_by(
                 RunRow.next_attempt_at, RunRow.tenant_id, RunRow.workspace_id, RunRow.position
             )

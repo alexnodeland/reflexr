@@ -34,6 +34,10 @@ Writing this twice would drift. Putting it in core would saddle every user with 
 - **`EvaluatorAction`** runs any evalr `Evaluator` as a rule's action. Its verdict is given as feedback by an `EvaluatorActor` with the evaluator's name and version, so people's and evaluators' judgements of one target compare directly. An evaluator that hands off records nothing.
 - **Until evalr is published**, the extra resolves it from GitHub at a pinned revision (`[tool.uv.sources]`), and bumps the pin in its own pull requests. Experiment tasks that replay a firing's run, and the end-to-end workflow measures, come next.
 
+### Amendment (2026-09-29): datasets leave evaluators' verdicts out
+
+- **`LogFeedbackSource` skips feedback an `EvaluatorActor` gave,** unless `include_evaluators=True`. It yielded every piece of the type, so a dataset collected from a workspace where an `EvaluatorAction` judges runs held the judge's own verdicts as labels, and training or calibrating the judge on it was circular. Comparing evaluators with each other or with people asks for them explicitly, and `given_by` tells the examples apart.
+
 ## Options considered
 
 | Option | Duplication | Dependencies for users who don't evaluate | Works without the other library |

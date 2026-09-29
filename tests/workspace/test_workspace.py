@@ -107,6 +107,20 @@ async def test_events_can_join_an_existing_chain(workspace: Workspace) -> None:
         await workspace.publish(Deploy(service="auth"), correlation_id="nope")
 
 
+async def test_a_chain_is_joined_by_its_first_events_id(workspace: Workspace) -> None:
+    alert = (await workspace.publish(ServiceError(service="auth"), id="alert-7")).envelope
+    joined = await workspace.publish(Deploy(service="auth"), id="d1", correlation_id=alert.id)
+    later = f"event d1 did not start a causal chain: it belongs to chain {alert.id}"
+    with pytest.raises(ValidationFailed, match=later) as rejected:
+        await workspace.publish(Deploy(service="auth"), correlation_id=joined.envelope.id)
+    assert rejected.value.payload()["type"] == "validation_failed"
+    with pytest.raises(ValidationFailed, match=later):
+        await workspace.publish_many(
+            [Deploy(service="auth"), ServiceError(service="auth")], correlation_id="d1"
+        )
+    assert await workspace.head_seq() == 2
+
+
 async def test_only_accepted_types_can_be_published(workspace: Workspace) -> None:
     with pytest.raises(NotFound, match="event type escalated"):
         await workspace.publish(Escalated(service="auth"))
@@ -195,6 +209,13 @@ async def test_feedback_must_suit_and_find_its_target(workspace: Workspace) -> N
             Resolved(outcome="resolved"), on=ChainTarget(correlation_id="evt_9")
         )
     assert await workspace.head_seq() == 0
+    alert = (await workspace.publish(ServiceError(service="auth"), id="alert-7")).envelope
+    await workspace.publish(Deploy(service="auth"), id="d1", correlation_id=alert.id)
+    with pytest.raises(ValidationFailed, match=r"d1 did not start a causal chain.*alert-7"):
+        await workspace.give_feedback(
+            Resolved(outcome="resolved"), on=ChainTarget(correlation_id="d1")
+        )
+    assert await workspace.head_seq() == 2
 
 
 # ─── run operations ──────────────────────────────────────────────────────────

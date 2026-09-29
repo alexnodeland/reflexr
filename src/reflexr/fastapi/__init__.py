@@ -10,7 +10,6 @@ through :func:`reflexr.workspace.execute`, so REST, the WebSocket and MCP behave
 
 from reflexr.fastapi.router import (
     STATUS_CODES,
-    Authorize,
     PublishBatch,
     PublishItem,
     ResolveActor,
@@ -20,6 +19,7 @@ from reflexr.fastapi.router import (
     reflexr_router,
 )
 from reflexr.fastapi.stream import Stream
+from reflexr.workspace import Authorize  # defined with the workspaces, for every surface
 
 __all__ = [
     "STATUS_CODES",

@@ -20,7 +20,7 @@ The reactor works the same way: it evaluates each workspace under its own lease,
 
 A workspace is also the unit of access. Anyone who may use a workspace reads its whole log, over REST, the WebSocket or MCP, so put events with different audiences in different workspaces.
 
-Rules, schedules and the event allowlist belong to the `Workspaces` object, not to a tenant: every tenant's workspaces evaluate the same rules, and any authenticated caller can list them with `GET /rules`, `GET /schedules` or the `list_rules` tool. Keep secrets out of rule names and descriptions.
+Rules, schedules and the event allowlist are your application's code, not a tenant's data. They belong to the `Workspaces` object, and every tenant's workspaces evaluate the same rules. So, by design, **every authenticated client of any tenant can read every rule and schedule definition**: `GET /rules`, `GET /schedules` and the MCP `list_rules` tool return them whole, with their names, descriptions, conditions, scopes, action names and timetables, and `authorize` is not asked, since they name no workspace. A schedule that targets particular workspaces lists their tenant and workspace ids, so other tenants see those too. Keep secrets and anything tenant-specific out of rules and schedules, such as a customer's name in a rule's description or condition. If some clients must not see them, do not mount those routes for them, or put them behind a check of your own.
 
 Reading or writing another tenant's data through the public API is a vulnerability; please [report it](../project/security.md) if you find a way.
 
@@ -40,7 +40,7 @@ Return the actor kind that says who is calling: `UserActor` for a person, `Sourc
 
 ## Authorization
 
-Within a tenant, decide who may use which workspace with the router's `authorize(tenant_id, workspace_id, actor)` hook; `False` answers 403, or closes the WebSocket with 4403. Without it, any authenticated actor may use every workspace of its own tenant. `ReflexrMcp` has no such hook in v0.1: an MCP client may use any workspace of the tenant `resolve` returns, so scope each client's credentials to a tenant accordingly.
+Within a tenant, decide who may use which workspace with an `authorize(tenant_id, workspace_id, actor)` hook, which the router and `ReflexrMcp` both take. Over REST, `False` answers 403, and over the WebSocket it closes the connection with 4403; over MCP, it is asked on every tool call and resource read that names a workspace, and a refusal is a tool error carrying the `forbidden` rejection's message. Without it, any authenticated actor may use every workspace of its own tenant. Pass the same function to both surfaces, so a client cannot reach over one what the other refuses it.
 
 Every operation a client can perform is a command, and every command is attributed to the handle's actor in the log: who retried, skipped or cancelled a run, who replayed a rule, and who gave feedback ([ADR-0024](../adr/0024-causal-chains-and-operator-actions.md)). If some actors may publish but not operate runs, check the command in your own route before handing it on, or give those actors a surface that only publishes, such as the events endpoint behind its own resolver.
 

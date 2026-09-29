@@ -11,8 +11,8 @@ from mcp.server.mcpserver import Context
 from mcp.server.subscriptions import InMemorySubscriptionBus, ResourceUpdated, ServerEvent
 from mcp.types import TextContent, TextResourceContents
 
-from reflexr import F, Feedback, Rule, by, on, run
-from reflexr.core import ExternalAgentActor, TenantId
+from reflexr import Actor, F, Feedback, Rule, by, on, run
+from reflexr.core import ExternalAgentActor, TenantId, WorkspaceId
 from reflexr.mcp import ReflexrMcp, run_uri
 from reflexr.workspace import InMemoryStorage, Reaction, Reactor, Workspaces
 from tests.event_types import Deploy, ServiceError
@@ -175,6 +175,72 @@ async def test_runs_are_resources_of_their_tenant_only(
         identity.tenant = "globex"
         with pytest.raises(Exception, match="runs of tenant acme are not available"):
             await client.read_resource(run_uri("acme", "prod", done.id))
+
+
+async def test_authorize_decides_which_workspaces_a_client_may_use(
+    workspaces: Workspaces,
+) -> None:
+    asked: list[tuple[TenantId, WorkspaceId, str]] = []
+
+    async def authorize(tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor) -> bool:
+        asked.append((tenant_id, workspace_id, actor.kind))
+        return workspace_id != "secret"
+
+    secret = await workspaces.open("acme", "secret", actor=CLAUDE)
+    await secret.publish(Deploy(service="auth"))
+    await Reactor(workspaces, actions={"note": note}).settle()
+    [done] = await secret.runs()
+    head = await secret.head_seq()
+    mcp = ReflexrMcp(workspaces, resolve=Identity().resolve, authorize=authorize)
+    run_id = {"run_id": done.id}
+    tools: dict[str, dict[str, Any]] = {
+        "publish_event": {"event": {"type": "deploy.finished", "service": "auth"}},
+        "read_events": {},
+        "rule_status": {},
+        "replay_rule": {"rule": "deploys"},
+        "list_runs": {},
+        "get_run": run_id,
+        "retry_run": run_id,
+        "skip_run": run_id,
+        "cancel_run": run_id,
+        "list_dead_letters": {},
+        "give_feedback": {
+            "feedback_type": "mcp_useful",
+            "target": {"kind": "run", **run_id},
+            "value": {"useful": True},
+        },
+    }
+    try:
+        async with Client(mcp.server) as client:
+            for tool, args in tools.items():
+                error, text = await call(client, tool, workspace_id="secret", **args)
+                assert (error, text.endswith("this workspace is not yours to use")) == (
+                    True,
+                    True,
+                ), tool
+            with pytest.raises(Exception, match="this workspace is not yours to use"):
+                await client.read_resource(run_uri("acme", "secret", done.id))
+            assert (await call(client, "read_events", workspace_id="prod"))[0] is False
+            assert (await call(client, "list_rules"))[0] is False  # names no workspace
+    finally:
+        await mcp.aclose()
+    assert asked.count(("acme", "secret", "external_agent")) == len(tools) + 1
+    assert asked[-1] == ("acme", "prod", "external_agent")
+    assert await secret.head_seq() == head  # nothing was written
+
+
+async def test_the_rule_status_says_which_rules_are_disabled() -> None:
+    off = deploys.model_copy(update={"enabled": False})
+    workspaces = Workspaces(InMemoryStorage(), events=[Deploy], rules=[off])
+    workspace = await workspaces.open("acme", "prod", actor=CLAUDE)
+    await workspace.publish(Deploy(service="auth"))
+    mcp = ReflexrMcp(workspaces, resolve=Identity().resolve)
+    try:
+        async with Client(mcp.server) as client:
+            _, status = await call(client, "rule_status", workspace_id="prod")
+    finally:
+        await mcp.aclose()
+    assert status == "- deploys: cursor 0, 1 behind, generation 0, disabled"
 
 
 async def test_the_http_app_and_lifespan(server: Server) -> None:

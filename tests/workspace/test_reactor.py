@@ -26,6 +26,7 @@ from reflexr.workspace import (
     InMemoryStorage,
     Reaction,
     Reactor,
+    Settled,
     Storage,
     Workspace,
     WorkspaceRef,
@@ -105,6 +106,51 @@ async def test_a_rule_added_later_starts_at_the_head_or_the_beginning(build: Bui
     late = Rule(name="late", when=on(Deploy), then=run("note"))
     assert await Reactor(build([deploys, backlog, late]), actions=ACTIONS).evaluate() == 2
     assert sorted(r.rule for r in await workspace.runs()) == ["backlog", "deploys"]
+
+
+async def test_a_disabled_rule_holds_its_cursor_and_resumes_from_it(
+    build: Build, telemetry: Telemetry
+) -> None:
+    off = spike.model_copy(update={"enabled": False})
+    workspaces = build([off, deploys])
+    workspace = await open_(workspaces)
+    await errors(workspace)  # a new workspace meets the disabled rule too
+    await workspace.publish(Deploy(service="auth"))
+    assert await Reactor(workspaces, actions=ACTIONS).settle() == Settled(firings=1, attempts=1)
+    progress = await workspace.rule_progress()
+    assert (progress["spike"].cursor, progress["deploys"].cursor) == (0, 7)
+    fired = [e.event for e in await workspace.read() if isinstance(e.event, RuleFired)]
+    assert [f.rule for f in fired] == ["deploys"]
+    lags = {str(attributes[a.RULE]) for attributes, _ in telemetry.points("reflexr.evaluation.lag")}
+    assert lags == {"deploys"}  # behind by choice is not a lag
+    # Enabled again, it resumes from its cursor: the errors it missed still count.
+    assert await Reactor(build([spike, deploys]), actions=ACTIONS).evaluate() == 1
+    assert (await workspace.rule_progress())["spike"].generation == 0  # nothing was reset
+    assert not [e for e in await workspace.read() if isinstance(e.event, RuleReset)]
+
+
+async def test_a_disabled_rule_added_later_starts_when_it_is_enabled(build: Build) -> None:
+    workspace = await open_(build([deploys]))
+    await workspace.publish(Deploy(service="auth"))
+    late = Rule(name="late", when=on(Deploy), then=run("note"), start="beginning")
+    off = late.model_copy(update={"enabled": False})
+    assert await Reactor(build([deploys, off]), actions=ACTIONS).evaluate() == 1
+    assert "late" not in await workspace.rule_progress()
+    # Enabled, it starts where its start says: here, at the beginning.
+    assert await Reactor(build([deploys, late]), actions=ACTIONS).evaluate() == 1
+
+
+async def test_a_disabled_rules_backlog_is_skipped_by_replaying_it_from_the_head(
+    build: Build,
+) -> None:
+    off = spike.model_copy(update={"enabled": False})
+    workspace = await open_(build([off]))
+    await errors(workspace)
+    operator = workspace.as_actor(UserActor(id="ada"))
+    await operator.replay_rule("spike", from_seq=await workspace.head_seq())
+    assert await Reactor(build([spike]), actions=ACTIONS).evaluate() == 0
+    await errors(workspace)
+    assert await Reactor(build([spike]), actions=ACTIONS).evaluate() == 1
 
 
 async def test_rules_react_to_each_others_facts_in_one_pass(build: Build) -> None:

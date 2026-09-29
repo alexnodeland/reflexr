@@ -6,8 +6,10 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+import reflexr.fastapi
+import reflexr.workspace
 from reflexr.workspace import Reactor, Workspaces
-from tests.fastapi.conftest import build
+from tests.fastapi.conftest import build, spike
 
 ERROR = {"type": "service.error", "service": "auth"}
 
@@ -34,6 +36,10 @@ async def test_producers_publish_events_one_at_a_time_or_in_batches(app: App) ->
     assert [(o["seq"], o["duplicate"]) for o in batch.json()] == [(1, True), (2, False)]
     events = (await client.get("/workspaces/prod/events", params={"after_seq": 1})).json()
     assert [(e["seq"], e["correlation_id"], e["actor"]["id"]) for e in events] == [(2, "e1", "ada")]
+    later = {"events": [{"event": ERROR}], "correlation_id": events[0]["id"]}
+    wrong = await client.post("/workspaces/prod/events", json=later)
+    assert (wrong.status_code, wrong.json()["detail"]["type"]) == (422, "validation_failed")
+    assert wrong.json()["detail"]["message"].endswith("it belongs to chain e1")
     refused = await client.post(
         "/workspaces/prod/events", json={"event": {"type": "rule_fired", "rule": "x"}}
     )
@@ -58,6 +64,7 @@ async def test_reads_filter_the_log_and_list_rules_runs_and_schedules(app: App) 
     [status] = (await client.get("/workspaces/prod/rules")).json()
     assert status == {
         "rule": "spike",
+        "enabled": True,
         "cursor": status["cursor"],
         "lag": 0,
         "generation": 0,
@@ -78,7 +85,14 @@ async def test_reads_filter_the_log_and_list_rules_runs_and_schedules(app: App) 
     assert (fresh["last_tick"], fresh["next_tick"]) == (None, None)
     unevaluated = (await client.get("/workspaces/empty/rules")).json()
     assert unevaluated == [
-        {"rule": "spike", "cursor": 0, "lag": 0, "generation": 0, "dead_letters": 0}
+        {
+            "rule": "spike",
+            "enabled": True,
+            "cursor": 0,
+            "lag": 0,
+            "generation": 0,
+            "dead_letters": 0,
+        }
     ]
 
 
@@ -115,7 +129,18 @@ async def test_commands_are_idempotent_and_map_rejections_to_statuses(app: App) 
     }
 
 
+async def test_the_rule_status_says_whether_a_rule_is_enabled() -> None:
+    application, _, _ = build(rules=[spike.model_copy(update={"enabled": False})])
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test/v1") as client:
+        for _ in range(2):
+            await client.post("/workspaces/prod/events", json={"event": ERROR})
+        [status] = (await client.get("/workspaces/prod/rules")).json()
+    assert (status["enabled"], status["cursor"], status["lag"]) == (False, 0, 2)
+
+
 async def test_requests_are_authenticated_and_authorized(app: App) -> None:
+    assert reflexr.fastapi.Authorize is reflexr.workspace.Authorize  # every surface's hook
     client, _, _ = app
     bad = await client.get("/workspaces/prod/events", headers={"x-token": "bad"})
     assert (bad.status_code, bad.json()["detail"]) == (401, "bad token")

@@ -12,7 +12,8 @@ The fluent builder produces the models::
     on(ServiceError).where(F.severity >= 7).count(at_least=3, within=timedelta(minutes=1))
 
 Field references (``F.severity``, ``F.labels.env``) name fields of the event, and are checked
-against the event types given to :func:`on` when the condition is built.
+when the condition is built against the event types that can reach them: those given to the
+:func:`on` in their own conjunction, or else to the condition's.
 """
 
 import re
@@ -40,6 +41,9 @@ type Pattern = Annotated[
     Field(discriminator="kind"),
 ]
 """When the envelopes a rule considers make it fire."""
+
+type Admitted = tuple[str, ...] | None
+"""The event types, by name, that can reach a point in a filter. None: any type can."""
 
 
 class _Stage(BaseModel):
@@ -274,16 +278,17 @@ class Condition(_Stage):
     def where(self, *filters: Filter, **equals: JsonValue) -> "Condition":
         """Narrow the filter: every filter given, and every field equal to its keyword."""
         added = [*filters, *(WhereFilter(field=k, op="eq", value=v) for k, v in equals.items())]
-        for where in _where_filters(added):
-            self._check_field(where.field)
         current = self.filter.of if isinstance(self.filter, AllFilter) else (self.filter,)
-        return self._with(filter=AllFilter(of=(*current, *added)))
+        narrowed = AllFilter(of=(*current, *added))
+        for path, types in where_fields(narrowed):
+            _check_field(path, types)
+        return self._with(filter=narrowed)
 
     def distinct(self, *key: FieldRef | str, within: timedelta) -> "Condition":
         """Drop an envelope whose ``key`` fields were already seen within ``within``."""
         paths = tuple(str(k) for k in key)
         for path in paths:
-            self._check_field(path)
+            _check_field(path, admitted(self.filter))
         return self._with(dedupe=Dedupe(key=paths, within=within))
 
     def count(self, *, at_least: int, within: timedelta) -> "Condition":
@@ -306,10 +311,16 @@ class Condition(_Stage):
     def _with(self, **update: Any) -> "Condition":
         return self.model_copy(update=update)
 
-    def _check_field(self, path: str) -> None:
-        missing = [t.event_type for t in admitted_types(self.filter) if not has_field(t, path)]
-        if missing:
-            raise ValueError(f"no field {path!r} on {', '.join(missing)}")
+
+def _check_field(path: str, types: Admitted) -> None:
+    registry = event_types()
+    missing = [
+        name
+        for name in types or ()
+        if (event_type := registry.get(name)) is not None and not has_field(event_type, path)
+    ]
+    if missing:
+        raise ValueError(f"no field {path!r} on {', '.join(missing)}")
 
 
 def on(*types: type[Event] | str) -> Condition:
@@ -345,18 +356,58 @@ def resolve_field(data: Mapping[str, Any], path: str) -> tuple[bool, Any]:
     return True, value
 
 
-def admitted_types(filter: Filter) -> list[type[Event]]:
-    """Return the registered event classes a filter names with ``on``, in order, once each.
+def admitted(filter: Filter, within: Admitted = None) -> Admitted:
+    """Return the event types an envelope that passes ``filter`` can have, by name, in order.
 
-    Names that are not registered are left out: their fields cannot be checked.
+    ``within`` is what the filter's context already admits. ``on`` narrows it to its types;
+    ``all`` narrows it by each of its filters, ``any`` admits what any of its filters admits,
+    and ``not`` removes the types its filter accepts whatever their fields. ``where`` and
+    predicates decide by fields, so they leave it as it is.
     """
-    registry = event_types()
-    found: list[type[Event]] = []
-    for name in _on_names(filter):
-        event_type = registry.get(name)
-        if event_type is not None and event_type not in found:
-            found.append(event_type)
-    return found
+    match filter:
+        case OnFilter(types=types):
+            names = tuple(dict.fromkeys(types))
+            return names if within is None else tuple(n for n in within if n in names)
+        case AllFilter(of=of):
+            # A ``not`` removes types from what the rest admit, so it applies last.
+            for inner in sorted(of, key=lambda f: isinstance(f, NotFilter)):
+                within = admitted(inner, within)
+            return within
+        case AnyFilter(of=of):
+            found: list[str] = []
+            for inner in of:
+                names = admitted(inner, within)
+                if names is None:
+                    return None
+                found.extend(names)
+            return tuple(dict.fromkeys(found))
+        case NotFilter(filter=inner):
+            excluded = _accepted(inner)
+            return None if within is None else tuple(n for n in within if n not in excluded)
+        case _:
+            return within
+
+
+def where_fields(filter: Filter, within: Admitted = None) -> list[tuple[str, Admitted]]:
+    """Return the field each ``where`` in a filter compares, with the types it is compared on.
+
+    A ``where`` is compared on the types its own conjunction admits: inside ``all``, what its
+    ``on`` siblings admit, and with none, what the enclosing context admits. So
+    ``on(Deploy) | on(ServiceError).where(F.severity >= 7)`` compares ``severity`` on service
+    errors only.
+    """
+    match filter:
+        case WhereFilter(field=path):
+            return [(path, within)]
+        case AllFilter(of=of):
+            narrowed = admitted(filter, within)
+            return [found for inner in of for found in where_fields(inner, narrowed)]
+        case AnyFilter(of=of):
+            return [found for inner in of for found in where_fields(inner, within)]
+        case NotFilter(filter=inner):
+            return where_fields(inner, within)
+        case _:
+            return []
 
 
 def has_field(model: type[BaseModel], path: str) -> bool:
@@ -385,26 +436,15 @@ def _model_of(annotation: Any) -> type[BaseModel] | None:
     return None
 
 
-def _on_names(filter: Filter) -> list[str]:
+def _accepted(filter: Filter) -> frozenset[str]:
+    """Return the event types a filter accepts whatever their fields."""
     match filter:
         case OnFilter(types=types):
-            return list(types)
-        case AllFilter(of=of) | AnyFilter(of=of):
-            return [name for f in of for name in _on_names(f)]
+            return frozenset(types)
+        case AnyFilter(of=of):
+            return frozenset(name for inner in of for name in _accepted(inner))
+        case AllFilter(of=of):
+            first, *rest = (_accepted(inner) for inner in of)
+            return first.intersection(*rest)
         case _:
-            return []
-
-
-def _where_filters(filters: list[Filter]) -> list[WhereFilter]:
-    found: list[WhereFilter] = []
-    for f in filters:
-        match f:
-            case WhereFilter():
-                found.append(f)
-            case AllFilter(of=of) | AnyFilter(of=of):
-                found.extend(_where_filters(list(of)))
-            case NotFilter(filter=inner):
-                found.extend(_where_filters([inner]))
-            case _:
-                pass
-    return found
+            return frozenset()
