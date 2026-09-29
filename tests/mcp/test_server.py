@@ -130,6 +130,9 @@ async def test_agents_publish_read_and_operate(server: Server, workspaces: Works
         assert (done["status"], done["output"]) == ("succeeded", "noted")
         assert failing["status"] == "retrying"
         assert (await call(client, "list_runs", workspace_id="empty"))[1] == "No runs."
+        for key in (failing["scope_key"], ["billing"]):  # as the run has it, or its values
+            _, billing = await call(client, "list_runs", workspace_id="prod", scope_key=key)
+            assert json.loads(billing)["id"] == failing["id"]
         got = json.loads((await call(client, "get_run", workspace_id="prod", run_id=done["id"]))[1])
         assert got["id"] == done["id"]
         assert (await call(client, "get_run", workspace_id="prod", run_id="nope"))[0] is True

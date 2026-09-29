@@ -10,6 +10,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 from mcp.server.subscriptions import InMemorySubscriptionBus, ResourceUpdated, SubscriptionBus
 from opentelemetry import trace
+from pydantic import JsonValue
 from starlette.applications import Starlette
 
 from reflexr.core import (
@@ -31,6 +32,7 @@ from reflexr.core import (
     WorkspaceId,
     load_event,
 )
+from reflexr.core import scope_key as key_of
 from reflexr.telemetry import actor_attributes, workspace_attributes
 from reflexr.workspace import (
     Authorize,
@@ -236,12 +238,17 @@ class ReflexrMcp:
             workspace_id: str,
             ctx: Context,
             rule: str | None = None,
+            scope_key: list[JsonValue] | None = None,
             status: RunStatus | None = None,
             limit: int = 20,
         ) -> str:
-            """List runs, newest first, as JSON lines."""
+            """List runs, newest first, as JSON lines, optionally of one rule, scope or status.
+
+            ``scope_key`` holds the scope's values, as a run's ``scope_key`` does: ``["auth"]``.
+            """
             workspace = await self._workspace(ctx, workspace_id)
-            runs = await workspace.runs(rule=rule, status=status, limit=limit)
+            key = None if scope_key is None else key_of(scope_key)
+            runs = await workspace.runs(rule=rule, scope_key=key, status=status, limit=limit)
             return "\n".join(run.model_dump_json() for run in runs) or "No runs."
 
         @server.tool()

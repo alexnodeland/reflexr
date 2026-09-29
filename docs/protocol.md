@@ -113,7 +113,7 @@ reflexr's own events, alongside the application's:
 | Tools `publish_event`, `read_events` | Publish and read, with the same idempotency and filters. |
 | Tools `list_rules`, `rule_status`, `replay_rule` | Inspect and replay rules. `list_rules`, like `GET /v1/rules`, gives every rule to every authenticated client of any tenant. `rule_status` reports what `GET /v1/workspaces/{workspace_id}/rules` does, as a line per registered rule. |
 | Tool `schedule_status` | Each schedule targeting the workspace, with its last and next tick, as `GET /v1/workspaces/{workspace_id}/schedules` reports them. |
-| Tools `list_runs`, `get_run`, `retry_run`, `skip_run`, `cancel_run`, `list_dead_letters` | Operate runs. |
+| Tools `list_runs`, `get_run`, `retry_run`, `skip_run`, `cancel_run`, `list_dead_letters` | Operate runs. `list_runs` and `list_dead_letters` take the filters REST's reads do. |
 | Tool `give_feedback` | Typed feedback on a run, a firing or a chain. |
 | Resource template `reflexr://{tenant_id}/{workspace_id}/runs/{run_id}` | A run's current JSON, with resource-updated notifications as it progresses. Readable only by clients of that tenant. |
 

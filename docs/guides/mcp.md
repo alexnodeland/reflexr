@@ -75,7 +75,7 @@ The server's instructions tell the client what it is talking to: event logs, one
 | `rule_status(workspace_id)` | Every registered rule, as `GET /v1/workspaces/{workspace_id}/rules` lists them: whether it is enabled, its cursor, how far it is behind the log, its generation and its number of dead letters. A rule that has not evaluated the workspace yet is at cursor 0. |
 | `schedule_status(workspace_id)` | Each [schedule](schedules.md) that targets the workspace, as `GET /v1/workspaces/{workspace_id}/schedules` lists them: when it last ticked and when it ticks next, or that it has not started there yet |
 | `replay_rule(workspace_id, rule, from_seq=0, mode="rebuild")` | Evaluates a rule again from `from_seq`: rebuilds its state quietly, or refires ([The reactor](reactor.md#replaying-a-rule)) |
-| `list_runs(workspace_id, rule=None, status=None, limit=20)` | Runs, newest first, as JSON lines |
+| `list_runs(workspace_id, rule=None, scope_key=None, status=None, limit=20)` | Runs, newest first, as JSON lines, filtered as `GET /v1/workspaces/{workspace_id}/runs` filters them. `scope_key` holds the scope's values, such as `["auth"]`, or is a run's `scope_key` as the run has it. |
 | `get_run(workspace_id, run_id)` | One run: its status, attempts, error, output and checkpoint |
 | `retry_run(workspace_id, run_id)` | Makes a run runnable now, with a fresh retry budget if it had finished |
 | `skip_run(workspace_id, run_id, reason=None)` | Gives up on a waiting or dead-lettered run, unblocking its scope |
