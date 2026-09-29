@@ -3,8 +3,11 @@
 from collections.abc import Callable
 from typing import Any
 
+import pytest
 from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from tests.workspace.conftest import FakeClock
 
 Step = ModelResponse | Callable[[list[ModelMessage]], ModelResponse]
 
@@ -45,3 +48,8 @@ class Script:
         last = self.requests[request][-1]
         assert isinstance(last, ModelRequest)
         return [str(getattr(part, "content", "")) for part in last.parts]
+
+
+@pytest.fixture
+def clock() -> FakeClock:
+    return FakeClock()

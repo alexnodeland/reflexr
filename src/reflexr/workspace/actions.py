@@ -55,6 +55,19 @@ class Reaction[D]:
         """The values of the rule's scope fields for this firing."""
         return self.run.scope
 
+    async def checkpoint(self, step: str, state: JsonValue) -> None:
+        """Save the run's progress after ``step``, so a retry resumes after it.
+
+        The saved state is ``reaction.run.checkpoint`` on the next attempt.
+
+        Raises:
+            InvalidState: If this attempt is no longer the run's current one; the action
+                should stop.
+        """
+        self.run = await self.workspace.checkpoint_run(
+            self.run.id, attempt=self.run.attempts, step=step, state=state
+        )
+
     async def emit(self, event: Event) -> Published:
         """Publish an event caused by this run.
 
