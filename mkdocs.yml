@@ -1,0 +1,200 @@
+# The documentation site, built with Zensical (ADR-0032). `make docs` builds it in strict mode;
+# `make docs-serve` serves it with live reload.
+
+site_name: reflexr
+site_description: >-
+  Rules over event streams that run LLM workflows: pydantic-ai agents, pydantic-graph graphs and
+  functions.
+site_author: Alex Nodeland
+site_url: https://reflexr.alexnodeland.com/
+repo_url: https://github.com/alexnodeland/reflexr
+repo_name: alexnodeland/reflexr
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 Alex Nodeland. Released under the MIT License.
+docs_dir: docs
+
+theme:
+  name: material
+  variant: modern
+  language: en
+  logo: assets/brand/mark-light.svg
+  favicon: assets/brand/favicon.svg
+  font:
+    text: Schibsted Grotesk
+    code: Fragment Mono
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: lucide/sun-moon
+        name: Use the light scheme
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: lucide/sun
+        name: Use the dark scheme
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: lucide/moon
+        name: Follow the system scheme
+  features:
+    - content.action.edit
+    - content.code.annotate
+    - content.code.copy
+    - content.tabs.link
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - toc.follow
+
+extra_css:
+  - assets/stylesheets/brand.css
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      # Pages under docs/project/ include the repository's root files (CONTRIBUTING.md and
+      # others) instead of copying them.
+      base_path: [.]
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          inventories:
+            - https://docs.python.org/3/objects.inv
+            - https://docs.pydantic.dev/latest/objects.inv
+            - https://ai.pydantic.dev/objects.inv
+          options:
+            docstring_style: google
+            extensions:
+              - griffe_pydantic:
+                  schema: false
+              - scripts/griffe_sphinx_roles.py:SphinxRoles
+            filters: ["!^_", "!^model_config$"]
+            heading_level: 3
+            members_order: source
+            merge_init_into_class: true
+            separate_signature: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_signature_annotations: true
+            show_source: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            signature_crossrefs: true
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Reference implementation: reference-implementation.md
+  - Guides:
+      - Events and envelopes: guides/events.md
+      - Rules: guides/rules.md
+      - Workspaces and the log: guides/workspaces.md
+      - The reactor: guides/reactor.md
+      - Actions: guides/actions.md
+      - Schedules: guides/schedules.md
+      - Storage: guides/storage.md
+      - Serving over REST and WebSocket: guides/serving.md
+      - External agents over MCP: guides/mcp.md
+      - Multi-tenancy and security: guides/security.md
+      - Observability: guides/observability.md
+      - Feedback and evaluation: guides/evaluation.md
+      - Loop and spend safety: guides/safety.md
+      - Testing your application: guides/testing.md
+  - Reference:
+      - reference/index.md
+      - reflexr.core: reference/core.md
+      - reflexr.telemetry: reference/telemetry.md
+      - reflexr.workspace: reference/workspace.md
+      - reflexr.agent: reference/agent.md
+      - reflexr.scores: reference/scores.md
+      - reflexr.evals: reference/evals.md
+      - reflexr.fastapi: reference/fastapi.md
+      - reflexr.mcp: reference/mcp.md
+      - Stream protocol: protocol.md
+      - JSON Schemas: reference/schema.md
+  - Design:
+      - Architecture: architecture.md
+      - Decisions:
+          - adr/README.md
+          - adr/0001-library-with-a-sans-io-core.md
+          - adr/0002-the-name-reflexr.md
+          - adr/0003-independent-sibling-of-artifactr.md
+          - adr/0004-tenant-scoped-streams.md
+          - adr/0005-per-rule-cursors.md
+          - adr/0006-rules-as-typed-serializable-data.md
+          - adr/0007-rule-state-as-pure-reducers.md
+          - adr/0008-actions-agents-graphs-and-functions.md
+          - adr/0009-graph-checkpoints.md
+          - adr/0010-loop-and-spend-safety.md
+          - adr/0011-surfaces.md
+          - adr/0012-trunk-based-development-with-rfcs-and-adrs.md
+          - adr/0013-quality-gates.md
+          - adr/0014-mit-license.md
+          - adr/0015-reference-implementation-oncall.md
+          - adr/0016-tenants-and-workspaces-like-artifactr.md
+          - adr/0017-the-cores-evaluation-contract.md
+          - adr/0018-opentelemetry-observability-with-langfuse.md
+          - adr/0019-typed-feedback-as-events.md
+          - adr/0020-evalr-shared-eval-kit.md
+          - adr/0021-contributor-compose-and-dev-containers.md
+          - adr/0022-litellm-proxy-first.md
+          - adr/0023-libraries-and-the-stackr-template.md
+          - adr/0024-causal-chains-and-operator-actions.md
+          - adr/0025-ports-and-adapters.md
+          - adr/0026-the-reactors-evaluation.md
+          - adr/0027-executing-runs.md
+          - adr/0028-schedules-and-cronsim.md
+          - adr/0032-documentation-site.md
+          - adr/0033-publishing-the-documentation-site.md
+          - adr/template.md
+      - RFCs:
+          - rfcs/README.md
+          - rfcs/0001-v0.1-implementation-plan.md
+          - rfcs/0002-observability-feedback-and-evaluation.md
+          - rfcs/template.md
+  - Project:
+      - Contributing: project/contributing.md
+      - Changelog: project/changelog.md
+      - Code of conduct: project/code-of-conduct.md
+      - Security: project/security.md
+      - License: project/license.md
+      - Brand: assets/brand/README.md

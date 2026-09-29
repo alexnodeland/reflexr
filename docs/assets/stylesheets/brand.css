@@ -1,0 +1,85 @@
+/*
+ * artifactr's colors on the Zensical theme. The palette and its rules are in
+ * docs/assets/brand/README.md: overprint indigo is the working color, and the
+ * two participant inks (magenta and cyan) are kept for the mark and for
+ * interaction.
+ */
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #2d2a8c;
+  --md-primary-fg-color--light: #4a47a8;
+  --md-primary-fg-color--dark: #211f6b;
+  --md-primary-bg-color: #ffffff;
+  --md-primary-bg-color--light: #ffffffb3;
+  --md-accent-fg-color: #c2006a;
+  --md-accent-fg-color--transparent: #c2006a1a;
+  --md-typeset-a-color: #2d2a8c;
+  --md-code-bg-color: #f4f4fa;
+  --md-code-hl-color: #009fe3;
+  --md-code-hl-color--light: #009fe31a;
+  --md-mermaid-node-bg-color: #2d2a8c12;
+  --md-mermaid-node-fg-color: #2d2a8c;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-hue: 244deg;
+  --md-default-bg-color: #14132a;
+  --md-default-bg-color--light: #14132ab3;
+  --md-default-bg-color--lighter: #14132a4d;
+  --md-default-bg-color--lightest: #14132a1f;
+  --md-primary-fg-color: #b3b1ff;
+  --md-primary-fg-color--light: #cdcbff;
+  --md-primary-fg-color--dark: #8f8cf0;
+  --md-primary-bg-color: #14132a;
+  --md-primary-bg-color--light: #14132ab3;
+  --md-accent-fg-color: #ff4da6;
+  --md-accent-fg-color--transparent: #ff4da61a;
+  --md-typeset-a-color: #b3b1ff;
+  --md-code-bg-color: #1c1b3a;
+  --md-code-hl-color: #38c6f4;
+  --md-code-hl-color--light: #38c6f41f;
+  --md-mermaid-node-bg-color: #b3b1ff1f;
+  --md-mermaid-node-fg-color: #b3b1ff;
+  --md-footer-bg-color: #0f0e22;
+  --md-footer-bg-color--dark: #0b0a1a;
+}
+
+/* The header logo: the mark's shared tip is ink on paper, and light on screen. */
+[data-md-color-scheme="slate"] .md-logo img {
+  content: url("../brand/mark-dark.svg");
+}
+
+/* Headings in the text face, set a little tighter than body text. */
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* The home page's title is the lockup; its heading stays for screen readers. */
+.md-typeset .artifactr-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* The home page's opening: the lockup and the one-line description. */
+.md-typeset .artifactr-hero {
+  margin: 0.5rem 0 2rem;
+}
+
+.md-typeset .artifactr-hero img {
+  width: min(22rem, 100%);
+  height: auto;
+}
+
+.md-typeset .artifactr-hero p {
+  max-width: 34em;
+  font-size: 1.15em;
+  line-height: 1.55;
+}
