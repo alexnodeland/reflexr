@@ -4,7 +4,6 @@ from evalr.core import Dataset, Example, FunctionEvaluator
 from evalr.memory import InMemoryExperimentTracker
 from pydantic import BaseModel
 
-import tests.event_types  # noqa: F401  (registers the test event types)
 from reflexr import Event, F, Rule, by, on, run
 from reflexr.evals import Replay, replay_task
 from reflexr.workspace import Reaction

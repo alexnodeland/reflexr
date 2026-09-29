@@ -12,7 +12,6 @@ from pydantic import BaseModel, JsonValue
 from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.join import reduce_list_append
 
-import tests.event_types  # noqa: F401  (registers the test event types)
 from reflexr import F, RetryPolicy, Rule, SourceActor, by, on, run
 from reflexr.agent import GraphAction
 from reflexr.agent.graphs import CHECKPOINT_VERSION
