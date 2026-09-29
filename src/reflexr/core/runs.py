@@ -75,6 +75,9 @@ class Run(BaseModel):
     created_at: AwareDatetime
     updated_at: AwareDatetime
     error: str | None = None
+    reason: str | None = None
+    """A stable code for why the last attempt failed, such as ``guardrail_blocked``."""
+
     checkpoint: JsonValue = None
     """A graph run's state and pending steps after its last completed step."""
 
@@ -125,28 +128,47 @@ def start(run: Run, *, now: AwareDatetime, trace_id: str | None = None) -> tuple
 def succeed(run: Run, *, now: AwareDatetime, output: JsonValue = None) -> tuple[Run, RunSucceeded]:
     """Finish a running run."""
     _require(run, "succeed", "running")
-    done = _update(run, now, status="succeeded", output=output, error=None)
+    done = _update(run, now, status="succeeded", output=output, error=None, reason=None)
     return done, RunSucceeded(run_id=run.id, rule=run.rule, output=output)
 
 
 def fail(
-    run: Run, rule: Rule, *, now: AwareDatetime, error: str
+    run: Run,
+    rule: Rule,
+    *,
+    now: AwareDatetime,
+    error: str,
+    reason: str | None = None,
+    permanent: bool = False,
 ) -> tuple[Run, RunRetrying | RunDeadLettered]:
-    """Record a failed attempt: retry later under the rule's policy, or dead-letter the run."""
+    """Record a failed attempt: retry later under the rule's policy, or dead-letter the run.
+
+    Args:
+        run: The running run.
+        rule: Its rule, whose retry policy applies.
+        now: The current time.
+        error: What went wrong, for people.
+        reason: A stable code for why, for metrics and dashboards.
+        permanent: Whether retrying cannot help, as when a guardrail blocked the input: the
+            run is dead-lettered whatever its policy allows.
+    """
     _require(run, "fail", "running")
-    next_at = rule.retry.next_attempt(run.attempts, now)
+    next_at = None if permanent else rule.retry.next_attempt(run.attempts, now)
     if next_at is None:
-        dead = _update(run, now, status="dead", error=error)
+        dead = _update(run, now, status="dead", error=error, reason=reason)
         return dead, RunDeadLettered(
-            run_id=run.id, rule=run.rule, attempts=run.attempts, error=error
+            run_id=run.id, rule=run.rule, attempts=run.attempts, error=error, reason=reason
         )
-    retrying = _update(run, now, status="retrying", error=error, next_attempt_at=next_at)
+    retrying = _update(
+        run, now, status="retrying", error=error, reason=reason, next_attempt_at=next_at
+    )
     return retrying, RunRetrying(
         run_id=run.id,
         rule=run.rule,
         attempt=run.attempts,
         error=error,
         next_attempt_at=next_at,
+        reason=reason,
     )
 
 

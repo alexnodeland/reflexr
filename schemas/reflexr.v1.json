@@ -886,6 +886,18 @@
           "$ref": "#/$defs/JsonValue",
           "default": null
         },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
         "rule": {
           "$ref": "#/$defs/RuleName"
         },

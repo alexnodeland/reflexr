@@ -258,6 +258,8 @@ class RunRetrying(Event, name="run_retrying"):
     attempt: int
     error: str
     next_attempt_at: AwareDatetime
+    reason: str | None = None
+    """A stable code for why the attempt failed, when the action gave one."""
 
 
 class RunSucceeded(Event, name="run_succeeded"):
@@ -269,12 +271,14 @@ class RunSucceeded(Event, name="run_succeeded"):
 
 
 class RunDeadLettered(Event, name="run_dead_lettered"):
-    """A run exhausted its retries."""
+    """A run exhausted its retries, or failed in a way retrying cannot fix."""
 
     run_id: RunId
     rule: RuleName
     attempts: int
     error: str
+    reason: str | None = None
+    """A stable code for why the last attempt failed, when the action gave one."""
 
 
 class RunCancelled(Event, name="run_cancelled"):

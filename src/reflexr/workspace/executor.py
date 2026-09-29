@@ -49,7 +49,7 @@ from reflexr.telemetry import (
 from reflexr.telemetry import attributes as a
 from reflexr.telemetry.metrics import DEAD_LETTERS, RUN_ATTEMPTS, RUN_DURATION, RUNS
 from reflexr.telemetry.telemetry import Attributes
-from reflexr.workspace.actions import Action, Reaction, RunContext
+from reflexr.workspace.actions import Action, Reaction, RunContext, RunFailure
 from reflexr.workspace.storage import Entry, Transaction, WorkspaceRef, run_lease
 from reflexr.workspace.workspace import Workspaces
 
@@ -65,6 +65,8 @@ class _Outcome:
     kind: Literal["succeeded", "failed", "interrupted"]
     output: JsonValue = None
     error: str = ""
+    reason: str | None = None
+    permanent: bool = False
 
 
 class Executor[D]:
@@ -166,7 +168,11 @@ class Executor[D]:
             if run.status == "running":
                 # Its executor stopped renewing the lease: the attempt counts as failed.
                 failed, fact = fail(
-                    run, rule, now=now, error="the attempt was abandoned: its executor stopped"
+                    run,
+                    rule,
+                    now=now,
+                    error="the attempt was abandoned: its executor stopped",
+                    reason="abandoned",
                 )
                 await self._save(transaction, failed, fact)
                 self._record_status(ref, rule, failed)
@@ -240,7 +246,11 @@ class Executor[D]:
             async with asyncio.timeout(limit.total_seconds() if limit else None):
                 output = await action(reaction)
         except TimeoutError:
-            return _Outcome("failed", error=f"the action timed out after {limit}")
+            return _Outcome("failed", error=f"the action timed out after {limit}", reason="timeout")
+        except RunFailure as failure:
+            return _Outcome(
+                "failed", error=failure.message, reason=failure.reason, permanent=failure.permanent
+            )
         except Exception as error:  # an action's failure is the run's, to retry
             return _Outcome("failed", error=f"{type(error).__name__}: {error}")
         try:
@@ -278,7 +288,14 @@ class Executor[D]:
             if outcome.kind == "succeeded":
                 done, fact = succeed(current, now=now, output=outcome.output)
             else:
-                done, fact = fail(current, rule, now=now, error=outcome.error)
+                done, fact = fail(
+                    current,
+                    rule,
+                    now=now,
+                    error=outcome.error,
+                    reason=outcome.reason,
+                    permanent=outcome.permanent,
+                )
             await self._save(transaction, done, fact)
         self._record_status(ref, rule, done)
         return done
@@ -309,7 +326,10 @@ class Executor[D]:
         await transaction.append([entry])
 
     def _record_status(self, ref: WorkspaceRef, rule: Rule, run: Run) -> None:
-        self._record(ref, RUNS, 1, rule, run.status, {a.ACTOR_KIND: "system"})
+        extra: dict[str, AttributeValue] = {a.ACTOR_KIND: "system"}
+        if run.status in ("retrying", "dead") and run.reason is not None:
+            extra[a.RUN_REASON] = run.reason
+        self._record(ref, RUNS, 1, rule, run.status, extra)
         if run.status == "dead":
             self._record(ref, DEAD_LETTERS, 1, rule)
 

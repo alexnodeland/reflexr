@@ -84,9 +84,9 @@ reflexr's own events, alongside the application's:
 | `rule_reset` | `rule`, `generation`, `reason` (`changed` or `replayed`), `from_seq`, `silent_through` |
 | `run_started` | `run_id`, `rule`, `scope`, `attempt` |
 | `run_progressed` | `run_id`, `step` (a graph step completed and was checkpointed) |
-| `run_retrying` | `run_id`, `attempt`, `error`, `next_attempt_at` |
+| `run_retrying` | `run_id`, `attempt`, `error`, `next_attempt_at`, `reason?` (a stable code, such as `timeout`) |
 | `run_succeeded` | `run_id`, `output?` |
-| `run_dead_lettered` | `run_id`, `attempts`, `error` |
+| `run_dead_lettered` | `run_id`, `attempts`, `error`, `reason?` (such as `guardrail_blocked`, which is never retried) |
 | `run_cancelled`, `run_skipped` | `run_id`, `reason?` |
 | `run_requeued` | `run_id` (someone made the run runnable again; the actor says who) |
 | `feedback_given` | `feedback_type`, `target` (`{kind: run, run_id}`, `{kind: firing, firing_id}` or `{kind: chain, correlation_id}`), `value` |

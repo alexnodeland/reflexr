@@ -149,3 +149,25 @@ def test_without_ordering_every_due_run_starts() -> None:
     first, second = fired(1), fired(2)
     running = start(first, now=NOW)[0]
     assert runnable([running, second], rule(ordering="none"), now=NOW) == [second]
+
+
+def test_failures_carry_a_reason_and_permanent_ones_are_not_retried() -> None:
+    running, _ = start(fired(), now=NOW)
+    retrying, retried = fail(running, rule(), now=NOW, error="rate limited", reason="rate_limit")
+    assert (retrying.status, retrying.reason, retried.reason) == (
+        "retrying",
+        "rate_limit",
+        "rate_limit",
+    )
+    blocked, dead = fail(
+        start(retrying, now=NOW)[0],
+        rule(),
+        now=NOW,
+        error="blocked by pii-mask",
+        reason="guardrail_blocked",
+        permanent=True,
+    )
+    assert (blocked.status, blocked.attempts, dead.reason) == ("dead", 2, "guardrail_blocked")
+    assert isinstance(dead, RunDeadLettered)
+    done, _ = succeed(start(retry(blocked, now=NOW)[0], now=NOW)[0], now=NOW)
+    assert (done.error, done.reason) == (None, None)
