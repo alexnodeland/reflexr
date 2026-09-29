@@ -34,8 +34,9 @@ test: ## Run the tests with the 100% branch-coverage gate
 
 check: lint typecheck test ## Run everything CI runs
 
-docs: ## Build the documentation site in strict mode, as CI does
+docs: ## Build the documentation site in strict mode, and check its lists rendered, as CI does
 	$(UV) run zensical build --strict --clean
+	$(UV) run python scripts/check_site.py site
 
 docs-serve: ## Serve the documentation site with live reload at http://localhost:8000
 	$(UV) run zensical serve

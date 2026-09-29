@@ -66,6 +66,11 @@ markdown_extensions:
   - def_list
   - footnotes
   - md_in_html
+  # Nested lists are indented by two spaces, as GitHub renders them; Python-Markdown needs four
+  # without this.
+  - mdx_truly_sane_lists:
+      nested_indent: 2
+      truly_sane: true
   - tables
   - toc:
       permalink: true

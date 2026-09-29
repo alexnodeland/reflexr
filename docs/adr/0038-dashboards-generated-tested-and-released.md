@@ -22,6 +22,7 @@ Grafana's dashboard JSON is long and repetitive, and hand edits to it drift: a p
   - exemplars on latency panels, which link to traces, and reflexr's red on single-number panels
 
   The JSON files are checked in, and a test fails if they differ from the script's output.
+
 - **Eight dashboards:** Overview, Tenant, Workspace, Rules (lag, firings, errors), Runs (outcomes, durations, retries, dead letters, failure reasons, operator actions), Agent and LLM, Schedules, and Stream (WebSocket connections and close codes).
 - **The failed share of run attempts** is computed from `reflexr.run.duration`'s count by how each attempt ended, not from attempts started over attempts failed, which happen minutes apart.
 - **The registry lists the external metrics the dashboards read**, `EXTERNAL_METRICS`: pydantic-ai's `gen_ai.client.token.usage` and `operation.cost`, with `Metric.scope` naming who records them.
