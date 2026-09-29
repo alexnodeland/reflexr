@@ -49,8 +49,10 @@ class Identity:
 
     def __init__(self) -> None:
         self.tenant: TenantId = "acme"
+        self.resolved = 0
 
     async def resolve(self, ctx: Context) -> tuple[TenantId, ExternalAgentActor]:
+        self.resolved += 1
         return self.tenant, CLAUDE
 
 
@@ -179,6 +181,7 @@ async def test_runs_are_resources_of_their_tenant_only(
     [done] = await workspace.runs()
     async with Client(mcp.server) as client:
         result = await client.read_resource(run_uri("acme", "prod", done.id))
+        assert identity.resolved == 1  # authenticated once per read
         [content] = result.contents
         assert isinstance(content, TextResourceContents)
         assert json.loads(content.text)["id"] == done.id

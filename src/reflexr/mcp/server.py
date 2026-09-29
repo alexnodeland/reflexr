@@ -115,13 +115,18 @@ class ReflexrMcp:
         await asyncio.gather(*self._watchers.values(), return_exceptions=True)
         self._watchers.clear()
 
-    async def _open(self, ctx: Context, workspace_id: WorkspaceId) -> Workspace:
-        """Open a workspace for the request's client.
+    async def _open(
+        self,
+        ctx: Context,
+        workspace_id: WorkspaceId,
+        client: tuple[TenantId, ExternalAgentActor] | None = None,
+    ) -> Workspace:
+        """Open a workspace for the request's client, resolving it unless it is given.
 
         Raises:
             Forbidden: If ``authorize`` refuses the client this workspace.
         """
-        tenant_id, actor = await self._resolve(ctx)
+        tenant_id, actor = client or await self._resolve(ctx)
         trace.get_current_span().set_attributes(
             {**workspace_attributes(tenant_id, workspace_id), **actor_attributes(actor)}
         )
@@ -295,11 +300,11 @@ class ReflexrMcp:
             description="A run's current state, as JSON.",
         )
         async def run_resource(tenant_id: str, workspace_id: str, run_id: str, ctx: Context) -> str:
-            resolved, _ = await self._resolve(ctx)
+            resolved, actor = await self._resolve(ctx)
             if resolved != tenant_id:
                 raise ResourceError(f"runs of tenant {tenant_id} are not available")
             try:
-                workspace = await self._open(ctx, workspace_id)
+                workspace = await self._open(ctx, workspace_id, (resolved, actor))
                 run = await workspace.run(run_id)
             except Rejection as rejection:
                 raise ResourceError(rejection.message) from rejection
