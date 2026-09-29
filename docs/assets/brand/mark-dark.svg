@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-labelledby="title">
-<title id="title">artifactr</title>
-<polygon fill="#FF4DA6" points="5,58 19,58 39,19.48 32,6"/>
-<polygon fill="#38C6F4" points="59,58 45,58 25,19.48 32,6"/>
-<polygon fill="#E4E3FF" points="32,6 39,19.48 32,32.96 25,19.48"/>
+<title id="title">reflexr</title>
+<polygon fill="#FFD54A" points="6,5 6,19 44.52,39 58,32"/>
+<polygon fill="#FF4DA6" points="6,59 6,45 44.52,25 58,32"/>
+<polygon fill="#FFE1DA" points="58,32 44.52,39 31.04,32 44.52,25"/>
 </svg>

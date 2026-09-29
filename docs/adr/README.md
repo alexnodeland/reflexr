@@ -35,6 +35,8 @@ Each record captures one decision: the context that forced it, the options consi
 | [0029](0029-metric-detail-through-sdk-views.md) | Metric detail through SDK views, and the OpenTelemetry and Langfuse adapters | Accepted |
 | [0030](0030-sql-storage.md) | SQL storage with one dialect-neutral implementation | Accepted |
 | [0031](0031-the-reference-implementations-events-and-rules.md) | The reference implementation's events and rules | Accepted |
+| [0032](0032-documentation-site.md) | The documentation site, and a brand shared by the family | Accepted |
+| [0033](0033-publishing-the-documentation-site.md) | Publishing the documentation site from main | Accepted |
 | [0036](0036-typed-run-failures.md) | Typed run failures | Accepted |
 
 To add a record, copy [`template.md`](template.md) to the next number and add a row above.

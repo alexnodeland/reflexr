@@ -10,7 +10,7 @@ PG_CONTAINER ?= reflexr-postgres
 PG_PORT ?= 54330
 PG_URL ?= postgresql+asyncpg://postgres:reflexr@localhost:$(PG_PORT)/postgres
 
-.PHONY: help install fmt lint typecheck test check schema pg-up pg-down test-pg changelog clean
+.PHONY: help install fmt lint typecheck test check docs docs-serve schema pg-up pg-down test-pg changelog clean
 
 help: ## List the available commands
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -27,13 +27,19 @@ lint: ## Check formatting and lint rules
 	$(UV) run ruff format --check .
 	$(UV) run ruff check .
 
-typecheck: ## Type-check (strict for src/)
+typecheck: ## Type-check (strict for src/ and scripts/)
 	$(UV) run pyright
 
 test: ## Run the tests with the 100% branch-coverage gate
 	$(UV) run pytest --cov --cov-report=term-missing
 
 check: lint typecheck test ## Run everything CI runs
+
+docs: ## Build the documentation site in strict mode, as CI does
+	$(UV) run zensical build --strict --clean
+
+docs-serve: ## Serve the documentation site with live reload at http://localhost:8000
+	$(UV) run zensical serve
 
 schema: ## Regenerate the rule and protocol JSON Schemas from the models
 	$(UV) run python -m reflexr.core.schema rules > schemas/reflexr.rules.v1.json

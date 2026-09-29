@@ -509,8 +509,11 @@ Coverage is 100% of lines and branches, and pyright runs in strict mode with no 
 | [0026](adr/0026-the-reactors-evaluation.md) | The reactor's evaluation: rules on workspaces, the depth of reflexr's facts, and rebuilds |
 | [0027](adr/0027-executing-runs.md) | Executing runs |
 | [0028](adr/0028-schedules-and-cronsim.md) | Schedules, with cronsim for cron expressions |
+| [0029](adr/0029-metric-detail-through-sdk-views.md) | Metric detail through SDK views, and the OpenTelemetry and Langfuse adapters |
 | [0030](adr/0030-sql-storage.md) | SQL storage with one dialect-neutral implementation |
 | [0031](adr/0031-the-reference-implementations-events-and-rules.md) | The reference implementation's events and rules |
+| [0032](adr/0032-documentation-site.md) | The documentation site, and a brand shared by the family |
+| [0033](adr/0033-publishing-the-documentation-site.md) | Publishing the documentation site from main |
 
 ## Open questions
 
