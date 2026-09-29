@@ -127,10 +127,11 @@ RUNS = _reflexr(
     "reflexr.runs",
     "counter",
     "{run}",
-    "Runs reaching a status, by rule and who moved them there.",
+    "Runs reaching a status, by rule, who moved them there, and why an attempt failed.",
     a.RULE,
     a.RUN_STATUS,
     a.ACTOR_KIND,
+    a.RUN_REASON,
 )
 RUN_DURATION = _reflexr(
     "reflexr.run.duration",

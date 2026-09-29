@@ -84,6 +84,27 @@ class Reaction[D]:
         return await self.workspace.publish(event, id=event_id)
 
 
+class RunFailure(Exception):
+    """Raise from an action, a tool or a capability to fail the attempt with a reason.
+
+    The reason is a stable code, such as ``guardrail_blocked``, recorded on the run and its
+    facts and counted in ``reflexr.runs``; the message is for people. A permanent failure is
+    not retried, whatever the rule's policy, since retrying the same input would fail again.
+    Other exceptions fail the attempt too, without a reason, and are retried.
+
+    Args:
+        message: What went wrong.
+        reason: A stable code for why.
+        permanent: Whether retrying cannot help.
+    """
+
+    def __init__(self, message: str, *, reason: str, permanent: bool = False) -> None:
+        super().__init__(message)
+        self.message = message
+        self.reason = reason
+        self.permanent = permanent
+
+
 class Action[D](Protocol):
     """What a rule runs: an async callable over a :class:`Reaction`.
 

@@ -35,6 +35,7 @@ from reflexr.workspace import (
     InMemoryStorage,
     Reaction,
     Reactor,
+    RunFailure,
     Settled,
     Storage,
     Workspace,
@@ -516,3 +517,35 @@ async def test_each_attempt_runs_inside_the_run_context_with_its_chain_in_baggag
     assert entered == [(done.id, 1)]
     assert seen == [deploy.id]
     assert baggage.get_baggage(a.SESSION_ID) is None  # detached after the attempt
+
+
+async def test_typed_failures_record_their_reason_and_permanent_ones_skip_retries(
+    build: Build, telemetry: Telemetry
+) -> None:
+    async def throttled(reaction: Reaction[None]) -> None:
+        raise RunFailure("slow down", reason="rate_limit")
+
+    async def blocked(reaction: Reaction[None]) -> None:
+        raise RunFailure("blocked by pii-mask", reason="guardrail_blocked", permanent=True)
+
+    rules = [
+        rule(name="throttled", then=run("throttled")),
+        rule(name="blocked", then=run("blocked")),
+    ]
+    workspaces = build(rules)
+    workspace = await open_(workspaces)
+    await workspace.publish(Deploy(service="auth"))
+    await Reactor(workspaces, actions={"throttled": throttled, "blocked": blocked}).settle()
+    runs = {r.rule: r for r in await workspace.runs()}
+    assert (runs["throttled"].status, runs["throttled"].reason) == ("retrying", "rate_limit")
+    assert (runs["blocked"].status, runs["blocked"].attempts, runs["blocked"].reason) == (
+        "dead",
+        1,
+        "guardrail_blocked",
+    )
+    [dead] = [e.event for e in await workspace.read() if isinstance(e.event, RunDeadLettered)]
+    assert (dead.reason, dead.error) == ("guardrail_blocked", "blocked by pii-mask")
+    reasons = {
+        (p[0].get(a.RUN_STATUS), p[0].get(a.RUN_REASON)) for p in telemetry.points("reflexr.runs")
+    }
+    assert {("retrying", "rate_limit"), ("dead", "guardrail_blocked")} <= reasons

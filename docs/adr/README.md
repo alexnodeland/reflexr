@@ -34,5 +34,6 @@ Each record captures one decision: the context that forced it, the options consi
 | [0028](0028-schedules-and-cronsim.md) | Schedules, with cronsim for cron expressions | Accepted |
 | [0029](0029-metric-detail-through-sdk-views.md) | Metric detail through SDK views, and the OpenTelemetry and Langfuse adapters | Accepted |
 | [0030](0030-sql-storage.md) | SQL storage with one dialect-neutral implementation | Accepted |
+| [0036](0036-typed-run-failures.md) | Typed run failures | Accepted |
 
 To add a record, copy [`template.md`](template.md) to the next number and add a row above.
