@@ -19,9 +19,9 @@ that fails verification is not rolled back twice.
 
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from pydantic_graph import GraphBuilder, StepContext
 
 from oncall.events import DeployCompleted, IncidentOpened, IncidentResolved
@@ -54,10 +54,6 @@ class EscalationPlan(BaseModel):
     kind: Literal["escalate"] = "escalate"
     service: str
     reason: str
-
-
-type Diagnosis = Annotated[RollbackPlan | EscalationPlan, Field(discriminator="kind")]
-"""What the diagnosis decided to do."""
 
 
 class Mitigation(BaseModel):
@@ -169,7 +165,7 @@ def incident_of(reaction: Reaction[OncallDeps]) -> IncidentOpened:
 def runbook_action() -> GraphAction[OncallDeps, RunbookState, IncidentOpened, str]:
     """The runbook as an action.
 
-    A decision has no input type reflexr can read from a signature, so it is given here: the
-    boundary after ``diagnose`` is then checkpointed too.
+    The decision's input type is ``diagnose``'s return type, which reflexr infers, so the
+    boundary after ``diagnose`` is checkpointed too.
     """
-    return GraphAction(runbook_graph, inputs=incident_of, input_types={"decide": Diagnosis})
+    return GraphAction(runbook_graph, inputs=incident_of)

@@ -241,7 +241,7 @@ deploy_regression = Rule(
 | `name` | the graph's name | The name rules refer to the action by |
 | `inputs` | `None` | Builds the graph's inputs from the reaction; without it the graph gets `None` |
 | `state` | the state type's constructor | Builds the graph's initial state from the reaction |
-| `input_types` | `{}` | The input type of nodes reflexr cannot infer, by node id, such as forks and decisions |
+| `input_types` | `{}` | Input types by node id, for the decisions and forks whose type reflexr cannot infer ([below](#input-types)); an explicit type always wins |
 
 After each step, the action saves the graph's state and the next task to the run, and appends `run_progressed` with the step's name. If `roll_back` fails the first time, the run waits to retry with `diagnose` as its last saved step, and the retry starts at `roll_back`: `diagnose` does not run again. The run's `run_progressed` events show every saved boundary, across both attempts:
 
@@ -254,9 +254,36 @@ The graph's output is the run's output, and it is checkpointed too, so a run tha
 What is saved has limits:
 
 - **State and inputs must serialize.** They are stored as JSON through a `TypeAdapter` of their types. A boundary whose next inputs do not serialize as their type is not saved, and a retry resumes from the one before it.
-- **Types come from annotations.** A step's input type is read from its `StepContext[State, Deps, Input]` annotation. Forks and decisions run no code of their own, so the boundaries before them are saved only if `input_types` names their input type.
+- **Types come from annotations.** A step's input type is read from its `StepContext[State, Deps, Input]` annotation, and the end node's is the graph's output type. Decisions and forks run no code of their own, so their input types are inferred ([below](#input-types)).
 - **Nothing is saved inside a fork.** Between a fork and its join, several branches are in flight, so a run that fails there resumes from the checkpoint before the fork, and branches that had finished run again. After the join, boundaries are saved again.
-- **A changed graph starts over.** A checkpoint from a graph whose nodes have changed since, or from another version of the format, is ignored, and the retry runs the graph from the start.
+- **A changed graph starts over.** A checkpoint from a graph whose nodes have changed since, or whose next node's input type is no longer known, or from another version of the format, is ignored, and the retry runs the graph from the start.
+
+### Input types
+
+A decision or a fork passes on what the edges into it carry, so reflexr infers its input type from them. When every edge into it comes, with no transform, from a step with a return annotation, from the graph's start, or from a decision whose type is known, and they all carry the same type, that is its input type. A step returning `RollbackPlan | EscalationPlan` into a decision gives the decision that type, and the boundary before it is saved like any other.
+
+`input_types` is needed only where inference cannot decide. Without it, the boundary before the node is not saved, and a retry resumes from the one before. Inference cannot decide when:
+
+- an edge into the node has a transform, since reflexr does not infer through one
+- an edge comes from a step with no return annotation, or one that returns `Any` or a type variable
+- an edge comes from a join, whose reduced value has no annotation to read, or from a fork
+- the edges carry different types, such as one step returning an `int` and another a `str`
+- pydantic has no schema for the inferred type; the action is still built, without that checkpoint
+
+```python
+def version_of(ctx: StepContext[Runbook, Reaction[AppDeps], Finding]) -> str:
+    return ctx.inputs.version
+
+
+# The edge transforms diagnose's Finding, so the decision's input type is given.
+g.add(g.edge_from(diagnose).transform(version_of).to(by_version))
+runbook = GraphAction(g.build(), input_types={"by_version": str})
+```
+
+An explicit type always wins over an annotation or an inferred type, and the decisions after it infer from it. Two more rules keep a checkpoint from changing what a resumed run does:
+
+- **A decision routes by class**, and pydantic writes a subclass down as the class it is declared as. So the boundary before a decision is saved only if its inputs read back as the class they had: if `diagnose` is annotated `-> Finding` but returns a subclass that a decision routes apart, the boundary before that decision is not saved.
+- **A one-shot iterator is never saved.** Writing a generator down would use it up, so a step that returns one into a map fork has no checkpoint before the fork.
 
 ## Idempotency
 
