@@ -6,7 +6,7 @@
 |---|---|
 | `reflexr.core` | Implemented |
 | `reflexr.telemetry` | Implemented: spans, attributes and the metric registry |
-| `reflexr.workspace` | In progress (phase 2): storage protocol, in-memory storage, workspace handles, the `Reactor` (evaluation and execution) and function actions implemented; schedules planned |
+| `reflexr.workspace` | Implemented: storage protocol, in-memory storage, workspace handles, the `Reactor` (evaluation, execution and schedules) and function actions |
 | `reflexr.agent` | Planned (phase 3) |
 | `reflexr.sql` | Planned (phase 4) |
 | `reflexr.fastapi`, `reflexr.mcp` | Planned (phase 5) |
@@ -80,7 +80,7 @@ Dependencies point one way. Each layer is usable without the ones above it, and 
 |---|---|---|
 | `reflexr.core` | pydantic | Events and envelopes, actors, conditions and their reducers, rules, evaluation, the run lifecycle and retry policy. Pure, synchronous, no I/O. |
 | `reflexr.telemetry` | core, opentelemetry-api | Attribute names, the metric registry and its cardinality policy, and the tracer and instruments. Never configures the SDK. |
-| `reflexr.workspace` | core, telemetry | `Workspaces`, `Workspace`, the storage protocol, in-memory storage, the `Reactor`, the action port and `Reaction`, schedules and their runner. |
+| `reflexr.workspace` | core, telemetry, cronsim | `Workspaces`, `Workspace`, the storage protocol, in-memory storage, the `Reactor`, the action port and `Reaction`, schedules and their runner. |
 | `reflexr.agent` | workspace, pydantic-ai, pydantic-graph | Agent actions with the `EventContext` capability, and graph actions with checkpoints: adapters of the action port. |
 | `reflexr.sql` (extra) | workspace, SQLAlchemy 2 async, Alembic | Durable storage on PostgreSQL and SQLite, and its migrations. |
 | `reflexr.fastapi` (extra) | workspace, FastAPI | HTTP ingest, REST reads and administration, and the WebSocket stream protocol. |
@@ -345,7 +345,17 @@ LLM workflows triggered by events can loop and can spend ([ADR-0010](adr/0010-lo
 
 ## Schedules
 
-A schedule appends events on a timetable: `Schedule(name="heartbeat-check", every=timedelta(seconds=30), workspaces=[...])`, or a cron expression with a time zone. Each tick's event id is derived from the schedule and the tick's time, so replicas that race publish it once, and a lease keeps them from racing in the first place. Missed ticks are skipped or caught up, per schedule.
+A schedule publishes `tick` events on a timetable ([ADR-0028](adr/0028-schedules-and-cronsim.md)):
+
+```python
+heartbeat_check = Schedule(name="heartbeat-check", every=timedelta(seconds=30))
+standup = Schedule(name="standup", cron="0 9 * * mon-fri", timezone="Europe/Oslo")
+workspaces = Workspaces(storage, rules=[...], schedules=[heartbeat_check, standup])
+```
+
+Rules watch ticks (`on(Tick).where(schedule="standup")`), and ticks move rules' clocks forward in quiet workspaces, so `absence` rules fire on time. A schedule targets every workspace with a log, or listed `(tenant, workspace)` pairs.
+
+Each workspace remembers each schedule's last tick, saved in the transaction that appends the tick. Each tick's id is derived from the schedule and its time, so replicas never publish a tick twice. After downtime, a schedule skips to the latest missed tick, or catches up on each, up to a limit. The reactor publishes ticks in `tick()`, which `settle()` and `serve()` include; cron expressions are parsed by cronsim, in the schedule's time zone.
 
 ## Surfaces
 
@@ -421,7 +431,7 @@ erDiagram
 
 ## Dependencies
 
-Python 3.12+. Runtime: `pydantic` (core); `opentelemetry-api` (telemetry and workspace); `pydantic-ai-slim` and `pydantic-graph` (agent). Extras: `sql` (`sqlalchemy[asyncio]`, `alembic`), `postgres` and `sqlite` (drivers), `fastapi`, `mcp`. Tooling: uv, ruff, pyright in strict mode, pytest, and Zensical with mkdocstrings for the documentation site.
+Python 3.12+. Runtime: `pydantic` (core); `opentelemetry-api` (telemetry and workspace); `cronsim` (schedules); `pydantic-ai-slim` and `pydantic-graph` (agent). Extras: `sql` (`sqlalchemy[asyncio]`, `alembic`), `postgres` and `sqlite` (drivers), `fastapi`, `mcp`. Tooling: uv, ruff, pyright in strict mode, pytest, and Zensical with mkdocstrings for the documentation site.
 
 ## Testing
 
@@ -464,6 +474,7 @@ Coverage is 100% of lines and branches, and pyright runs in strict mode with no 
 | [0025](adr/0025-ports-and-adapters.md) | Ports and adapters |
 | [0026](adr/0026-the-reactors-evaluation.md) | The reactor's evaluation: rules on workspaces, the depth of reflexr's facts, and rebuilds |
 | [0027](adr/0027-executing-runs.md) | Executing runs |
+| [0028](adr/0028-schedules-and-cronsim.md) | Schedules, with cronsim for cron expressions |
 
 ## Open questions
 

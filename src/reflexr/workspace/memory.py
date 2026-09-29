@@ -44,6 +44,7 @@ class _Data:
     )
     runs: dict[RunId, Run] = field(default_factory=dict[RunId, Run])
     dead_letters: list[EvaluationError] = field(default_factory=list[EvaluationError])
+    schedules: dict[str, datetime] = field(default_factory=dict[str, datetime])
     leases: dict[str, tuple[str, datetime]] = field(default_factory=dict[str, tuple[str, datetime]])
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     appended: asyncio.Condition = field(default_factory=asyncio.Condition)
@@ -63,6 +64,7 @@ class _Transaction:
         self._cleared: set[RuleName] = set()
         self._runs: dict[RunId, Run] = {}
         self._dead_letters: list[EvaluationError] = []
+        self._schedules: dict[str, datetime] = {}
 
     async def append(self, entries: Sequence[Entry]) -> list[Envelope]:
         envelopes: list[Envelope] = []
@@ -136,6 +138,12 @@ class _Transaction:
     async def dead_letter(self, errors: Sequence[EvaluationError]) -> None:
         self._dead_letters.extend(errors)
 
+    async def schedule(self, name: str) -> datetime | None:
+        return _latest(self._schedules, self._data.schedules, name)
+
+    async def save_schedule(self, name: str, at: datetime) -> None:
+        self._schedules[name] = at
+
     def commit(self) -> None:
         data = self._data
         data.log.extend(self._log)
@@ -147,6 +155,7 @@ class _Transaction:
             data.states.setdefault(rule, {}).update(states)
         data.runs.update(self._runs)
         data.dead_letters.extend(self._dead_letters)
+        data.schedules.update(self._schedules)
 
 
 def _latest[K, V](pending: dict[K, V], committed: dict[K, V], key: K) -> V | None:
@@ -241,6 +250,10 @@ class InMemoryStorage:
     async def progress(self, workspace: WorkspaceRef) -> dict[RuleName, RuleProgress]:
         """Return every rule's progress in a workspace."""
         return dict(self._data(workspace).progress)
+
+    async def schedules(self, workspace: WorkspaceRef) -> dict[str, datetime]:
+        """Return the time of each schedule's last tick in a workspace."""
+        return dict(self._data(workspace).schedules)
 
     async def workspaces(self) -> list[WorkspaceRef]:
         """Return every workspace with a log."""
