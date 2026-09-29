@@ -1,6 +1,6 @@
 # RFC-0002: Observability, feedback, evaluation and the LLM gateway
 
-**Status:** Accepted
+**Status:** Implemented
 **Author:** Alex Nodeland
 **Created:** 2026-09-28
 **Discussion:** accepted on 2026-09-28
@@ -120,7 +120,7 @@ These match artifactr's RFC-0002 exactly, except that reflexr's session is the c
 ## Tracking
 
 - [x] B1: telemetry core: spans, attribution, trace context on envelopes, `Run.trace_ids`, metric registry, `[otel]` helper. Landed with RFC-0001 phases 2 and 3.
-- [ ] B2: typed feedback: `Feedback`, targets, `feedback_given`, `EvaluatorActor`. Core in phase 2; surfaces in phase 5.
+- [x] B2: typed feedback: `Feedback`, targets, `feedback_given`, `EvaluatorActor`. Core in phase 2 (#22); surfaces in phase 5 (#28, #29, #31).
 - [x] B3: `[langfuse]` extra ([ADR-0029](../adr/0029-metric-detail-through-sdk-views.md))
 - [x] B4: dev environment and dashboards, with the reference implementation ([ADR-0037](../adr/0037-joining-stackrs-network.md), [ADR-0038](../adr/0038-dashboards-generated-tested-and-released.md))
 - [x] B5: `[evals]` extra over evalr: feedback sources, evaluators as rules, experiment tasks and the end-to-end measures

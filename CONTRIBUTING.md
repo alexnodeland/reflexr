@@ -27,6 +27,8 @@ Run `make` on its own to list every command:
 | `make pg-up` / `make pg-down` | Start or stop PostgreSQL for the SQL tests, from `compose.yaml` (needs Docker) |
 | `make app-up` | Build and start oncall, the reference app, on PostgreSQL, at <http://localhost:8000> |
 | `make test-pg` | Run the tests on PostgreSQL as well as SQLite |
+| `make docs` | Build the documentation site in strict mode, as CI does |
+| `make docs-serve` | Serve the documentation site with live reload at <http://localhost:8000> |
 | `make changelog` | Regenerate `CHANGELOG.md` from commit history |
 
 ### Testing SQL storage on PostgreSQL
