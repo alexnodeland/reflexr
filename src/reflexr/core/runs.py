@@ -77,6 +77,8 @@ class Run(BaseModel):
     """The last step a graph run completed."""
 
     output: JsonValue = None
+    trace_ids: tuple[str, ...] = ()
+    """The trace id of each attempt, so feedback on the run can be attached to its traces."""
 
 
 def create_run(firing: Firing, *, now: AwareDatetime) -> Run:
@@ -95,11 +97,12 @@ def create_run(firing: Firing, *, now: AwareDatetime) -> Run:
     )
 
 
-def start(run: Run, *, now: AwareDatetime) -> tuple[Run, RunStarted]:
-    """Begin an attempt of a pending or retrying run."""
+def start(run: Run, *, now: AwareDatetime, trace_id: str | None = None) -> tuple[Run, RunStarted]:
+    """Begin an attempt of a pending or retrying run, recording its trace if there is one."""
     _require(run, "start", "pending", "retrying")
     attempt = run.attempts + 1
-    started = _update(run, now, status="running", attempts=attempt)
+    traces = (*run.trace_ids, trace_id) if trace_id else run.trace_ids
+    started = _update(run, now, status="running", attempts=attempt, trace_ids=traces)
     return started, RunStarted(
         run_id=run.id, rule=run.rule, scope_key=run.scope_key, attempt=attempt
     )

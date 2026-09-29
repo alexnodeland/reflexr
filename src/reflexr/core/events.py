@@ -32,6 +32,7 @@ from pydantic import (
 
 from reflexr.core.actors import Actor
 from reflexr.core.errors import NotFound, ValidationFailed
+from reflexr.core.feedback import FeedbackTarget
 from reflexr.core.ids import EventId, FiringId, RuleName, RunId, ScopeKey, WorkspaceId
 
 _registry: dict[str, type["Event"]] = {}
@@ -269,6 +270,15 @@ class RunSkipped(Event, name="run_skipped"):
     reason: str | None = None
 
 
+class FeedbackGiven(Event, name="feedback_given"):
+    """A person or an evaluator judged a run, a firing or a causal chain."""
+
+    feedback_type: str
+    target: FeedbackTarget
+    value: dict[str, JsonValue]
+    """The feedback's fields, as validated against its registered type."""
+
+
 class Tick(Event, name="tick"):
     """A schedule's tick. Ticks also move rules' clocks forward in quiet workspaces."""
 
@@ -301,6 +311,7 @@ SYSTEM_EVENTS: tuple[type[Event], ...] = (
     RunDeadLettered,
     RunCancelled,
     RunSkipped,
+    FeedbackGiven,
     Tick,
 )
 """Every event type reflexr itself appends."""
@@ -337,6 +348,10 @@ class Envelope(BaseModel):
     causation: Causation | None = None
     correlation_id: str
     """The id of the first event in this event's causal chain."""
+
+    traceparent: str | None = None
+    """The W3C trace context of the span that published the event, so the runs it causes can
+    link back to it."""
 
     event: AnyEvent
 

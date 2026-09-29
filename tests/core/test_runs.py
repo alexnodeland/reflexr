@@ -65,6 +65,14 @@ def test_a_run_succeeds() -> None:
     assert done.updated_at == NOW + SECOND
 
 
+def test_each_attempt_records_its_trace() -> None:
+    first, _ = start(fired(), now=NOW, trace_id="t1")
+    retrying, _ = fail(first, rule(), now=NOW, error="x")
+    second, _ = start(retrying, now=NOW + SECOND, trace_id="t2")
+    assert second.trace_ids == ("t1", "t2")
+    assert start(fired(), now=NOW)[0].trace_ids == ()
+
+
 def test_a_failing_run_retries_then_is_dead_lettered() -> None:
     running, _ = start(fired(), now=NOW)
     retrying, event = fail(running, rule(), now=NOW, error="boom")
