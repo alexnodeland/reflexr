@@ -123,5 +123,5 @@ These match artifactr's RFC-0002 exactly, except that reflexr's session is the c
 - [ ] B2: typed feedback: `Feedback`, targets, `feedback_given`, `EvaluatorActor`. Core in phase 2; surfaces in phase 5.
 - [ ] B3: `[langfuse]` extra (the `reflexr.scores` ports and the feedback mirror are in; the Langfuse adapter follows)
 - [ ] B4: dev environment and dashboards, with the reference implementation (phase 6)
-- [ ] B5: `[evals]` extra over evalr: feedback sources, evaluators as rules and the end-to-end measures are in; experiment tasks follow
+- [x] B5: `[evals]` extra over evalr: feedback sources, evaluators as rules, experiment tasks and the end-to-end measures
 - [ ] B6: `[litellm]` extra
