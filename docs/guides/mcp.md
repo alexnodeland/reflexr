@@ -35,7 +35,7 @@ app = FastAPI(lifespan=lifespan)
 app.mount("/mcp", mcp.http_app(streamable_http_path="/"))
 ```
 
-Clients connect to `https://your-host/mcp/` with any MCP client that speaks Streamable HTTP. The server can share an application, and a `Workspaces`, with the [REST and WebSocket router](serving.md); if the application also runs the reactor in its lifespan, enter both there. `mcp.server` is the underlying `MCPServer`, to serve it another way, such as over stdio.
+Clients connect to `https://your-host/mcp/` with any MCP client that speaks Streamable HTTP. The server can share an application, and a `Workspaces`, with the [REST and WebSocket router](serving.md); if the application also runs the reactor in its lifespan, enter both there. `mcp.server` is the underlying `MCPServer`, to serve it another way, such as over stdio. The SDK's server configures logging for the whole process as it is built, and `ReflexrMcp` undoes that, so logging stays the application's ([Logging and startup output](serving.md#logging-and-startup-output)).
 
 | `ReflexrMcp` argument | Meaning |
 |---|---|

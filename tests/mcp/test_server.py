@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -373,3 +374,15 @@ async def test_the_http_app_and_lifespan(server: Server) -> None:
     assert mcp.http_app() is not None
     async with mcp.lifespan():
         pass
+
+
+def test_building_the_server_leaves_logging_as_it_was(
+    workspaces: Workspaces, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # As in an application that has not configured logging: the SDK's server would otherwise
+    # give the root logger a rich handler and set the whole process to INFO.
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "handlers", [])
+    monkeypatch.setattr(root, "level", logging.WARNING)
+    ReflexrMcp(workspaces, resolve=Identity().resolve)
+    assert (root.handlers, root.level) == ([], logging.WARNING)
