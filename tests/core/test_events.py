@@ -11,6 +11,7 @@ from reflexr.core import (
     AgentActor,
     Causation,
     Envelope,
+    EvaluatorActor,
     Event,
     ExternalAgentActor,
     NotFound,
@@ -150,3 +151,26 @@ def test_actors_have_display_names(
     actor: UserActor | AgentActor | ExternalAgentActor | SystemActor | SourceActor, name: str
 ) -> None:
     assert actor.display_name == name
+
+
+def test_participants_are_stable_across_one_actors_actions() -> None:
+    assert [
+        actor.participant
+        for actor in (
+            UserActor(id="ada"),
+            AgentActor(rule="triage", run_id="fir_1", name="triage"),
+            AgentActor(rule="triage", run_id="fir_2", name="triage"),
+            ExternalAgentActor(client_id="claude-code"),
+            SystemActor(name="reactor"),
+            SourceActor(name="monitor"),
+            EvaluatorActor(name="judge", version="3"),
+        )
+    ] == [
+        "user:ada",
+        "agent:triage",
+        "agent:triage",
+        "external_agent:claude-code",
+        "system:reactor",
+        "source:monitor",
+        "evaluator:judge@3",
+    ]

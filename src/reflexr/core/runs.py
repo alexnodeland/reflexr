@@ -41,7 +41,7 @@ from reflexr.core.events import (
     RunStarted,
     RunSucceeded,
 )
-from reflexr.core.ids import RuleName, RunId, ScopeKey
+from reflexr.core.ids import RuleName, RunId, ScopeKey, TraceId
 from reflexr.core.rules import Rule
 from reflexr.core.state import Firing
 
@@ -82,7 +82,7 @@ class Run(BaseModel):
     """The last step a graph run completed."""
 
     output: JsonValue = None
-    trace_ids: tuple[str, ...] = ()
+    trace_ids: tuple[TraceId, ...] = ()
     """The trace id of each attempt, so feedback on the run can be attached to its traces."""
 
     @property

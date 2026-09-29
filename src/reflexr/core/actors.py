@@ -2,7 +2,8 @@
 
 Every envelope is attributed to exactly one actor. The kinds match artifactr's, so a system that
 uses both libraries can map one to the other, plus ``source`` for systems that publish events,
-such as a monitoring service.
+such as a monitoring service. Each actor has a ``participant`` key, as in artifactr, that is the
+same for everything one participant does: every run of a rule's action is one participant.
 """
 
 from typing import Annotated, Literal
@@ -22,6 +23,11 @@ class UserActor(BaseModel):
     name: str | None = None
 
     @property
+    def participant(self) -> str:
+        """A key that is equal for every action by the same person."""
+        return f"user:{self.id}"
+
+    @property
     def display_name(self) -> str:
         """How this actor is named to people and agents."""
         return self.name or self.id
@@ -36,6 +42,11 @@ class AgentActor(BaseModel):
     rule: RuleName
     run_id: RunId
     name: str
+
+    @property
+    def participant(self) -> str:
+        """A key that is equal for every run of the same rule's action."""
+        return f"agent:{self.rule}"
 
     @property
     def display_name(self) -> str:
@@ -53,6 +64,11 @@ class ExternalAgentActor(BaseModel):
     name: str | None = None
 
     @property
+    def participant(self) -> str:
+        """A key that is equal for every action by the same client."""
+        return f"external_agent:{self.client_id}"
+
+    @property
     def display_name(self) -> str:
         """How this actor is named to people and agents."""
         return self.name or self.client_id
@@ -65,6 +81,11 @@ class SystemActor(BaseModel):
 
     kind: Literal["system"] = "system"
     name: str = "reflexr"
+
+    @property
+    def participant(self) -> str:
+        """A key that is equal for every action by the same system component."""
+        return f"system:{self.name}"
 
     @property
     def display_name(self) -> str:
@@ -81,6 +102,11 @@ class SourceActor(BaseModel):
     name: str
 
     @property
+    def participant(self) -> str:
+        """A key that is equal for every event from the same source."""
+        return f"source:{self.name}"
+
+    @property
     def display_name(self) -> str:
         """How this actor is named to people and agents."""
         return self.name
@@ -95,6 +121,11 @@ class EvaluatorActor(BaseModel):
     name: str
     version: str
     """The evaluator's version, such as a hash of a trained judge, so verdicts never mix."""
+
+    @property
+    def participant(self) -> str:
+        """A key that is equal for every verdict of the same evaluator version."""
+        return f"evaluator:{self.name}@{self.version}"
 
     @property
     def display_name(self) -> str:
