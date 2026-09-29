@@ -10,11 +10,11 @@ This module defines:
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class ErrorCode(str, Enum):
+class ErrorCode(StrEnum):
     """Error codes for API responses.
 
     These codes provide machine-readable error classification
