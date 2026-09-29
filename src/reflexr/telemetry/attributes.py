@@ -37,6 +37,9 @@ EVALUATED_RULES = "reflexr.evaluation.rules"
 
 FIRING_COUNT = "reflexr.evaluation.firings"
 
+CLOSE_CODE = "reflexr.stream.close_code"
+"""How a WebSocket connection ended."""
+
 # ─── feedback ────────────────────────────────────────────────────────────────
 
 FEEDBACK_TYPE = "reflexr.feedback.type"

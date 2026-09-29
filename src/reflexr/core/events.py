@@ -130,18 +130,27 @@ def load_event(data: Mapping[str, Any]) -> Event:
     Raises:
         ValidationFailed: If there is no ``"type"``, or the data does not match its type.
     """
+    name, fields = _split(data)
+    if name is None:
+        raise ValidationFailed("an event needs a string 'type'", [])
+    try:
+        return _load(name, fields)
+    except ValidationError as error:
+        raise ValidationFailed(f"invalid {name} event", _errors(error)) from error
+
+
+def _split(data: Mapping[str, Any]) -> tuple[str | None, dict[str, Any]]:
     fields = dict(data)
     name = fields.pop("type", None)
-    if not isinstance(name, str):
-        raise ValidationFailed("an event needs a string 'type'", [])
+    return (name if isinstance(name, str) else None), fields
+
+
+def _load(name: str, fields: dict[str, Any]) -> Event:
     event_type = _registry.get(name)
     if event_type is None:
         fields.pop("unknown_type", None)
         return UnknownEvent(unknown_type=name, **fields)
-    try:
-        return event_type.model_validate(fields)
-    except ValidationError as error:
-        raise ValidationFailed(f"invalid {name} event", _errors(error)) from error
+    return event_type.model_validate(fields)
 
 
 def dump_event(event: Event, *, mode: Literal["json", "python"] = "json") -> dict[str, Any]:
@@ -156,7 +165,19 @@ def _validate_event(value: Any) -> Event:
         return value
     if not isinstance(value, Mapping):
         raise ValueError("an event must be an object with a 'type'")
-    return load_event(cast("Mapping[str, Any]", value))
+    name, fields = _split(cast("Mapping[str, Any]", value))
+    if name is None:
+        raise ValueError("an event needs a string 'type'")
+    try:
+        return _load(name, fields)
+    except ValidationError as error:
+        # Inside a model, a validator must raise ValueError for Pydantic to report it as a
+        # validation error of the enclosing model, such as a request body.
+        problems = "; ".join(
+            f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}"
+            for e in error.errors(include_url=False)
+        )
+        raise ValueError(f"invalid {name} event: {problems}") from None
 
 
 def _serialize_event(event: Event, info: SerializationInfo) -> dict[str, Any]:

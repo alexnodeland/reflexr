@@ -28,6 +28,9 @@ dependencies = [
     "pydantic-graph>=2.51",
 ]
 
+[project.optional-dependencies]
+fastapi = ["fastapi>=0.141"]
+
 [project.urls]
 Homepage = "https://github.com/alexnodeland/reflexr"
 Repository = "https://github.com/alexnodeland/reflexr"
@@ -41,6 +44,8 @@ test = [
     "pytest-cov>=7.1",
     "hypothesis>=6.168",
     "opentelemetry-sdk>=1.45",
+    "httpx>=0.28",
+    "fastapi>=0.141",
 ]
 lint = ["ruff>=0.16", "pyright>=1.1.414"]
 dev = [
