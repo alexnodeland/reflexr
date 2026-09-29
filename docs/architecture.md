@@ -7,7 +7,7 @@
 | `reflexr.core` | Implemented |
 | `reflexr.telemetry` | Implemented: spans, attributes and the metric registry |
 | `reflexr.workspace` | Implemented: storage protocol, in-memory storage, workspace handles, the `Reactor` (evaluation, execution and schedules) and function actions |
-| `reflexr.agent` | Planned (phase 3) |
+| `reflexr.agent` | In progress (phase 3): agent actions and the `EventContext` capability implemented; graph actions planned |
 | `reflexr.sql` | Planned (phase 4) |
 | `reflexr.fastapi`, `reflexr.mcp` | Planned (phase 5) |
 | `examples/oncall` | Planned (phase 6) |
@@ -299,7 +299,7 @@ triage = AgentAction(triage_agent, name="triage")
 runbook = GraphAction(runbook_graph, name="runbook", state=RunbookState, inputs=from_triage)
 ```
 
-- **Agents** are plain pydantic-ai `Agent`s with `deps_type=Reaction[...]`. The `EventContext` capability renders the firing (the rule, the scope, the matched events) into the instructions, and gives the agent tools to read back through the workspace's log and to emit events of the types it is allowed. The run's output can be emitted as an event, or handled by the action.
+- **Agents** are plain pydantic-ai `Agent`s with `deps_type=Reaction[...]`, wrapped in an `AgentAction`. By default its prompt describes the firing: the rule and its description, the scope, and the matched events. The `EventContext` capability gives the agent `read_events`, to read back through the workspace's log, and `emit_event`, to publish events of the types it is allowed, validated against their schemas, with refused calls retried by the model. The agent's output is the run's output. Each run is in its causal chain's conversation (pydantic-ai's `conversation_id`), and the capability attributes pydantic-ai's `invoke_agent` span to the tenant, workspace, rule, run and attempt. `usage_limits` bound each attempt.
 - **Graphs** are pydantic-graph graphs built with `GraphBuilder`. reflexr drives them step by step and saves the graph state and pending tasks to the run after every step. A retry, or another executor after a crash, resumes from the last completed step instead of starting over ([ADR-0009](adr/0009-graph-checkpoints.md)).
 - **Functions** are `async def` over a `Reaction`.
 

@@ -24,6 +24,8 @@ dependencies = [
     "cronsim>=2.7",
     "opentelemetry-api>=1.45",
     "pydantic>=2.13",
+    "pydantic-ai-slim>=2.51",
+    "pydantic-graph>=2.51",
 ]
 
 [project.urls]
@@ -83,6 +85,8 @@ known-third-party = ["fastapi", "mcp"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D", "ARG"]
+# pydantic-ai hides a tool's RunContext from the model, so tool docstrings don't document it.
+"src/reflexr/agent/tools.py" = ["D417"]
 
 # ─── types ────────────────────────────────────────────────────────────────────
 
