@@ -114,18 +114,18 @@ verdicts = [
 
 ## Scores
 
-Evaluation backends see feedback as **scores**: one per field, named `{type}.{field}`, typed by the field, as in artifactr. The types above become:
+Evaluation backends see feedback as **scores**: one per field, named `{type}.{field}`, typed by the field. The mapping and the ports are [evalr](https://github.com/alexnodeland/evalr)'s, shared with artifactr and with evalr's own evaluators, so an evaluator's `triage_quality.correct` and a person's are the same score ([evalr's scores guide](https://evalr.alexnodeland.com/guides/scores/)). `reflexr.scores` needs evalr, which the `langfuse` and `evals` extras install. The types above become:
 
 | Score | Data type | Value |
 |---|---|---|
-| `triage_quality.correct` | `BOOLEAN` | 1 or 0 |
+| `triage_quality.correct` | `BOOLEAN` | `True` or `False` (1 or 0 in Langfuse) |
 | `triage_quality.severity` | `CATEGORICAL` | `low`, `high` or `critical` |
 | `triage_quality.note` | `TEXT` | The text, cut to 500 characters |
 | `resolution.minutes_to_mitigate` | `NUMERIC` | Between 0 and 1440, from the field's bounds |
 
-`Enum` fields are categorical too. Optional fields are scored when they have a value, and fields of other types (lists, nested models) are not scored. `score_configs(TriageQuality)` returns this mapping as `ScoreConfig`s.
+`Enum` fields are categorical too. Optional fields are scored when they have a value, and fields of other types (lists, nested models) are not scored. `score_configs(TriageQuality)` returns this mapping as evalr's `ScoreConfig`s, named by the type's registered name.
 
-`reflexr.scores.FeedbackMirror` follows a workspace's log and sends each piece of feedback's scores to a `ScoreSink`, attached to the trace the feedback is about:
+`reflexr.scores.FeedbackMirror` follows a workspace's log and records each piece of feedback's scores in a `ScoreSink`, attached to the trace the feedback is about:
 
 ```python
 import asyncio
@@ -142,22 +142,27 @@ task = asyncio.create_task(mirror.follow())  # until cancelled
 | A firing | The trace of the evaluation pass that recorded its `rule_fired` |
 | A chain | The chain's session: the scores have a `session_id` and no trace |
 
-Feedback about something that has no trace, because no SDK was configured when it ran, is scored on the session too. A mirror follows one workspace, so run one task per workspace you want mirrored; any actor's handle will do, since it only reads. Score ids are derived from the feedback's envelope, so a mirror can start over from the beginning of the log without duplicating anything, and feedback of a type the process does not register is skipped. Each score's metadata says where it came from: the tenant, workspace, feedback type, target kind, the participant who gave it, and the `seq`.
+Feedback about something that has no trace, because no SDK was configured when it ran, is scored on the session too. A mirror follows one workspace, so run one task per workspace you want mirrored; any actor's handle will do, since it only reads. Score ids are derived from the feedback's envelope, so a mirror can start over from the beginning of the log without duplicating anything, and feedback of a type the process does not register is skipped. Each score is evalr's `Score`, with no evaluator; where it came from (the tenant, workspace, feedback type, target kind, the participant who gave it, and the `seq`) is its `source`, which a sink records as the score's metadata.
 
-`sync_score_configs(store)` creates the score configs of every registered feedback type (or those you list) that a `ScoreConfigStore` lacks, and returns the names it created. The sink and the store are small protocols ([ADR-0025](../adr/0025-ports-and-adapters.md)), so any backend can implement them:
+`sync_score_configs(store)` creates the score configs of every registered feedback type (or those you list) that a `ScoreConfigStore` lacks, leaves the ones it has as they are, and returns the names it created. The sink and the store are evalr's small protocols ([ADR-0025](../adr/0025-ports-and-adapters.md)), re-exported by `reflexr.scores`, so any backend can implement them, and evalr's contract suites (`evalr.contracts.check_score_sink` and `check_score_config_store`) check one:
 
 ```python
+from collections.abc import Sequence
+
 from reflexr.scores import Score
 
 
 class PrintingSink:
-    async def send(self, score: Score) -> None:
-        print(score.name, score.value, score.trace_id or score.session_id)
+    async def record(self, scores: Sequence[Score], /) -> None:
+        for score in scores:
+            print(score.name, score.value, score.trace_id or score.session_id)
 ```
+
+For tests, `evalr.memory` has an `InMemoryScoreSink` and an `InMemoryScoreConfigStore`.
 
 ### Scores in Langfuse
 
-With the `langfuse` extra, feedback becomes Langfuse scores beside the traces it judges. `LangfuseScores` is a `ScoreSink`, and `LangfuseScoreConfigs` a `ScoreConfigStore`:
+With the `langfuse` extra, feedback becomes Langfuse scores beside the traces it judges. `LangfuseScores` is a `ScoreSink`, and `LangfuseScoreConfigs` a `ScoreConfigStore`, both passing evalr's contract suites:
 
 ```python
 import asyncio

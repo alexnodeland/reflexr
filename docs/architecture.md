@@ -6,7 +6,7 @@
 |---|---|
 | `reflexr.core` | Implemented |
 | `reflexr.telemetry` | Implemented: spans, attributes and the metric registry |
-| `reflexr.scores` | Implemented: feedback as scores, the log mirror, and the score ports |
+| `reflexr.scores` | Implemented: the log mirror that scores feedback, on evalr's mapping and ports |
 | `reflexr.otel` (extra) | Implemented: `configure_telemetry`, the SDK behind the API, with the metric views |
 | `reflexr.langfuse` (extra) | Implemented: whole traces, run attributes, and feedback as Langfuse scores |
 | `reflexr.litellm` (extra) | Implemented: models over the LiteLLM proxy, with tenancy, keys and guardrails per request |
@@ -86,7 +86,7 @@ Dependencies point one way. Each layer is usable without the ones above it, and 
 |---|---|---|
 | `reflexr.core` | pydantic | Events and envelopes, actors, conditions and their reducers, rules, evaluation, the run lifecycle and retry policy. Pure, synchronous, no I/O. |
 | `reflexr.telemetry` | core, opentelemetry-api | Attribute names, the metric registry and its cardinality policy, and the tracer and instruments. Never configures the SDK. |
-| `reflexr.scores` | core, telemetry, workspace | Feedback types as score configs, feedback as scores, the `FeedbackMirror` that follows a log, and the `ScoreSink` and `ScoreConfigStore` ports that evaluation backends adapt. |
+| `reflexr.scores` (needs evalr, from the `langfuse` or `evals` extra) | core, telemetry, workspace, evalr's core | Feedback types as score configs and feedback as scores, through evalr's mapping with each type's registered name, and the `FeedbackMirror` that follows a log into evalr's `ScoreSink` port. |
 | `reflexr.evals` (extra) | workspace, evalr | evalr's `FeedbackSource` over a workspace's log, and `EvaluatorAction`, which runs an evalr evaluator as a rule's action and records its verdicts as feedback. |
 | `reflexr.workspace` | core, telemetry, cronsim | `Workspaces`, `Workspace` and the rule and schedule statuses it reports, the storage protocol, in-memory storage, the `Reactor`, the action port and `Reaction`, schedules and their runner. |
 | `reflexr.agent` | workspace, pydantic-ai, pydantic-graph | Agent actions with the `EventContext` capability, and graph actions with checkpoints: adapters of the action port. |
@@ -105,7 +105,8 @@ The core is the hexagon; everything it talks to is behind a port, a small protoc
 | The OpenTelemetry API (driven) | Any SDK and exporter, such as OTLP to stackr's Collector |
 | Actions (driven) | Functions; pydantic-ai agents and pydantic-graph graphs; evaluators |
 | pydantic-ai's `Model` (driven) | Any provider, or the LiteLLM proxy |
-| Log subscribers (driven) | The Langfuse feedback mirror; evalr's `FeedbackSource` |
+| Log subscribers (driven) | The feedback mirror; evalr's `FeedbackSource` |
+| evalr's `ScoreSink` and `ScoreConfigStore` (driven) | `LangfuseScores` and `LangfuseScoreConfigs` (`[langfuse]`), checked by evalr's contract suites; evalr's in-memory adapters in tests |
 | `Workspace` handles and the `Reactor` (driving) | In-process calls, REST, WebSocket, MCP, schedules |
 
 Every port has a fake or in-memory adapter and one contract suite that all its adapters pass; the storage behaviour suite is the first.
@@ -335,7 +336,7 @@ class Triage(Feedback, name="triage", targets={"run"}):
 
 Feedback is recorded as a `feedback_given` event (the type, the target and the validated value), so it is attributed, replayable, and something rules can watch. An evaluator's verdict is feedback given by an `EvaluatorActor`, so people's and evaluators' judgements can be compared directly. `Run.trace_ids` records each attempt's trace, so feedback on a run can be attached to it in Langfuse ([RFC-0002](rfcs/0002-observability-feedback-and-evaluation.md)).
 
-Evaluation backends see feedback as **scores**, as in artifactr: one per field, named `{type}.{field}`, typed by the field (bounded numbers are numeric, `bool` a yes/no, `Literal` and `Enum` categories, `str` text). `FeedbackMirror(workspace, sink).follow()` follows a workspace's log and sends each piece of feedback to a `ScoreSink`: feedback on a run is scored on the trace of its latest attempt, on a firing on the trace of the evaluation that recorded it, and on a chain on its session. Score ids are derived from the envelope, so mirroring again replaces rather than duplicates. `sync_score_configs` creates each feedback type's score configs in a `ScoreConfigStore`. The sink and the store are ports; the `[langfuse]` extra adapts Langfuse to them.
+Evaluation backends see feedback as **scores**: one per field, named `{type}.{field}`, typed by the field (numbers are numeric, `bool` a yes/no, `Literal` and `Enum` categories, `str` text). The mapping and the ports are evalr's, shared with artifactr and with evalr's evaluators, so a person's scores and an evaluator's match by construction; `reflexr.scores` passes each type's registered name as the `{type}`. `FeedbackMirror(workspace, sink).follow()` follows a workspace's log and records each piece of feedback in a `ScoreSink`: feedback on a run is scored on the trace of its latest attempt, on a firing on the trace of the evaluation that recorded it, and on a chain on its session. Score ids are derived from the envelope in reflexr's own namespace, so mirroring again replaces rather than duplicates. A score has no evaluator; where the feedback came from is its `source`, recorded as metadata. `sync_score_configs` creates each feedback type's missing score configs in a `ScoreConfigStore`, through evalr's. The sink and the store are evalr's ports; the `[langfuse]` extra adapts Langfuse to them, sending a yes or no as 1 or 0. `reflexr.scores` re-exports evalr's `Score`, `ScoreConfig`, `ScoreSink`, `ScoreConfigStore`, `ScoreType` (as `ScoreDataType`) and `MAX_TEXT`, which it has always offered; it needs evalr, so it is used through the `langfuse` or `evals` extra, and the core, telemetry and workspace never import it.
 
 With the `[evals]` extra, feedback feeds evalr ([ADR-0020](adr/0020-evalr-shared-eval-kit.md)): a `LogFeedbackSource` turns one feedback type into evalr examples, with inputs the application builds from the run, firing or chain the feedback is about, for training and measuring judges, and leaves evaluators' own verdicts out unless asked; and an `EvaluatorAction` runs an evalr evaluator as a rule's action, so `Rule(when=on(RunSucceeded).where(rule="triage"), then=run(judge))` judges every triage run online and records the verdict as feedback from an `EvaluatorActor`. `replay_task` makes an evalr experiment task that replays an example's events against a candidate agent, graph or model in an isolated in-memory workspace. `rule_outcomes` and `time_to_resolution` compute the deterministic end-to-end measures from the log: each rule's dead-letter, retry and operator-intervention rates, and each chain's time from its first event to the event the application says resolves it.
 
@@ -483,7 +484,7 @@ erDiagram
 
 ## Dependencies
 
-Python 3.12+. Runtime: `pydantic` (core); `opentelemetry-api` (telemetry and workspace); `cronsim` (schedules); `pydantic-ai-slim` and `pydantic-graph` (agent). Extras: `sql` (`sqlalchemy[asyncio]` and `alembic`), `postgres` (`sql` and asyncpg) and `sqlite` (`sql` and aiosqlite), `fastapi`, `mcp`, `otel` (the OpenTelemetry SDK, OTLP exporters and instrumentations), `langfuse`, `litellm` (pydantic-ai's OpenAI-compatible models) and `evals` (evalr). Tooling: uv, ruff, pyright in strict mode, pytest, and Zensical with mkdocstrings for the documentation site.
+Python 3.12+. Runtime: `pydantic` (core); `opentelemetry-api` (telemetry and workspace); `cronsim` (schedules); `pydantic-ai-slim` and `pydantic-graph` (agent). Extras: `sql` (`sqlalchemy[asyncio]` and `alembic`), `postgres` (`sql` and asyncpg) and `sqlite` (`sql` and aiosqlite), `fastapi`, `mcp`, `otel` (the OpenTelemetry SDK, OTLP exporters and instrumentations), `langfuse` (with evalr, for the score mapping and ports), `litellm` (pydantic-ai's OpenAI-compatible models) and `evals` (evalr). Tooling: uv, ruff, pyright in strict mode, pytest, and Zensical with mkdocstrings for the documentation site.
 
 ## Testing
 
@@ -492,6 +493,7 @@ Python 3.12+. Runtime: `pydantic` (core); `opentelemetry-api` (telemetry and wor
 - **SQL:** the migrations checked against the models on both databases, and locking, polling, leases and stored values across processes.
 - **Agent:** scripted models with pydantic-ai's `FunctionModel` and `TestModel`; graph runs interrupted and resumed.
 - **Surfaces:** contract tests for every frame and endpoint, and an MCP client round trip.
+- **Scores:** the Langfuse score adapters pass evalr's `check_score_sink` and `check_score_config_store`, against a fake of Langfuse's API.
 - **Reference implementation:** the real server and client end to end, with a scripted model.
 
 Coverage is 100% of lines and branches, and pyright runs in strict mode with no suppressions ([ADR-0013](adr/0013-quality-gates.md)).

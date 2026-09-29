@@ -3,6 +3,7 @@
 import asyncio
 
 import pytest
+from evalr.memory import InMemoryScoreSink
 from opentelemetry.sdk.trace import TracerProvider
 
 from reflexr import Rule, SourceActor, UserActor, on, run
@@ -18,7 +19,7 @@ from reflexr.workspace import (
     Workspaces,
 )
 from tests.event_types import Deploy
-from tests.scores.fakes import FakeConfigStore, FakeSink
+from tests.scores.fakes import seeded
 from tests.scores.kinds import Accuracy, Helpfulness
 
 deploys = Rule(name="deploys", when=on(Deploy), then=run("note"))
@@ -41,7 +42,7 @@ async def fired(traced: bool) -> tuple[Workspace, str, str]:
     return workspace.as_actor(UserActor(id="ada")), done.id, deploy.id
 
 
-async def mirrored(workspace: Workspace, sink: FakeSink) -> list[Score]:
+async def mirrored(workspace: Workspace, sink: InMemoryScoreSink) -> list[Score]:
     mirror = FeedbackMirror(workspace, sink)
     return [s for e in await workspace.read() for s in await mirror.mirror(e)]
 
@@ -50,7 +51,7 @@ async def test_run_and_firing_feedback_is_scored_on_their_traces() -> None:
     workspace, run_id, chain = await fired(traced=True)
     await workspace.give_feedback(Helpfulness(rating=4), on=RunTarget(run_id=run_id))
     await workspace.give_feedback(Accuracy(correct=False), on=FiringTarget(firing_id=run_id))
-    sink = FakeSink()
+    sink = InMemoryScoreSink()
     rating, correct, verdict, tone, confidence = await mirrored(workspace, sink)
     done = await workspace.run(run_id)
     assert (rating.name, rating.value, rating.trace_id) == (
@@ -84,19 +85,19 @@ async def test_chain_feedback_and_untraced_targets_are_scored_on_the_session(
     await workspace.give_feedback(Helpfulness(rating=2), on=ChainTarget(correlation_id=chain))
     await workspace.give_feedback(Helpfulness(rating=3), on=RunTarget(run_id=run_id))
     await workspace.give_feedback(Accuracy(correct=True), on=FiringTarget(firing_id=run_id))
-    scores = await mirrored(workspace, FakeSink())
+    scores = await mirrored(workspace, InMemoryScoreSink())
     assert {(s.trace_id, s.session_id) for s in scores} == {(None, chain)}
     monkeypatch.setattr("reflexr.scores.mirror.FIRING_SEARCH", 0)
     traced, traced_run, _ = await fired(traced=True)
     await traced.give_feedback(Accuracy(correct=True), on=FiringTarget(firing_id=traced_run))
-    [missed, *_] = await mirrored(traced, FakeSink())
+    [missed, *_] = await mirrored(traced, InMemoryScoreSink())
     assert missed.trace_id is None  # its rule_fired was beyond the search
 
 
 async def test_mirroring_again_replaces_and_other_events_score_nothing() -> None:
     workspace, run_id, _ = await fired(traced=True)
     await workspace.give_feedback(Helpfulness(rating=5), on=RunTarget(run_id=run_id))
-    sink = FakeSink()
+    sink = InMemoryScoreSink()
     first = await mirrored(workspace, sink)
     second = await mirrored(workspace, sink)
     assert [s.id for s in first] == [s.id for s in second]
@@ -114,7 +115,7 @@ async def test_mirroring_again_replaces_and_other_events_score_nothing() -> None
 
 async def test_following_mirrors_feedback_as_it_is_given() -> None:
     workspace, run_id, _ = await fired(traced=True)
-    sink = FakeSink()
+    sink = InMemoryScoreSink()
     following = asyncio.create_task(FeedbackMirror(workspace, sink).follow())
     await workspace.give_feedback(Helpfulness(rating=1), on=RunTarget(run_id=run_id))
     for _ in range(100):
@@ -128,8 +129,8 @@ async def test_following_mirrors_feedback_as_it_is_given() -> None:
 
 
 async def test_score_configs_are_created_once() -> None:
-    store = FakeConfigStore("helpfulness.rating")
+    store = seeded("helpfulness.rating")
     assert await sync_score_configs(store, [Helpfulness]) == ["helpfulness.reason"]
     assert await sync_score_configs(store, [Helpfulness]) == []
-    created = await sync_score_configs(FakeConfigStore())
+    created = await sync_score_configs(seeded())
     assert {"helpfulness.rating", "accuracy.correct"} <= set(created)

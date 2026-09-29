@@ -32,6 +32,25 @@ reflexr connects to many things that change independently: storage engines, mode
 - **stackr** provides infrastructure behind protocol-level ports: OTLP, an OpenAI-compatible API through LiteLLM, a Postgres DSN, and S3-compatible storage. Applications depend on those contracts, not on the backends behind them.
 - The combined system composes adapters from each; no library depends on it.
 
+### Amendment (2026-09-29): evalr owns the score mapping and ports
+
+reflexr's `reflexr.scores` carried the feedback-to-score mapping and two ports, `ScoreSink` and `ScoreConfigStore`, identical to artifactr's, beside evalr's own score type, sink and mapping for evaluators' verdicts. Three copies could drift and split one score into two in Langfuse. evalr now owns them (its ADR-0011, from its issue #17), as this record's rule across the repositories already said of score sinks.
+
+- **evalr owns the mapping and the ports.** `reflexr.scores` calls evalr's `score_configs` and `score_values` with the feedback type's registered name as the `{type}`, and its `ScoreSink` and `ScoreConfigStore` are evalr's. evalr's mapping reproduces this one exactly for every way a feedback type declares a field, and a fixture in evalr pins it, so no score config in Langfuse changes.
+- **reflexr keeps the mirror and the adapters.** `FeedbackMirror`, which knows which trace or session a run's, a firing's or a chain's feedback belongs on, stays here, with its own score id namespace and ids, so mirroring again replaces the scores already in Langfuse. So do `LangfuseScores` and `LangfuseScoreConfigs`, which now pass evalr's `check_score_sink` and `check_score_config_store`. `sync_score_configs(store, types=None)` keeps its signature and syncs through evalr's.
+- **What changed for a score:**
+  - A score is evalr's `Score`. Where the feedback came from is its `source`, not its `metadata`; its `metadata` still returns the same keys, and Langfuse receives the same metadata.
+  - A sink has one method, `record(scores)`, in place of `send(score)`. The mirror records an envelope's scores at once.
+  - A yes or no is a bool, which `LangfuseScores` sends as 1 or 0, as before.
+- **The public names stay, re-exported.** `reflexr.scores` promised `Score`, `ScoreConfig`, `ScoreSink`, `ScoreConfigStore`, `ScoreDataType` and `MAX_TEXT` in its `__all__` and its reference, so it re-exports evalr's (`ScoreDataType` is evalr's `ScoreType`). `score_configs` and `score_values` stay reflexr's own, since they name scores by the registered name. A `ScoreConfig`'s `feedback_type` is now `type_name`.
+- **`reflexr.scores` needs evalr.** The `[langfuse]` extra now depends on evalr, as `[evals]` does, pinned by git revision until evalr is published ([ADR-0020](0020-evalr-shared-eval-kit.md)). The core, telemetry and workspace never import evalr; `tests/test_layering.py` lets `reflexr.scores` and `reflexr.langfuse` import it, beside `reflexr.evals`.
+
+| Port | Kind | Owned by | Adapters |
+|---|---|---|---|
+| `ScoreSink` and `ScoreConfigStore` | driven | evalr | `LangfuseScores` and `LangfuseScoreConfigs` (`[langfuse]`); evalr's in-memory adapters |
+
+artifactr made the same change to `artifactr.scores`, in its ADR-0038.
+
 ## Options considered
 
 ### Option A: Ports and adapters, enforced by layering tests (chosen)

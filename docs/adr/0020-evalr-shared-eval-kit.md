@@ -40,6 +40,10 @@ Writing this twice would drift. Putting it in core would saddle every user with 
 
 - **`LogFeedbackSource` skips feedback an `EvaluatorActor` gave,** unless `include_evaluators=True`. It yielded every piece of the type, so a dataset collected from a workspace where an `EvaluatorAction` judges runs held the judge's own verdicts as labels, and training or calibrating the judge on it was circular. Comparing evaluators with each other or with people asks for them explicitly, and `given_by` tells the examples apart.
 
+### Amendment (2026-09-29): the score mirror uses evalr too
+
+reflexr no longer depends on evalr only through `[evals]`. The score mapping and ports moved to evalr ([ADR-0025](0025-ports-and-adapters.md), as amended), so `reflexr.scores` and `reflexr.langfuse` import it, and the `[langfuse]` extra depends on evalr. The core, telemetry and workspace still never import it. The git pin in `[tool.uv.sources]` serves both extras and moves in its own pull requests, as before.
+
 ## Options considered
 
 | Option | Duplication | Dependencies for users who don't evaluate | Works without the other library |

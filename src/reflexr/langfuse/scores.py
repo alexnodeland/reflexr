@@ -1,13 +1,13 @@
-"""Langfuse behind the score ports: scores and score configs (ADR-0038)."""
+"""Langfuse behind evalr's score ports: scores and score configs (ADR-0025)."""
 
 import asyncio
 import re
+from collections.abc import Sequence
 from typing import Any
 
+from evalr.core import Score, ScoreConfig
 from langfuse import Langfuse
 from langfuse.api import ConfigCategory, ScoreConfigDataType
-
-from reflexr.scores import Score, ScoreConfig
 
 _CONFIG_NAME = re.compile(r"^[A-Za-z0-9_ .()-]{1,35}$")
 """The score config names Langfuse accepts."""
@@ -19,7 +19,8 @@ class LangfuseScores:
     """A ``ScoreSink`` that records scores in Langfuse.
 
     Scores are queued by the Langfuse client and sent in the background; a score whose id
-    Langfuse already has replaces it.
+    Langfuse already has replaces it. A yes or no is sent as 1 or 0, and the score's metadata
+    (where the feedback came from) as Langfuse's.
 
     Args:
         client: The Langfuse client.
@@ -28,26 +29,33 @@ class LangfuseScores:
     def __init__(self, client: Langfuse) -> None:
         self._client = client
 
-    async def send(self, score: Score) -> None:
-        """Queue a score for Langfuse."""
-        target: dict[str, Any] = {
-            "score_id": score.id,
-            "trace_id": score.trace_id,
-            "session_id": score.session_id,
-            "timestamp": score.timestamp,
-            "metadata": dict(score.metadata),
-        }
-        match score.data_type, score.value:
-            case ("NUMERIC" | "BOOLEAN") as data_type, float() as number:
-                self._client.create_score(
-                    name=score.name, value=number, data_type=data_type, **target
-                )
-            case ("CATEGORICAL" | "TEXT") as data_type, str() as text:
-                self._client.create_score(
-                    name=score.name, value=text, data_type=data_type, **target
-                )
-            case _:
-                raise ValueError(f"a {score.data_type} score cannot be {score.value!r}")
+    async def record(self, scores: Sequence[Score], /) -> None:
+        """Queue scores for Langfuse.
+
+        Raises:
+            ValueError: If a score's value is not of its data type; none of the scores is queued.
+        """
+        for arguments in [_arguments(score) for score in scores]:
+            self._client.create_score(**arguments)
+
+
+def _arguments(score: Score) -> dict[str, Any]:
+    """A score as the Langfuse client's ``create_score`` takes it."""
+    arguments: dict[str, Any] = {
+        "name": score.name,
+        "score_id": score.id,
+        "trace_id": score.trace_id,
+        "session_id": score.session_id,
+        "timestamp": score.timestamp,
+        "metadata": score.metadata,
+    }
+    match score.data_type, score.value:
+        case ("NUMERIC" | "BOOLEAN") as data_type, int() | float() as number:
+            return {**arguments, "value": float(number), "data_type": data_type}
+        case ("CATEGORICAL" | "TEXT") as data_type, str() as text:
+            return {**arguments, "value": text, "data_type": data_type}
+        case _:
+            raise ValueError(f"a {score.data_type} score cannot be {score.value!r}")
 
 
 class LangfuseScoreConfigs:

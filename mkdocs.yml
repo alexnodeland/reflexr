@@ -106,6 +106,7 @@ plugins:
             - https://docs.python.org/3/objects.inv
             - https://docs.pydantic.dev/latest/objects.inv
             - https://ai.pydantic.dev/objects.inv
+            - https://evalr.alexnodeland.com/objects.inv
           options:
             docstring_style: google
             extensions:

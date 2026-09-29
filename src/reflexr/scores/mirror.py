@@ -8,11 +8,15 @@ Each ``feedback_given`` becomes one score per scored field, attached to the trac
 
 Score ids are derived from the envelope's id and the field, so mirroring the same log again
 replaces scores instead of duplicating them: the mirror can always start over from the
-beginning.
+beginning. The scores are evalr's ``Score``, with no evaluator, and where the feedback came from
+in their ``source``.
 """
 
 import uuid
 from typing import assert_never
+
+import evalr.core
+from evalr.core import Score, ScoreConfigStore, ScoreSink
 
 from reflexr.core import (
     ChainTarget,
@@ -26,7 +30,6 @@ from reflexr.core import (
     feedback_types,
 )
 from reflexr.scores.mapping import score_configs, score_values
-from reflexr.scores.ports import Score, ScoreConfigStore, ScoreSink
 from reflexr.telemetry import parse_traceparent
 from reflexr.workspace import Workspace
 
@@ -38,7 +41,7 @@ FIRING_SEARCH = 1000
 
 
 class FeedbackMirror:
-    """Sends a workspace's feedback to a score sink.
+    """Records a workspace's feedback in a score sink.
 
     Args:
         workspace: The workspace to follow; any actor's handle will do, since it only reads.
@@ -58,10 +61,10 @@ class FeedbackMirror:
             await self.mirror(envelope)
 
     async def mirror(self, envelope: Envelope) -> list[Score]:
-        """Send the scores of one envelope, and return them; other events send nothing."""
+        """Record the scores of one envelope, and return them; other events record nothing."""
         scores = await self.scores(envelope)
-        for score in scores:
-            await self._sink.send(score)
+        if scores:
+            await self._sink.record(scores)
         return scores
 
     async def scores(self, envelope: Envelope) -> list[Score]:
@@ -77,7 +80,7 @@ class FeedbackMirror:
         if feedback_type is None:
             return []
         trace_id = await self._trace(event)
-        metadata = {
+        source = {
             "tenant_id": self._workspace.tenant_id,
             "workspace_id": self._workspace.workspace_id,
             "feedback_type": event.feedback_type,
@@ -96,7 +99,7 @@ class FeedbackMirror:
                 # Feedback joins the chain of what it is about, so the envelope's chain is it.
                 session_id=None if trace_id else envelope.correlation_id,
                 timestamp=envelope.ts,
-                metadata=metadata,
+                source=source,
             )
             for config, value in score_values(feedback_type, event.value)
         ]
@@ -136,14 +139,8 @@ async def sync_score_configs(
         types: The feedback types; every registered type by default.
 
     Returns:
-        The names of the configs created.
+        The names of the configs created. A config the store has by name is left as it is.
     """
-    existing = set(await store.names())
-    created: list[str] = []
-    for feedback_type in types if types is not None else list(feedback_types().values()):
-        for config in score_configs(feedback_type):
-            if config.name not in existing:
-                await store.create(config)
-                existing.add(config.name)
-                created.append(config.name)
-    return created
+    chosen = types if types is not None else list(feedback_types().values())
+    configs = [config for feedback_type in chosen for config in score_configs(feedback_type)]
+    return await evalr.core.sync_score_configs(store, configs)
