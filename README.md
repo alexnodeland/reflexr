@@ -16,7 +16,7 @@
 
 It is the sibling of [artifactr](https://github.com/alexnodeland/artifactr): artifactr is for live chats in which people and agents edit shared artifacts, and reflexr is for workflows that events start. The two share their conventions (tenants and workspaces, envelopes, actors, storage, the protocol's shape), and neither imports the other.
 
-> **Status:** pre-release. reflexr is built in the phases tracked by [RFC-0001](docs/rfcs/0001-v0.1-implementation-plan.md); everything but the reference implementation is on `main`, and the API may change before the first release. Work from before the rebuild is on the `archive/pre-rebuild` branch.
+> **Status:** pre-release. v0.1 is built, as planned in [RFC-0001](docs/rfcs/0001-v0.1-implementation-plan.md), and not yet released; the API may change before the first release. Work from before the rebuild is on the `archive/pre-rebuild` branch.
 
 ## Why
 

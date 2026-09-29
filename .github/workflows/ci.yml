@@ -76,5 +76,5 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-      - run: uv sync --locked --all-extras --all-groups
+      - run: uv sync --locked --all-extras --all-groups --all-packages
       - run: uv run zensical build --strict --clean

@@ -190,6 +190,7 @@ nav:
           - adr/0028-schedules-and-cronsim.md
           - adr/0029-metric-detail-through-sdk-views.md
           - adr/0030-sql-storage.md
+          - adr/0031-the-reference-implementations-events-and-rules.md
           - adr/0032-documentation-site.md
           - adr/0033-publishing-the-documentation-site.md
           - adr/0036-typed-run-failures.md
