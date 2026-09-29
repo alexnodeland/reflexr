@@ -42,6 +42,27 @@ The reference implementation's runbook needed `input_types={"decide": ...}` for 
 - **A checkpoint whose next node has no known type starts over.** Input types now depend on the edges as well as the nodes: an edge into a decision that gains a transform leaves it untyped, with the same nodes. Such a checkpoint is ignored, as one from a changed graph is, rather than failing the attempt.
 - **The format version stays 1.** What a checkpoint holds, and how, is unchanged. Every checkpoint written before resumes as it did: its next node had a type, from an annotation or `input_types`, and has the same one now, since those are read as before and explicit types win. Inference only adds checkpoints at boundaries that had none. A build from before this change would not know an inferred node's type, and would fail to resume a checkpoint saved before one, but no release predates the change; from now on, a build that meets such a checkpoint starts over.
 
+### Amendment (2026-09-29): checkpoints read back as they were, or are not saved
+
+Only decisions checked that their saved inputs read back as the class they had ([#58](https://github.com/alexnodeland/reflexr/issues/58), found while implementing [#47](https://github.com/alexnodeland/reflexr/issues/47)). Two kinds of node read their input type as `Any`, which pydantic writes a model down through as a dict, and reads back as that dict:
+
+- **`g.stream` steps.** pydantic-graph wraps the stream function in a closure annotated with the builder's type variables, and pydantic takes a type variable for `Any`.
+- **`BaseNode` classes in a `GraphBuilder` graph.** Their step, a `NodeStep`, is annotated `Any`.
+
+A model given to one was saved as a dict and resumed as one. The stream step failed on it, and the `NodeStep` refused it as not its node class, on every retry until the run was dead-lettered. A state field typed `Any` holding a model did the same. Separately, a checkpoint whose values no longer validated, as when a type gains a required field between deploys, raised `ValidationError` on every retry.
+
+Decided:
+
+- **A checkpoint is saved only if what it restores reads back as it was.** The state, the graph's inputs and the next node's inputs are each written down and read back through their types, and the boundary is saved only if each reads back equal to what it was. Before a decision the inputs must also be of the same class, as before, since a decision routes by class. Otherwise the boundary is skipped, and a retry resumes from the one before, as for inputs that do not serialize. A value that reads back equal as another class is saved before any other node: `3` given to a step typed `float` resumes as `3.0`, as it did.
+- **A checkpoint that does not validate starts over,** as one from a changed graph does, rather than failing every retry. Every checkpoint saved from now on reads back, so one that does not holds a type that changed since it was saved, which is the case a changed graph is. The alternative, a permanent `RunFailure` with a stable reason, would dead-letter the run at once for a change the graph can recover from, at the cost at-least-once execution already allows: repeating steps.
+- **The attempt's span says why a checkpoint was not resumed.** Before, a discarded checkpoint left no trace. Now the `invoke_workflow` span gets a `reflexr.checkpoint.discarded` event, with `reflexr.checkpoint.reason`:
+  - `format`: not a checkpoint, or another version of the format
+  - `graph_changed`: the graph's nodes changed
+  - `untyped`: the next node's input type is no longer known
+  - `invalid`: a saved value no longer validates, with `reflexr.checkpoint.error` saying where and why, without the values, which may be private
+- **Stream steps' input types are not inferred.** pydantic-graph 2.51 keeps the stream function only in the closure that wraps it, so its annotation is not exposed cleanly. `input_types` names the type, and a stream step given JSON values (strings, numbers, and lists and dicts of them) reads back without it. A `BaseNode`'s input is an instance of its own class, which pydantic-graph does expose (`NodeStep.node_type`); typing it is left until a graph needs it, since pydantic would have to write the node down.
+- **The format version stays 1.** No release has written a checkpoint that this change stops writing.
+
 ## Options considered
 
 | Option | Repeated work after a failure | Infrastructure |
@@ -60,3 +81,4 @@ The reference implementation's runbook needed `input_types={"decide": ...}` for 
 
 1. [x] Implement `GraphAction` checkpoints and the fork and join spike (RFC-0001 phase 3).
 2. [x] Infer decisions' and forks' input types ([#47](https://github.com/alexnodeland/reflexr/issues/47)).
+3. [x] Save only checkpoints that read back as they were, and start over from those that no longer validate ([#58](https://github.com/alexnodeland/reflexr/issues/58)).

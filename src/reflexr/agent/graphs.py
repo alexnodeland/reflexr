@@ -13,6 +13,10 @@ A step's input type is its ``StepContext`` annotation. Decisions and forks run n
 own, so their input is whatever the edges into them carry: when every such edge comes, with no
 transform, from a step with a return annotation, the graph's start, or a decision whose type is
 known, and they all carry the same type, that is the node's input type.
+
+A checkpoint is saved only if what it restores reads back as it was: the state, the graph's
+inputs and the next node's inputs. A checkpoint that cannot be resumed, because the graph or
+its types changed since, is ignored and the run starts over; the attempt's span says why.
 """
 
 import inspect
@@ -21,6 +25,7 @@ from contextlib import suppress
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, TypeVar, get_args, get_origin, get_type_hints
 
+from opentelemetry import trace
 from pydantic import JsonValue, PydanticSchemaGenerationError, TypeAdapter, ValidationError
 from pydantic_core import PydanticSerializationError
 from pydantic_graph import (
@@ -55,6 +60,13 @@ _STACK: TypeAdapter[tuple[ForkStackItem, ...]] = TypeAdapter(tuple[ForkStackItem
 type _Batch = Sequence[GraphTask] | EndMarker[Any]
 """What a step boundary yields: the tasks that run next, or the graph's output."""
 
+DISCARDED = "reflexr.checkpoint.discarded"
+"""The event on an attempt's span when the run's checkpoint cannot be resumed."""
+
+
+class _Unwritable(Exception):
+    """A value its type would not read back as the same value, so it is not saved."""
+
 
 @dataclass
 class GraphAction[D, S, I, O]:
@@ -69,8 +81,11 @@ class GraphAction[D, S, I, O]:
     graph's input type from its start, or the type of a decision before it. It stays unknown
     when an edge has a transform, or comes from a step with no return annotation (or ``Any``),
     a join or a fork, or when the edges carry different types. A boundary before a node whose
-    input type is unknown is not saved, and neither is one before a decision whose inputs do
-    not read back as the class they had, since a decision routes by class.
+    input type is unknown is not saved.
+
+    Nor is a boundary whose state, graph inputs or next inputs would not read back equal to
+    what they were, such as a model given to a stream step or a ``BaseNode``, whose input types
+    say ``Any``, or given to a decision as a subclass, since a decision routes by class.
 
     Args:
         graph: A graph built with ``GraphBuilder``, whose deps type is ``Reaction[D]``.
@@ -78,9 +93,10 @@ class GraphAction[D, S, I, O]:
         state: Builds the graph's initial state from the reaction; defaults to the state
             type's constructor with no arguments.
         inputs: Builds the graph's inputs from the reaction; defaults to None.
-        input_types: Input types by node id, for the nodes whose type reflexr cannot infer,
-            such as a decision after a transform. An explicit type always wins over an
-            annotation or an inferred type, and decisions after the node infer from it.
+        input_types: Input types by node id, for the nodes whose type reflexr cannot read or
+            infer, such as a decision after a transform, or a stream step, whose input type
+            reads as ``Any``. An explicit type always wins over an annotation or an inferred
+            type, and decisions after the node infer from it.
     """
 
     graph: Graph[S, Reaction[D], I, O]
@@ -103,17 +119,18 @@ class GraphAction[D, S, I, O]:
         saved = self._restorable(reaction.run.checkpoint)
         if saved is not None and "output" in saved:
             return saved["output"]  # the graph finished; only recording the run did not
-        state_adapter = TypeAdapter(graph.state_type)
-        input_adapter = TypeAdapter(graph.input_type)
-        if saved is None:
+        resumed = None if saved is None else self._resume(saved, reaction.run.attempts)
+        if resumed is None:
             state = self.state(reaction) if self.state else graph.state_type()
             # Without an inputs builder the graph gets None, which its input type must accept.
-            inputs = self.inputs(reaction) if self.inputs else input_adapter.validate_python(None)
+            inputs = (
+                self.inputs(reaction)
+                if self.inputs
+                else TypeAdapter(graph.input_type).validate_python(None)
+            )
             pending: EndMarker[O] | Sequence[GraphTaskRequest] | None = None
         else:
-            state = state_adapter.validate_python(saved["state"])
-            inputs = input_adapter.validate_python(saved["inputs"])
-            pending = self._requests(saved, reaction.run.attempts)
+            state, inputs, pending = resumed
         tracer = reaction.workspace.telemetry.tracer
         async with graph.iter(state=state, deps=reaction, inputs=inputs, infer_name=False) as run:
             if pending is None:
@@ -133,21 +150,38 @@ class GraphAction[D, S, I, O]:
 
         A checkpoint from another version of the format, or from a graph whose nodes have
         changed since, or whose next node's input type is no longer known, cannot be resumed;
-        the run starts over, as any retry may.
+        the run starts over, as any retry may, and the attempt's span says why.
         """
-        if not isinstance(checkpoint, dict):
-            return None
+        if checkpoint is None:
+            return None  # nothing saved yet
+        if not isinstance(checkpoint, dict) or checkpoint.get("v") != CHECKPOINT_VERSION:
+            return _discarded("format")
         saved: dict[str, Any] = checkpoint
-        if saved.get("v") != CHECKPOINT_VERSION:
-            return None
         if saved.get("nodes") != sorted(self.graph.nodes):
-            return None
+            return _discarded("graph_changed")
         # A node's inferred type depends on the edges into it, not only on the nodes, so a
         # checkpoint's next node may have no type now (an edge into it gained a transform).
         frontier: list[dict[str, Any]] = saved.get("frontier", [])
         if any(task["node_id"] not in self._types for task in frontier):
-            return None
+            return _discarded("untyped")
         return saved
+
+    def _resume(
+        self, saved: dict[str, Any], attempt: int
+    ) -> tuple[S, I, list[GraphTaskRequest]] | None:
+        """Read a checkpoint back, or return None to start over if it no longer validates.
+
+        Every checkpoint saved now reads back, so one that does not was saved before a type it
+        holds changed, or by a build that did not check.
+        """
+        graph = self.graph
+        try:
+            state = TypeAdapter(graph.state_type).validate_python(saved["state"])
+            inputs = TypeAdapter(graph.input_type).validate_python(saved["inputs"])
+            requests = self._requests(saved, attempt)
+        except ValidationError as error:
+            return _discarded("invalid", error)
+        return state, inputs, requests
 
     def _requests(self, saved: dict[str, Any], attempt: int) -> list[GraphTaskRequest]:
         requests: list[GraphTaskRequest] = []
@@ -179,37 +213,38 @@ class GraphAction[D, S, I, O]:
     def _snapshot(self, run: GraphRun[S, Reaction[D], O], inputs: I, batch: _Batch) -> JsonValue:
         """Return a checkpoint of the run at this boundary, or None if it is not safe to save."""
         graph = self.graph
-        saved: dict[str, Any] = {
-            "v": CHECKPOINT_VERSION,
-            "nodes": sorted(graph.nodes),
-            "inputs": TypeAdapter(graph.input_type).dump_python(inputs, mode="json"),
-            "state": TypeAdapter(graph.state_type).dump_python(run.state, mode="json"),
-        }
+        header: dict[str, Any] = {"v": CHECKPOINT_VERSION, "nodes": sorted(graph.nodes)}
         if isinstance(batch, EndMarker):
-            saved["output"] = TypeAdapter(graph.output_type).dump_python(batch.value, mode="json")
-            return saved
+            return {
+                **header,
+                "inputs": TypeAdapter(graph.input_type).dump_python(inputs, mode="json"),
+                "state": TypeAdapter(graph.state_type).dump_python(run.state, mode="json"),
+                "output": TypeAdapter(graph.output_type).dump_python(batch.value, mode="json"),
+            }
         if not _quiescent(graph, batch) or batch[0].node_id not in self._types:
             return None
         [task] = batch
         if isinstance(task.inputs, Iterator):
             return None  # writing a one-shot iterator down would use it up before the node runs
-        adapter = self._types[task.node_id]
+        # What cannot be written down, or would not read back as it was, is not saved: the run
+        # resumes from an earlier step instead. A decision routes by class, so its inputs must
+        # read back as the class they had, not only as equal.
+        decision = isinstance(graph.nodes[task.node_id], Decision)
         try:
-            dumped = adapter.dump_python(task.inputs, mode="json", warnings="error")
-        except PydanticSerializationError:
-            return None  # inputs its type cannot write down: resume from an earlier step
-        if isinstance(graph.nodes[task.node_id], Decision) and not _reads_back(
-            adapter, dumped, task.inputs
-        ):
-            return None  # a decision routes by class, so a resumed one must get the same class
-        saved["frontier"] = [
-            {
-                "node_id": task.node_id,
-                "inputs": dumped,
-                "fork_stack": _STACK.dump_python(task.fork_stack, mode="json"),
+            return {
+                **header,
+                "inputs": _write(TypeAdapter(graph.input_type), inputs),
+                "state": _write(TypeAdapter(graph.state_type), run.state),
+                "frontier": [
+                    {
+                        "node_id": task.node_id,
+                        "inputs": _write(self._types[task.node_id], task.inputs, decision),
+                        "fork_stack": _STACK.dump_python(task.fork_stack, mode="json"),
+                    }
+                ],
             }
-        ]
-        return saved
+        except _Unwritable:
+            return None
 
 
 def _input_adapters(
@@ -336,12 +371,37 @@ def _output_type(graph: Graph[Any, Any, Any, Any], source: NodeID, known: Mappin
     return None  # a join's reduced value, or a fork's items
 
 
-def _reads_back(adapter: TypeAdapter[Any], dumped: Any, inputs: object) -> bool:
-    """Whether saved inputs validate back into the class they had."""
+def _write(adapter: TypeAdapter[Any], value: object, same_class: bool = False) -> JsonValue:
+    """Write a value down as JSON, if it reads back equal to it (and of its class, if asked).
+
+    Raises:
+        _Unwritable: If it does not: a model saved through a type that says ``Any`` reads back
+            as a dict, and a subclass as the class its type declares.
+    """
     try:
-        return type(adapter.validate_python(dumped)) is type(inputs)
-    except ValidationError:
-        return False
+        dumped = adapter.dump_python(value, mode="json", warnings="error")
+        back = adapter.validate_python(dumped)
+    except (PydanticSerializationError, ValidationError) as error:
+        raise _Unwritable from error
+    if back != value or (same_class and type(back) is not type(value)):
+        raise _Unwritable
+    return dumped
+
+
+def _discarded(reason: str, error: ValidationError | None = None) -> None:
+    """Say on the attempt's span why the run's checkpoint is not resumed, and resume nothing.
+
+    The reason is ``format``, ``graph_changed``, ``untyped`` or ``invalid``. What did not
+    validate is described by location and message, without the values, which may be private.
+    """
+    attributes = {a.CHECKPOINT_REASON: reason}
+    if error is not None:
+        problems = [
+            f"{'.'.join(map(str, e['loc'])) or 'the value'}: {e['msg']}"
+            for e in error.errors(include_input=False)
+        ]
+        attributes[a.CHECKPOINT_ERROR] = f"{error.title}: {'; '.join(problems)}"
+    trace.get_current_span().add_event(DISCARDED, attributes)
 
 
 def _quiescent(graph: Graph[Any, Any, Any, Any], batch: Sequence[GraphTask]) -> bool:

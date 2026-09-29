@@ -1,6 +1,6 @@
 """Graph actions: pydantic-graph graphs, checkpointed at safe step boundaries and resumed."""
 
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Annotated, Any
@@ -10,12 +10,12 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel, Field, JsonValue
-from pydantic_graph import Graph, GraphBuilder, StepContext
+from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext, StepContext
 from pydantic_graph.join import reduce_list_append
 
 from reflexr import F, RetryPolicy, Rule, SourceActor, by, on, run
 from reflexr.agent import GraphAction
-from reflexr.agent.graphs import CHECKPOINT_VERSION
+from reflexr.agent.graphs import CHECKPOINT_VERSION, DISCARDED
 from reflexr.core import RunProgressed
 from reflexr.workspace import (
     InMemoryStorage,
@@ -195,31 +195,43 @@ async def test_a_finished_graph_is_not_run_again(clock: FakeClock) -> None:
 
 
 @pytest.mark.parametrize(
-    "checkpoint",
+    ("checkpoint", "reason"),
     [
-        "not a checkpoint",
-        {"v": 0},
-        {"v": CHECKPOINT_VERSION, "nodes": ["other"]},
+        ("not a checkpoint", "format"),
+        ({"v": 0}, "format"),
+        ({"v": CHECKPOINT_VERSION, "nodes": ["other"]}, "graph_changed"),
         # The same nodes, but the next one's input type is not known (as when an edge into a
         # decision has gained a transform since).
-        {
-            "v": CHECKPOINT_VERSION,
-            "nodes": sorted(runbook.nodes),
-            "frontier": [{"node_id": "__start__"}],
-        },
+        (
+            {
+                "v": CHECKPOINT_VERSION,
+                "nodes": sorted(runbook.nodes),
+                "frontier": [{"node_id": "__start__"}],
+            },
+            "untyped",
+        ),
     ],
 )
 async def test_checkpoints_this_graph_cannot_resume_start_over(
-    checkpoint: JsonValue, clock: FakeClock
+    checkpoint: JsonValue, reason: str, clock: FakeClock
 ) -> None:
+    spans = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(spans))
     deps = Flaky()
-    it = await setup(GraphAction(runbook, inputs=service), deps, clock)
+    it = await setup(GraphAction(runbook, inputs=service), deps, clock, provider)
     await it.reactor.evaluate()
     [pending] = await it.workspace.runs()
     async with it.storage.transaction(ACME) as transaction:
         await transaction.save_runs([pending.model_copy(update={"checkpoint": checkpoint})])
     await it.reactor.settle()
     assert deps.ran == ["diagnose", "mitigate", "report"]
+    # The attempt's span says why; the first attempt of a run has no checkpoint to discard.
+    [attempt] = [s for s in spans.get_finished_spans() if s.name == "invoke_workflow deploys"]
+    assert [dict(e.attributes or {}) for e in attempt.events if e.name == DISCARDED] == [
+        {"reflexr.checkpoint.reason": reason}
+    ]
+    provider.shutdown()
 
 
 # ─── a fork and a join ───────────────────────────────────────────────────────
@@ -918,3 +930,223 @@ async def test_branches_of_a_fork_without_a_join_are_never_saved(clock: FakeCloc
     assert done.output == "A"
     # Before the fork is safe, and its input type is spread's return type; inside it is not.
     assert await progress(it.workspace) == ["__start__", "spread", "__end__"]
+
+
+# ─── what would not read back as it was ──────────────────────────────────────
+
+st = GraphBuilder(
+    name="explained",
+    state_type=Notes,
+    deps_type=Reaction[Flaky],
+    input_type=str,
+    output_type=list[str],
+)
+
+
+@st.step
+async def find(ctx: StepContext[Notes, Reaction[Flaky], str]) -> Finding:
+    ctx.deps.deps.step("find")
+    return Finding(service=ctx.inputs, cause="bad deploy")
+
+
+@st.stream
+async def explain(ctx: StepContext[Notes, Reaction[Flaky], Finding]) -> AsyncIterator[str]:
+    ctx.deps.deps.step("explain")
+    yield ctx.inputs.service
+    yield ctx.inputs.cause
+
+
+@st.step
+async def echo(ctx: StepContext[Notes, Reaction[Flaky], str]) -> str:
+    return ctx.inputs
+
+
+lines = st.join(reduce_list_append, initial_factory=list[str], node_id="lines")
+st.add(
+    st.edge_from(st.start_node).to(find),
+    st.edge_from(find).to(explain),
+    st.edge_from(explain).map(fork_id="each").to(echo),
+    st.edge_from(echo).to(lines),
+    st.edge_from(lines).to(st.end_node),
+)
+explained = st.build()
+
+
+async def test_a_model_given_to_a_stream_step_is_not_saved(clock: FakeClock) -> None:
+    # A stream step's input type reads as a type variable, which pydantic takes for Any: find's
+    # Finding would be saved as a dict, and every retry of explain would fail on it.
+    deps = Flaky(fail_once={"explain"})
+    it = await setup(GraphAction(explained, inputs=service), deps, clock)
+    await it.reactor.settle()
+    clock.advance(1)
+    await it.reactor.settle()
+    [done] = await it.workspace.runs()
+    assert (done.status, done.attempts) == ("succeeded", 2)
+    assert isinstance(done.output, list)
+    assert sorted(map(str, done.output)) == ["auth", "bad deploy"]
+    assert "find" not in await progress(it.workspace)
+    assert deps.ran == ["find", "explain", "find", "explain"]
+
+
+async def test_a_stream_steps_input_type_can_be_given(clock: FakeClock) -> None:
+    deps = Flaky(fail_once={"explain"})
+    action = GraphAction(explained, inputs=service, input_types={"explain": Finding})
+    it = await setup(action, deps, clock)
+    await it.reactor.settle()
+    clock.advance(1)
+    await it.reactor.settle()
+    [done] = await it.workspace.runs()
+    assert (done.status, done.attempts) == ("succeeded", 2)
+    assert "find" in await progress(it.workspace)
+    assert deps.ran == ["find", "explain", "explain"]  # resumed after find
+
+
+@dataclass
+class Escalate(BaseNode[Notes, Reaction[Flaky], str]):
+    service: str
+
+    async def run(self, ctx: GraphRunContext[Notes, Reaction[Flaky]]) -> End[str]:
+        ctx.deps.deps.step("escalate")
+        return End(f"escalated {self.service}")
+
+
+bn = GraphBuilder(
+    name="escalation", state_type=Notes, deps_type=Reaction[Flaky], input_type=str, output_type=str
+)
+
+
+@bn.step
+async def judge(ctx: StepContext[Notes, Reaction[Flaky], str]) -> Escalate:
+    ctx.deps.deps.step("judge")
+    return Escalate(service=ctx.inputs)
+
+
+bn.add(bn.edge_from(bn.start_node).to(judge), bn.node(Escalate))
+escalation = bn.build()
+
+
+async def test_a_base_node_given_as_input_is_not_saved(clock: FakeClock) -> None:
+    # A BaseNode's input type says Any, so it would be saved as a dict, which is not the node.
+    deps = Flaky(fail_once={"escalate"})
+    it = await setup(GraphAction(escalation, inputs=service), deps, clock)
+    await it.reactor.settle()
+    clock.advance(1)
+    await it.reactor.settle()
+    [done] = await it.workspace.runs()
+    assert (done.status, done.output) == ("succeeded", "escalated auth")
+    assert "judge" not in await progress(it.workspace)
+    assert deps.ran == ["judge", "escalate", "judge", "escalate"]
+
+
+@dataclass
+class Loose:
+    finding: Any = None
+
+
+ls = GraphBuilder(
+    name="loose", state_type=Loose, deps_type=Reaction[Flaky], input_type=str, output_type=str
+)
+
+
+@ls.step
+async def remember(ctx: StepContext[Loose, Reaction[Flaky], str]) -> str:
+    ctx.deps.deps.step("remember")
+    ctx.state.finding = Finding(service=ctx.inputs, cause="bad deploy")
+    return ctx.inputs
+
+
+@ls.step
+async def recall(ctx: StepContext[Loose, Reaction[Flaky], str]) -> str:
+    ctx.deps.deps.step("recall")
+    return f"{ctx.inputs}: {ctx.state.finding.cause}"
+
+
+ls.add(
+    ls.edge_from(ls.start_node).to(remember),
+    ls.edge_from(remember).to(recall),
+    ls.edge_from(recall).to(ls.end_node),
+)
+loose = ls.build()
+
+
+async def test_a_state_that_would_not_read_back_is_not_saved(clock: FakeClock) -> None:
+    deps = Flaky(fail_once={"recall"})
+    it = await setup(GraphAction(loose, inputs=service), deps, clock)
+    await it.reactor.settle()
+    clock.advance(1)
+    await it.reactor.settle()
+    [done] = await it.workspace.runs()
+    assert (done.status, done.output) == ("succeeded", "auth: bad deploy")
+    # A Finding in a field that says Any would be saved as a dict, which recall cannot use, so
+    # the retry resumes from before remember.
+    assert await progress(it.workspace) == ["__start__", "__end__"]
+    assert deps.ran == ["remember", "recall", "remember", "recall"]
+
+
+def discarded(spans: InMemorySpanExporter) -> list[dict[str, Any]]:
+    """The attributes of every checkpoint-discarded event, in order."""
+    return [
+        dict(event.attributes or {})
+        for span in spans.get_finished_spans()
+        for event in span.events
+        if event.name == DISCARDED
+    ]
+
+
+def saved_before_mitigate(**changes: Any) -> dict[str, Any]:
+    """A checkpoint of the runbook after diagnose, as it saves one, with some values changed."""
+    task = {"node_id": "mitigate", "inputs": {"service": "auth", "cause": "x"}, "fork_stack": []}
+    return {
+        "v": CHECKPOINT_VERSION,
+        "nodes": sorted(runbook.nodes),
+        "inputs": "auth",
+        "state": {"log": ["diagnosed"]},
+        "frontier": [task | changes.pop("task", {})],
+        **changes,
+    }
+
+
+@pytest.mark.parametrize(
+    ("checkpoint", "error"),
+    [
+        pytest.param(saved_before_mitigate(), None, id="valid"),
+        pytest.param(
+            saved_before_mitigate(state={"log": 5}),
+            "Notes: log: Input should be a valid list",
+            id="state",
+        ),
+        pytest.param(
+            saved_before_mitigate(task={"inputs": {"service": "auth"}}),
+            "Finding: cause: Field required",
+            id="inputs",
+        ),
+        pytest.param(
+            saved_before_mitigate(task={"fork_stack": "not a stack"}),
+            "tuple[ForkStackItem, ...]: the value: Input should be a valid tuple",
+            id="fork stack",
+        ),
+    ],
+)
+async def test_a_checkpoint_that_no_longer_validates_starts_over(
+    checkpoint: dict[str, Any], error: str | None, clock: FakeClock
+) -> None:
+    spans = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(spans))
+    deps = Flaky()
+    it = await setup(GraphAction(runbook, inputs=service), deps, clock, provider)
+    await it.reactor.evaluate()
+    [pending] = await it.workspace.runs()
+    async with it.storage.transaction(ACME) as transaction:
+        await transaction.save_runs([pending.model_copy(update={"checkpoint": checkpoint})])
+    await it.reactor.settle()
+    [done] = await it.workspace.runs()
+    assert done.status == "succeeded"
+    if error is None:  # a checkpoint that validates resumes: diagnose does not run again
+        assert (deps.ran, discarded(spans)) == (["mitigate", "report"], [])
+    else:
+        assert deps.ran == ["diagnose", "mitigate", "report"]
+        assert discarded(spans) == [
+            {"reflexr.checkpoint.reason": "invalid", "reflexr.checkpoint.error": error}
+        ]
+    provider.shutdown()
