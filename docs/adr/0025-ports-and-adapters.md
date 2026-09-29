@@ -43,7 +43,7 @@ reflexr's `reflexr.scores` carried the feedback-to-score mapping and two ports, 
   - A sink has one method, `record(scores)`, in place of `send(score)`. The mirror records an envelope's scores at once.
   - A yes or no is a bool, which `LangfuseScores` sends as 1 or 0, as before.
 - **The public names stay, re-exported.** `reflexr.scores` promised `Score`, `ScoreConfig`, `ScoreSink`, `ScoreConfigStore`, `ScoreDataType` and `MAX_TEXT` in its `__all__` and its reference, so it re-exports evalr's (`ScoreDataType` is evalr's `ScoreType`). `score_configs` and `score_values` stay reflexr's own, since they name scores by the registered name. A `ScoreConfig`'s `feedback_type` is now `type_name`.
-- **`reflexr.scores` needs evalr.** The `[langfuse]` extra now depends on evalr, as `[evals]` does, pinned by git revision until evalr is published ([ADR-0020](0020-evalr-shared-eval-kit.md)). The core, telemetry and workspace never import evalr; `tests/test_layering.py` lets `reflexr.scores` and `reflexr.langfuse` import it, beside `reflexr.evals`.
+- **`reflexr.scores` needs evalr.** The `[langfuse]` extra now depends on evalr, as `[evals]` does, pinned by git revision until evalr is published ([ADR-0020](0020-evalr-shared-eval-kit.md)). The core, telemetry and workspace never import evalr; `tests/test_layering.py` lets `reflexr.scores` and `reflexr.langfuse` import it, beside `reflexr.evals`. oncall uses the `[langfuse]` extra, so its image installs git for uv to fetch evalr, as docplan's does.
 
 | Port | Kind | Owned by | Adapters |
 |---|---|---|---|
