@@ -195,12 +195,15 @@ class ReflexrMcp:
 
         @server.tool()
         async def rule_status(workspace_id: str, ctx: Context) -> str:
-            """Show each rule's cursor, how far it is behind the log, and its generation."""
+            """Show each rule's cursor, lag behind the log and generation, and if it is disabled."""
             workspace = await self._workspace(ctx, workspace_id)
             head = await workspace.head_seq()
             progress = await workspace.rule_progress()
+            rules = self._workspaces.rules
+            disabled = {name for name, rule in rules.items() if not rule.enabled}
             lines = [
                 f"- {name}: cursor {p.cursor}, {head - p.cursor} behind, generation {p.generation}"
+                + (", disabled" if name in disabled else "")
                 for name, p in progress.items()
             ]
             return "\n".join(lines) or "No rule has evaluated this workspace yet."

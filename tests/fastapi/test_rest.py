@@ -9,7 +9,7 @@ from fastapi import FastAPI
 import reflexr.fastapi
 import reflexr.workspace
 from reflexr.workspace import Reactor, Workspaces
-from tests.fastapi.conftest import build
+from tests.fastapi.conftest import build, spike
 
 ERROR = {"type": "service.error", "service": "auth"}
 
@@ -64,6 +64,7 @@ async def test_reads_filter_the_log_and_list_rules_runs_and_schedules(app: App) 
     [status] = (await client.get("/workspaces/prod/rules")).json()
     assert status == {
         "rule": "spike",
+        "enabled": True,
         "cursor": status["cursor"],
         "lag": 0,
         "generation": 0,
@@ -84,7 +85,14 @@ async def test_reads_filter_the_log_and_list_rules_runs_and_schedules(app: App) 
     assert (fresh["last_tick"], fresh["next_tick"]) == (None, None)
     unevaluated = (await client.get("/workspaces/empty/rules")).json()
     assert unevaluated == [
-        {"rule": "spike", "cursor": 0, "lag": 0, "generation": 0, "dead_letters": 0}
+        {
+            "rule": "spike",
+            "enabled": True,
+            "cursor": 0,
+            "lag": 0,
+            "generation": 0,
+            "dead_letters": 0,
+        }
     ]
 
 
@@ -119,6 +127,16 @@ async def test_commands_are_idempotent_and_map_rejections_to_statuses(app: App) 
         "seq": 2,
         "id": recorded.json()["outcome"]["id"],
     }
+
+
+async def test_the_rule_status_says_whether_a_rule_is_enabled() -> None:
+    application, _, _ = build(rules=[spike.model_copy(update={"enabled": False})])
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test/v1") as client:
+        for _ in range(2):
+            await client.post("/workspaces/prod/events", json={"event": ERROR})
+        [status] = (await client.get("/workspaces/prod/rules")).json()
+    assert (status["enabled"], status["cursor"], status["lag"]) == (False, 0, 2)
 
 
 async def test_requests_are_authenticated_and_authorized(app: App) -> None:

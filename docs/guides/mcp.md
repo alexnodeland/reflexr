@@ -72,7 +72,7 @@ The server's instructions tell the client what it is talking to: event logs, one
 | `publish_event(workspace_id, event, id=None, correlation_id=None)` | Publishes an event, an object with its `type` and fields. An `id` already in the log adds nothing; `correlation_id` joins the causal chain that event started, and naming a later event of a chain is refused. |
 | `read_events(workspace_id, after_seq=0, types=None, limit=50)` | Reads envelopes, oldest first, as JSON lines |
 | `list_rules()` | The rules every workspace evaluates, as JSON |
-| `rule_status(workspace_id)` | Each rule's cursor, how far it is behind the log, and its generation |
+| `rule_status(workspace_id)` | Each rule's cursor, how far it is behind the log, and its generation, and whether it is disabled |
 | `replay_rule(workspace_id, rule, from_seq=0, mode="rebuild")` | Evaluates a rule again from `from_seq`: rebuilds its state quietly, or refires ([The reactor](reactor.md#replaying-a-rule)) |
 | `list_runs(workspace_id, rule=None, status=None, limit=20)` | Runs, newest first, as JSON lines |
 | `get_run(workspace_id, run_id)` | One run: its status, attempts, error, output and checkpoint |

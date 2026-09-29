@@ -229,6 +229,20 @@ async def test_authorize_decides_which_workspaces_a_client_may_use(
     assert await secret.head_seq() == head  # nothing was written
 
 
+async def test_the_rule_status_says_which_rules_are_disabled() -> None:
+    off = deploys.model_copy(update={"enabled": False})
+    workspaces = Workspaces(InMemoryStorage(), events=[Deploy], rules=[off])
+    workspace = await workspaces.open("acme", "prod", actor=CLAUDE)
+    await workspace.publish(Deploy(service="auth"))
+    mcp = ReflexrMcp(workspaces, resolve=Identity().resolve)
+    try:
+        async with Client(mcp.server) as client:
+            _, status = await call(client, "rule_status", workspace_id="prod")
+    finally:
+        await mcp.aclose()
+    assert status == "- deploys: cursor 0, 1 behind, generation 0, disabled"
+
+
 async def test_the_http_app_and_lifespan(server: Server) -> None:
     mcp, _, _ = server
     assert mcp.http_app() is not None

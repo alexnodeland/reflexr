@@ -71,6 +71,9 @@ class RuleStatus(_Body):
     """A rule's progress in a workspace."""
 
     rule: RuleName
+    enabled: bool
+    """Whether the reactor evaluates the rule. A disabled rule's cursor holds."""
+
     cursor: int
     lag: int
     """How many envelopes the rule is behind the head of the log."""
@@ -198,18 +201,19 @@ def reflexr_router(
 
     @router.get("/workspaces/{workspace_id}/rules")
     async def list_rule_status(workspace: Workspace = current_workspace) -> list[RuleStatus]:
-        """Return each rule's cursor, lag behind the head, generation and dead letters."""
+        """Return whether each rule is enabled, and its cursor, lag, generation and dead letters."""
         head = await workspace.head_seq()
         progress = await workspace.rule_progress()
         letters = await workspace.dead_letters()
         statuses: list[RuleStatus] = []
-        for name in workspaces.rules:
+        for name, rule in workspaces.rules.items():
             cursor, generation = (
                 (progress[name].cursor, progress[name].generation) if name in progress else (0, 0)
             )
             statuses.append(
                 RuleStatus(
                     rule=name,
+                    enabled=rule.enabled,
                     cursor=cursor,
                     lag=head - cursor,
                     generation=generation,

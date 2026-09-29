@@ -145,7 +145,7 @@ Enabling it again resumes it from its cursor: it evaluates everything that arriv
 await workspace.replay_rule("error-spike", from_seq=await workspace.head_seq(), mode="rebuild")
 ```
 
-A disabled rule's lag grows in the workspace's rule status, but the `reflexr.evaluation.lag` metric leaves it out, since it is behind by choice.
+The workspace's rule status, `GET /v1/workspaces/{workspace_id}/rules` or the MCP `rule_status` tool, says whether each rule is enabled. A disabled rule's lag grows there, but the `reflexr.evaluation.lag` metric leaves it out, since it is behind by choice.
 
 ## Execution
 

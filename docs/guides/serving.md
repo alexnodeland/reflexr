@@ -181,7 +181,7 @@ Every path is relative to the router's prefix, `/v1` above:
 | `GET /workspaces/{workspace_id}/runs?rule=&scope_key=&status=&limit=` | Runs, newest first |
 | `GET /workspaces/{workspace_id}/runs/{run_id}` | One run: its status, attempts, error, output, checkpoint and each attempt's trace id |
 | `GET /workspaces/{workspace_id}/dead-letters?rule=` | The envelopes rules could not evaluate, oldest first |
-| `GET /workspaces/{workspace_id}/rules` | Each rule's `cursor`, its `lag` behind the head of the log, its `generation`, and its number of `dead_letters` |
+| `GET /workspaces/{workspace_id}/rules` | Whether each rule is `enabled`, and its `cursor`, its `lag` behind the head of the log, its `generation`, and its number of `dead_letters` |
 | `GET /workspaces/{workspace_id}/schedules` | Each schedule that ticks in the workspace, with its `last_tick` and `next_tick` |
 | `GET /rules` | The registered rules, as JSON |
 | `GET /schedules` | The registered schedules |
@@ -189,10 +189,10 @@ Every path is relative to the router's prefix, `/v1` above:
 A dashboard follows a rule's health with `GET /v1/workspaces/prod/rules`:
 
 ```json
-[{"rule": "error-spike", "cursor": 4, "lag": 3, "generation": 0, "dead_letters": 0}]
+[{"rule": "error-spike", "enabled": true, "cursor": 4, "lag": 3, "generation": 0, "dead_letters": 0}]
 ```
 
-A lag that keeps growing means no reactor is evaluating the workspace, or it cannot keep up. Page through a long log with `after_seq`, starting from the last `seq` you have.
+A lag that keeps growing means no reactor is evaluating the workspace, or it cannot keep up, unless the rule is [disabled](reactor.md#disabling-a-rule). Page through a long log with `after_seq`, starting from the last `seq` you have.
 
 ## The WebSocket stream
 

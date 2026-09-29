@@ -35,7 +35,7 @@ Rejections carry a stable `type` and a `message`: `not_found`, `invalid_state`, 
 | `POST /v1/workspaces/{workspace_id}/events` | Publish `{"event": {...}, "id"?}`, or `{"events": [{"event", "id"?}, ...], "correlation_id"?}` atomically and in order. A convenience for producers and webhooks, equivalent to `publish` commands; the response lists each `published` outcome. |
 | `GET /v1/workspaces/{workspace_id}/events?after_seq=&limit=&type=` | A page of the log, as envelopes. `type` may repeat. |
 | `GET /v1/rules` | The registered rules, as JSON. |
-| `GET /v1/workspaces/{workspace_id}/rules` | Each rule's `cursor`, `lag` behind the head, `generation`, and `dead_letters` count. |
+| `GET /v1/workspaces/{workspace_id}/rules` | Whether each rule is `enabled`, and its `cursor`, `lag` behind the head, `generation`, and `dead_letters` count. A disabled rule's cursor holds. |
 | `GET /v1/workspaces/{workspace_id}/runs?rule=&scope_key=&status=&limit=` | Runs, newest first. |
 | `GET /v1/workspaces/{workspace_id}/runs/{run_id}` | A run, with its attempts, last error and checkpoint. |
 | `GET /v1/workspaces/{workspace_id}/dead-letters?rule=` | The envelopes rules could not evaluate. |
