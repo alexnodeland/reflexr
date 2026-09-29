@@ -22,9 +22,49 @@ Run `make` on its own to list every command:
 | `make typecheck` | Type-check with pyright (strict for `src/`) |
 | `make test` | Run the tests with the 100% branch-coverage gate |
 | `make check` | Everything CI runs |
-| `make pg-up`, `make test-pg`, `make pg-down` | Start PostgreSQL in Docker, run the tests on it as well as SQLite, and stop it |
 | `make schema` | Regenerate `schemas/reflexr.rules.v1.json` from the rule models (a test fails if it drifts) |
+| `make pg-up` / `make pg-down` | Start or stop PostgreSQL for the SQL tests, from `compose.yaml` (needs Docker) |
+| `make app-up` | Build and start oncall, the reference app, on PostgreSQL, at <http://localhost:8000> |
+| `make test-pg` | Run the tests on PostgreSQL as well as SQLite |
 | `make changelog` | Regenerate `CHANGELOG.md` from commit history |
+
+### Testing SQL storage on PostgreSQL
+
+The storage tests run against in-memory storage, SQLite and PostgreSQL. SQLite needs nothing extra, and it alone reaches the coverage gate. The PostgreSQL tests run only when `REFLEXR_TEST_POSTGRES_URL` is set (otherwise pytest reports them as deselected), and CI always runs them. Locally:
+
+```bash
+make pg-up          # compose.yaml's postgres:17, on localhost:54330 (PG_PORT=... to move it)
+make test-pg        # the whole suite, with the PostgreSQL tests included
+make pg-down
+```
+
+To use another database, set `REFLEXR_TEST_POSTGRES_URL` yourself, for example `postgresql+asyncpg://user:password@host:5432/db`. Each test creates its own schema there and drops it afterwards.
+
+### The contributor stack and the dev container
+
+`compose.yaml` holds what developing reflexr needs ([ADR-0021][adr-0021]): PostgreSQL by default, and oncall, the reference app, under the `app` profile.
+
+```bash
+docker compose up -d --wait                  # PostgreSQL, as make pg-up does
+docker compose --profile app up -d --build   # and oncall on :8000 (make app-up)
+```
+
+oncall picks its model from `ONCALL_MODEL` and the provider's key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) in your environment, or calls a LiteLLM proxy when `ONCALL_LITELLM_URL` is set. `ONCALL_PORT` moves it off port 8000 on the host.
+
+The dev container (`.devcontainer/`) is built on the same file: PostgreSQL runs beside it, and `REFLEXR_TEST_POSTGRES_URL` points at it, so `make test` includes the PostgreSQL tests.
+
+**With stackr.** The observability and LLM infrastructure (the OpenTelemetry Collector, Grafana, Langfuse, LiteLLM) lives in [stackr](https://github.com/alexnodeland/stackr), not here. Its stack runs on a Docker network named `stackr` ([ADR-0037][adr-0037]):
+
+- The dev container joins that network when it exists as the container is created, and sets `OTEL_EXPORTER_OTLP_ENDPOINT` to stackr's Collector and `LANGFUSE_BASE_URL` to its Langfuse. `.devcontainer/initialize.sh` checks on the host, so start stackr first, or rebuild the container after starting it.
+- oncall joins it with the stackr overlay, and sends its traces, metrics and logs to stackr's Collector:
+
+  ```bash
+  docker compose -f compose.yaml -f compose.stackr.yaml --profile app up -d --build
+  ```
+
+  To file runs in stackr's Langfuse as well, set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to a project's keys. To route the triage agent through stackr's LiteLLM proxy, set `ONCALL_LITELLM_URL=http://litellm:4000` and `ONCALL_LITELLM_KEY` to a tenant's key.
+
+CI validates every Compose file without starting containers.
 
 ## How work flows: trunk-based development
 
@@ -98,6 +138,8 @@ By contributing, you agree that your contributions are licensed under the [MIT L
 
 [adr-0012]: docs/adr/0012-trunk-based-development-with-rfcs-and-adrs.md
 [adr-0013]: docs/adr/0013-quality-gates.md
+[adr-0021]: docs/adr/0021-contributor-compose-and-dev-containers.md
+[adr-0037]: docs/adr/0037-joining-stackrs-network.md
 [adrs]: docs/adr/README.md
 [architecture]: docs/architecture.md
 [code-of-conduct]: CODE_OF_CONDUCT.md

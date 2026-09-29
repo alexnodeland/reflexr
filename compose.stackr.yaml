@@ -1,0 +1,23 @@
+# Run oncall on stackr's network, reporting to stackr's services (ADR-0037). Use it with
+# compose.yaml while stackr's stack runs (its network is named `stackr`):
+#
+#   docker compose -f compose.yaml -f compose.stackr.yaml --profile app up -d
+#
+# LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY come from the host: the keys of a project in
+# stackr's Langfuse. To route the triage agent through stackr's LiteLLM proxy, set
+# ONCALL_LITELLM_URL=http://litellm:4000 and ONCALL_LITELLM_KEY to a tenant's key on the host.
+
+services:
+  oncall:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      LANGFUSE_BASE_URL: http://langfuse-web:3000
+      LANGFUSE_PUBLIC_KEY:
+      LANGFUSE_SECRET_KEY:
+    networks:
+      - default
+      - stackr
+
+networks:
+  stackr:
+    external: true

@@ -1,0 +1,51 @@
+# The contributor stack (ADR-0021): what developing reflexr needs, and no more.
+#
+#   docker compose up -d --wait              PostgreSQL for the tests (make pg-up)
+#   docker compose --profile app up -d       and oncall, the reference app, on :8000
+#
+# The observability and LLM infrastructure (the OpenTelemetry Collector, Grafana, Langfuse and
+# LiteLLM) lives in stackr (ADR-0023). When stackr's stack runs, add compose.stackr.yaml to put
+# oncall on stackr's network and send its telemetry to stackr's Collector (ADR-0037):
+#
+#   docker compose -f compose.yaml -f compose.stackr.yaml --profile app up -d
+
+name: reflexr
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: reflexr
+    ports:
+      - "127.0.0.1:${REFLEXR_PG_PORT:-54330}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  oncall:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: examples/oncall/Dockerfile
+    environment:
+      ONCALL_DATABASE_URL: postgresql+asyncpg://postgres:reflexr@postgres:5432/postgres
+      # Passed through from the host when set there.
+      ONCALL_MODEL:
+      ONCALL_ENVIRONMENT:
+      ANTHROPIC_API_KEY:
+      OPENAI_API_KEY:
+      ONCALL_LITELLM_URL:
+      ONCALL_LITELLM_MODEL:
+      ONCALL_LITELLM_KEY:
+    ports:
+      - "127.0.0.1:${ONCALL_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/')"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    depends_on:
+      postgres:
+        condition: service_healthy
