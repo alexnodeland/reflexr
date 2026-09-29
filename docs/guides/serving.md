@@ -183,8 +183,8 @@ Every path is relative to the router's prefix, `/v1` above:
 | `GET /workspaces/{workspace_id}/dead-letters?rule=` | The envelopes rules could not evaluate, oldest first |
 | `GET /workspaces/{workspace_id}/rules` | Whether each rule is `enabled`, and its `cursor`, its `lag` behind the head of the log, its `generation`, and its number of `dead_letters` |
 | `GET /workspaces/{workspace_id}/schedules` | Each schedule that ticks in the workspace, with its `last_tick` and `next_tick` |
-| `GET /rules` | The registered rules, as JSON |
-| `GET /schedules` | The registered schedules |
+| `GET /rules` | The registered rules, as JSON: the same for every tenant, and visible to every authenticated caller ([Multi-tenancy and security](security.md#tenants-and-workspaces)) |
+| `GET /schedules` | The registered schedules, likewise |
 
 A dashboard follows a rule's health with `GET /v1/workspaces/prod/rules`:
 

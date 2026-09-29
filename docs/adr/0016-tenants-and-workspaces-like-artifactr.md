@@ -15,6 +15,10 @@
 - The workspace layer is the **`reflexr.workspace`** package (formerly planned as `reflexr.stream`), and envelopes carry `workspace_id`.
 - Everything else in ADR-0004 stands: sequencing under the workspace's lock, idempotent publishing by event id, reflexr's own facts in the same log, and the event type allowlist.
 
+### Amendment (2026-09-29): rules and schedules are shared by every tenant
+
+- **Rule and schedule definitions are the application's code, not a tenant's data.** They belong to `Workspaces`, every tenant's workspaces evaluate the same ones, and every authenticated client of any tenant may read them all: `GET /rules`, `GET /schedules` and the MCP `list_rules` tool return them whole, including the tenant and workspace ids a schedule targets, and `authorize` is not asked, since they name no workspace. This is by design, and the security guide and the protocol say so plainly; an application that must hide them does not mount those routes for some clients. What a rule does in a workspace (its cursor, state, runs and dead letters) stays the workspace's.
+
 ## Options considered
 
 | Option | Matches artifactr | Ordering | Concepts |

@@ -20,7 +20,7 @@ The reactor works the same way: it evaluates each workspace under its own lease,
 
 A workspace is also the unit of access. Anyone who may use a workspace reads its whole log, over REST, the WebSocket or MCP, so put events with different audiences in different workspaces.
 
-Rules, schedules and the event allowlist belong to the `Workspaces` object, not to a tenant: every tenant's workspaces evaluate the same rules, and any authenticated caller can list them with `GET /rules`, `GET /schedules` or the `list_rules` tool. Keep secrets out of rule names and descriptions.
+Rules, schedules and the event allowlist are your application's code, not a tenant's data. They belong to the `Workspaces` object, and every tenant's workspaces evaluate the same rules. So, by design, **every authenticated client of any tenant can read every rule and schedule definition**: `GET /rules`, `GET /schedules` and the MCP `list_rules` tool return them whole, with their names, descriptions, conditions, scopes, action names and timetables, and `authorize` is not asked, since they name no workspace. A schedule that targets particular workspaces lists their tenant and workspace ids, so other tenants see those too. Keep secrets and anything tenant-specific out of rules and schedules, such as a customer's name in a rule's description or condition. If some clients must not see them, do not mount those routes for them, or put them behind a check of your own.
 
 Reading or writing another tenant's data through the public API is a vulnerability; please [report it](../project/security.md) if you find a way.
 
