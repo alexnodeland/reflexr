@@ -57,7 +57,11 @@ Events are published through a workspace handle, which is bound to a tenant, a w
 from reflexr import SourceActor
 from reflexr.workspace import InMemoryStorage, Workspaces
 
-workspaces = Workspaces(InMemoryStorage(), events=[ServiceError, Deploy, Heartbeat, IncidentOpened])
+workspaces = Workspaces(
+    InMemoryStorage(),
+    events=[ServiceError, Deploy, Heartbeat],  # what clients may publish
+    emitted=[IncidentOpened],  # what only runs may publish
+)
 workspace = await workspaces.open("acme", "prod", actor=SourceActor(name="monitoring"))
 
 published = await workspace.publish(
@@ -73,6 +77,7 @@ print(again.envelope.seq, again.duplicate)  # 1 True
 
 - **Publishing is idempotent by id.** Publishing an id that is already in the log appends nothing and returns the logged envelope with `duplicate=True`, so a producer can retry safely. Use an id the source already has, such as the monitoring system's alert id; without one, reflexr generates an `evt_…` id. The logged event wins: a second event published with the same id is not compared with the first.
 - **`events=` is an allowlist.** Publishing a type the workspaces were not given is rejected with `NotFound`, even if the type is registered elsewhere in the process, so clients cannot publish arbitrary types. Leave `events` out to accept every registered type.
+- **`emitted=` lists the types only runs may publish**, such as the incident a triage agent opens. A run's actions can publish them; a client, over REST, the WebSocket, MCP or a handle of your own, is refused with `Forbidden` ([ADR-0027](../adr/0027-executing-runs.md)).
 - **`publish_many`** publishes several events atomically and in order: all of them are logged, or none.
 
 Producers outside the process publish over HTTP, the WebSocket or MCP, which all end in the same `publish` ([Serving over REST and WebSocket](serving.md), [External agents over MCP](mcp.md)).
@@ -141,7 +146,7 @@ reflexr records what it decides and does in the same log, as events of its own. 
 | `rule_fired` | `RuleFired` | `rule`, `scope`, `scope_key`, `firing_id`, `matched` | A rule's condition held for a scope; `matched` lists the `seq` of every envelope that made it hold |
 | `rule_errored` | `RuleErrored` | `rule`, `seq`, `error` | A rule could not evaluate an envelope, which is dead-lettered for that rule alone |
 | `rule_reset` | `RuleReset` | `rule`, `generation`, `reason`, `from_seq`, `silent_through` | A rule's definition changed (`"changed"`) or someone replayed it (`"replayed"`) |
-| `run_started` | `RunStarted` | `run_id`, `rule`, `scope_key`, `attempt` | An attempt of a run began |
+| `run_started` | `RunStarted` | `run_id`, `rule`, `scope`, `scope_key`, `attempt` | An attempt of a run began; `scope` holds the scope's field values, as on `rule_fired` |
 | `run_progressed` | `RunProgressed` | `run_id`, `rule`, `step` | A graph run completed a step and saved a checkpoint |
 | `run_retrying` | `RunRetrying` | `run_id`, `rule`, `attempt`, `error`, `next_attempt_at`, `reason` | An attempt failed, and the run will be tried again. `reason` is a stable code for why, such as `timeout`, when there is one |
 | `run_succeeded` | `RunSucceeded` | `run_id`, `rule`, `output` | A run finished |

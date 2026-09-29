@@ -96,7 +96,7 @@ EventContext(emit=[IncidentOpened])  # emit_event accepts incident.opened, and n
 EventContext()  # read_events only
 ```
 
-A call to emit another type, or fields that do not validate, is refused with a message the model can act on, and nothing is published ([Agents](actions.md#agents)). Separately, `Workspaces(events=[...])` is an allowlist for everyone, runs included: publishing a type that is not listed raises `NotFound`, even if the type is registered elsewhere in the process. reflexr's own events can never be published by anyone; trying raises `Forbidden`.
+A call to emit another type, or fields that do not validate, is refused with a message the model can act on, and nothing is published ([Agents](actions.md#agents)). Separately, `Workspaces(events=[...])` is an allowlist for everyone, runs included: publishing a type that is not listed raises `NotFound`, even if the type is registered elsewhere in the process. `Workspaces(emitted=[...])` goes the other way, for the types only workflows should produce: runs may publish them, and a client that tries is refused with `Forbidden`, so nobody outside a workflow can forge the incident an agent opens. reflexr's own events can never be published by anyone; trying raises `Forbidden`.
 
 ## Usage limits and timeouts
 

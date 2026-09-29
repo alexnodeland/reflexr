@@ -47,6 +47,7 @@ Every operation a client can perform is a command, and every command is attribut
 ## What clients can publish
 
 - **The event allowlist.** `Workspaces(storage, events=[ServiceError, Deploy, Heartbeat])` accepts those types only. Publishing any other type is rejected with `not_found`, even a type registered elsewhere in the process, so clients cannot publish arbitrary types. Without `events`, every registered type is accepted; pass the list in production.
+- **Run-only events.** `Workspaces(emitted=[IncidentOpened])` names types that only runs may publish. A client, over REST, the WebSocket, MCP or a handle of your own that no run caused, is refused with `forbidden`, so an incident, a verdict or anything else your workflows produce cannot be forged from outside.
 - **reflexr's own events are never published.** `rule_fired`, `run_succeeded`, `feedback_given`, `tick` and the rest are recorded by reflexr alone, and publishing one is rejected with `forbidden`, so no client can forge a firing, a run's outcome or a schedule's tick.
 - **Events are validated.** An event must match its type's schema, and unknown fields are rejected, so a producer's typo fails loudly rather than never matching a rule.
 - **Ids make publishing idempotent,** within a workspace. A replayed request with the same id appends nothing.

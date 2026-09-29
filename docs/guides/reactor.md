@@ -32,7 +32,7 @@ reactor = Reactor(workspaces, actions={"page": page}, deps=AppDeps(pager=pager))
 
 The reactor checks at construction that every rule's action is in `actions`, and raises `InvalidRule` if one is missing. Without `deps`, it is a `Reactor[None]`, and its actions receive a `Reaction[None]`.
 
-In a service, run `serve()` for as long as the process lives, for example as a task started in your application's lifespan. It ticks schedules, evaluates and executes in a loop, sleeping `poll_interval` (one second by default) between rounds, until it is cancelled:
+In a service, run `serve()` for as long as the process lives, for example as a task started in your application's lifespan. It ticks schedules, evaluates and executes in a loop, sleeping `poll_interval` (one second by default) between rounds, until it is cancelled. A round that fails, as when the database is briefly unreachable, is logged on the `reflexr.reactor` logger and the next round tries again; leases and transactions leave nothing half done ([ADR-0027](../adr/0027-executing-runs.md)):
 
 ```python
 task = asyncio.create_task(reactor.serve())

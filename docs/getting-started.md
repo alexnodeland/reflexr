@@ -114,7 +114,7 @@ from reflexr import SourceActor
 from reflexr.workspace import InMemoryStorage, Reactor, Workspaces
 
 workspaces = Workspaces(
-    InMemoryStorage(), events=[ServiceError, IncidentOpened], rules=[error_spike]
+    InMemoryStorage(), events=[ServiceError], emitted=[IncidentOpened], rules=[error_spike]
 )
 reactor = Reactor(workspaces, actions={"page": page})
 
@@ -138,7 +138,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-- `Workspaces(..., events=[...])` is an allowlist: clients cannot publish event types you did not list.
+- `events=[...]` is an allowlist: clients cannot publish event types you did not list. `emitted=[...]` lists the types only runs may publish, such as the incident the agent in step 5 opens; clients are refused them.
 - `open("acme", "prod", actor=monitor)` is the only place a tenant id enters, and every event published through the handle is attributed to its actor, here a monitoring system.
 - `settle()` evaluates and executes until nothing more happens now, which suits scripts and tests. A service runs `serve()` instead, which keeps going; see step 6.
 

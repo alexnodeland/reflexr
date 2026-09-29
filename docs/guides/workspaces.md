@@ -24,6 +24,7 @@ ada = monitoring.as_actor(UserActor(id="ada", name="Ada"))
 |---|---|---|
 | `storage` | required | Where workspaces are kept ([Storage](storage.md)) |
 | `events` | every registered type | The event types clients may publish: an allowlist ([Events and envelopes](events.md#publishing)) |
+| `emitted` | none | Event types only runs may publish, such as an incident an agent opens; clients are refused them |
 | `rules` | none | The [rules](rules.md) every workspace evaluates, checked when `Workspaces` is built |
 | `predicates` | none | The Python predicates rules refer to, by name |
 | `schedules` | none | The [schedules](schedules.md) that publish ticks into the workspaces |
@@ -47,7 +48,7 @@ batch = await monitoring.publish_many(
 )
 ```
 
-Both return `Published` results: the `envelope` that is in the log, and whether the id was a `duplicate`, so nothing was appended. Publishing is idempotent by id ([Events and envelopes](events.md#publishing)). Before appending, a handle checks that the event's type is in the allowlist (`NotFound` otherwise), that it is not one of reflexr's own events (`Forbidden`), and, for a run's handle, that the causal chain is not too deep (`DepthExceeded`). Each publish is traced as a `reflexr.publish {type}` span, whose trace context is stored on the envelope ([Observability](observability.md#spans)).
+Both return `Published` results: the `envelope` that is in the log, and whether the id was a `duplicate`, so nothing was appended. Publishing is idempotent by id ([Events and envelopes](events.md#publishing)). Before appending, a handle checks that the event's type is in the allowlist (`NotFound` otherwise), that it is not one of reflexr's own events (`Forbidden`), that a handle no run caused is not publishing a run-only type from `emitted` (`Forbidden`), and, for a run's handle, that the causal chain is not too deep (`DepthExceeded`). Each publish is traced as a `reflexr.publish {type}` span, whose trace context is stored on the envelope ([Observability](observability.md#spans)).
 
 The same `publish` is available to producers outside the process over [REST and the WebSocket](serving.md) and [MCP](mcp.md). Every surface hands commands to one handler, `execute(workspace, command)`, which you can call too:
 
