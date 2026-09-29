@@ -87,6 +87,12 @@ def chain_attributes(correlation_id: str) -> dict[str, str]:
     return {a.SESSION_ID: correlation_id, a.CONVERSATION_ID: correlation_id}
 
 
+def current_trace_id() -> str | None:
+    """Return the current span's trace id as 32 hex digits, if there is a valid span."""
+    context = get_current_span().get_span_context()
+    return f"{context.trace_id:032x}" if context.is_valid else None
+
+
 def current_traceparent() -> str | None:
     """Return the W3C trace context of the current span, if there is one."""
     carrier: dict[str, str] = {}

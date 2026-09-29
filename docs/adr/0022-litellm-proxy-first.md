@@ -11,7 +11,11 @@ Applications need to route agents across models and providers (model groups, fal
 ## Decision
 
 - **Proxy first.** The LiteLLM proxy runs in stackr and owns routing, budgets, rate limits and guardrails. reflexr reaches it through pydantic-ai's `LiteLLMProvider` and does not depend on the litellm package, as artifactr does ([artifactr ADR-0031](https://github.com/alexnodeland/artifactr/blob/main/docs/adr/0031-litellm-proxy-first.md)).
-- **A `[litellm]` extra** provides `litellm_model(...)`, per-request metadata (tenant, workspace, rule, run, chain session, trace id) added by the `EventContext` capability, guardrail policies per rule, and typed handling of guardrail blocks, which fail an attempt permanently rather than retrying it.
+- **A `[litellm]` extra** provides `litellm_model(...)`, per-request metadata (tenant, workspace, rule, run, chain session, trace id), guardrail policies per rule, and typed handling of guardrail blocks, which fail an attempt permanently rather than retrying it.
+
+### Amendment (2026-09-28): as built
+
+The metadata, key and guardrails are added by their own capability, **`LiteLLMGateway`**, beside `EventContext`, as artifactr's is ([artifactr ADR-0043](https://github.com/alexnodeland/artifactr/blob/main/docs/adr/0043-the-litellm-adapter.md)). In `before_model_request` it adds LiteLLM `metadata` (tenant, workspace, rule, scope, run, the chain as `session_id`, the person whose event fired the rule as `trace_user_id`, the run's trace as `existing_trace_id`, and tags), the W3C trace context, the rule's `guardrails` from a `GuardrailPolicy(tenant, workspace, rule)`, and the tenant's key from a `TenantKey(tenant)`. A guardrail's HTTP 400 becomes `GuardrailBlocked`, a permanent `RunFailure` ([ADR-0036](0036-typed-run-failures.md)) with the reason `guardrail_blocked`, so the run is dead-lettered without retrying; it is recognised in `on_model_request_error` and, for streamed requests, in `wrap_run_event_stream`.
 - **Each tenant is a LiteLLM team**, with virtual keys, budgets and rate limits. The application supplies the key for a tenant through a callback. Keys never appear in the log or on spans.
 
 ## Options considered
@@ -30,4 +34,4 @@ Applications need to route agents across models and providers (model groups, fal
 
 ## Action items
 
-1. [ ] Implement RFC-0002 phase B6, and the proxy in stackr.
+1. [x] Implement RFC-0002 phase B6 (the `[litellm]` extra), and the proxy in stackr.
