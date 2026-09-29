@@ -3,8 +3,9 @@
 import asyncio
 import contextlib
 import json
+import logging
 import re
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 from typing import Any, Literal
 
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
@@ -73,6 +74,26 @@ def run_uri(tenant_id: TenantId, workspace_id: WorkspaceId, run_id: str) -> str:
     return f"reflexr://{tenant_id}/{workspace_id}/runs/{run_id}"
 
 
+@contextlib.contextmanager
+def _logging_left_alone() -> Generator[None]:
+    """Put the root logger's handlers and level back as they were when the block ends.
+
+    The MCP SDK's ``MCPServer`` calls ``logging.basicConfig`` as it is built, which has no
+    option to skip it: if the root logger has no handlers yet, the whole process then logs at
+    INFO through a rich handler. Logging is the application's to configure, so the handlers the
+    block added are removed and closed, and the level restored.
+    """
+    root = logging.getLogger()
+    handlers, level = list(root.handlers), root.level
+    try:
+        yield
+    finally:
+        for added in [handler for handler in root.handlers if handler not in handlers]:
+            root.removeHandler(added)
+            added.close()
+        root.setLevel(level)
+
+
 class ReflexrMcp:
     """An MCP server over reflexr workspaces.
 
@@ -81,7 +102,8 @@ class ReflexrMcp:
     attributed to the client's :class:`~reflexr.core.ExternalAgentActor`.
 
     The MCP SDK traces each request itself; the server adds the tenant, workspace and actor to
-    those spans.
+    those spans. Building the SDK's server configures logging for the whole process; this
+    server undoes that, so logging stays the application's.
 
     Args:
         workspaces: Opens tenant-scoped workspaces, and holds the rules.
@@ -108,12 +130,13 @@ class ReflexrMcp:
         self._authorize = authorize
         self._bus = bus or InMemorySubscriptionBus()
         self._watchers: dict[tuple[TenantId, WorkspaceId], asyncio.Task[None]] = {}
-        self.server = MCPServer(
-            name=name,
-            instructions=INSTRUCTIONS,
-            subscriptions=self._bus,
-            middleware=[self._check_subscriptions],
-        )
+        with _logging_left_alone():
+            self.server = MCPServer(
+                name=name,
+                instructions=INSTRUCTIONS,
+                subscriptions=self._bus,
+                middleware=[self._check_subscriptions],
+            )
         self._register()
 
     def http_app(self, **options: Any) -> Starlette:

@@ -247,3 +247,10 @@ Every outgoing frame goes through one bounded outbox per connection. A client to
 Command deduplication is per process in v0.1: behind a load balancer, a retried command that reaches another process runs again. Publishing with an event id is idempotent everywhere, because the log itself remembers ids.
 
 Each WebSocket connection is a `reflexr.stream` span, and counted in the `reflexr.stream.connections` and `reflexr.stream.disconnects` metrics. When FastAPI is instrumented, as `configure_telemetry` does, each REST request's span is attributed to its tenant, workspace and actor too ([Observability](observability.md)).
+
+## Logging and startup output
+
+reflexr logs on its own loggers, `reflexr.reactor` for a failed reactor pass and `reflexr.fastapi` for a WebSocket command that failed. It sets no handlers, levels or environment variables unless the application asks, as `configure_telemetry` does when it adds its OTLP handler to the root logger ([Observability](observability.md)). Logging is the application's, as is what it prints at startup. Two of reflexr's dependencies would otherwise decide for it:
+
+- **The MCP SDK configures logging as its server is built.** `MCPServer` calls `logging.basicConfig`, which, when the root logger has no handlers yet, sends the whole process's logs through a rich handler at INFO. `ReflexrMcp` puts the root logger's handlers and level back as they were once the server is built, so mounting [MCP](mcp.md) leaves logging as the application set it, or as Python's defaults leave it. An `MCPServer` you build yourself still does it, unless your application configures logging first.
+- **pydantic-ai prints a banner on the first agent run** in a process, to a terminal or to a coding agent. It never prints one for an agent it instruments, such as one given `telemetry.capability()` ([Observability](observability.md)), nor under pytest or in CI. To turn it off, set `PYDANTIC_AI_NO_BANNER=1` in the environment, as in the service's container image or `.env`, or set `pydantic_ai.BANNER_ENABLED = False` in the application before its first agent run. reflexr sets neither, since both belong to the application.

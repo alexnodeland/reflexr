@@ -316,6 +316,6 @@ async def test_an_external_agent_publishes_over_mcp(workspaces: Workspaces) -> N
 
 ## Tips
 
-- pydantic-ai prints a banner when it first runs an agent without observability set up. Set `PYDANTIC_AI_NO_BANNER=1` in the test environment to keep output clean.
+- pydantic-ai never prints its first-run banner under pytest or in CI, so tests need nothing to keep their output clean. [Serving](serving.md#logging-and-startup-output) says when it does print one.
 - For storage beyond memory, run the same tests over [SQL storage](storage.md#sql-storage) on SQLite with a temporary file: reflexr's own workspace behaviour suite runs unchanged on in-memory storage, SQLite and PostgreSQL.
 - The [reference implementation](../reference-implementation.md) is tested end to end with a scripted model, the pattern to follow for a whole application.
