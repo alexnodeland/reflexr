@@ -21,6 +21,7 @@ This records, for reflexr, the decision made in [artifactr ADR-0032](https://git
   - the libraries' dashboards, provisioned by version
 
   It starts with Docker Compose. Kubernetes (Helm) and Terraform follow when needed.
+
 - **stackr also holds the application template:** a Copier template that scaffolds an application using artifactr, reflexr or both, wired to the stack, with telemetry, the LiteLLM gateway and evals already set up.
 - **The combined system** is built from that template, as a product.
 

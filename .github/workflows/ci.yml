@@ -101,3 +101,4 @@ jobs:
           enable-cache: true
       - run: uv sync --locked --all-extras --all-groups --all-packages
       - run: uv run zensical build --strict --clean
+      - run: uv run python scripts/check_site.py site

@@ -32,11 +32,11 @@ The reference implementation's runbook needed `input_types={"decide": ...}` for 
 
 - **A decision's or a fork's input is what the edges into it carry.** When every such edge has no transform and comes from a step with a return annotation (its return type), from the graph's start (the graph's input type), or from a decision whose type is known, and all of them carry the same type, that is the node's input type. Decisions can follow decisions, so inference repeats until it learns nothing more. Return annotations are read without `Annotated` metadata, as input annotations are: the graph never validated the value against those constraints, so a resumed run must not either.
 - **What inference cannot decide keeps the behaviour above**, no checkpoint before the node, unless `input_types` names its type:
-    - a transform on an edge into it, whose output type reflexr cannot read
-    - an edge from a step with no return annotation, or one that says `Any` or a type variable
-    - an edge from a join (its reduced value) or from a fork (its items, or its copies inside the fork)
-    - edges that carry different types
-    - an inferred type pydantic has no schema for, which is dropped so the graph still registers; an explicit type pydantic cannot handle still raises
+  - a transform on an edge into it, whose output type reflexr cannot read
+  - an edge from a step with no return annotation, or one that says `Any` or a type variable
+  - an edge from a join (its reduced value) or from a fork (its items, or its copies inside the fork)
+  - edges that carry different types
+  - an inferred type pydantic has no schema for, which is dropped so the graph still registers; an explicit type pydantic cannot handle still raises
 - **Explicit types win.** `input_types` overrides an annotation or an inference, and decisions after an explicitly typed one infer from the explicit type.
 - **Two guards where writing an inferred type down would change what runs.** A decision routes by class, and pydantic writes a subclass down as the class it is declared as, so the boundary before a decision is saved only when its inputs read back as the class they had. A one-shot iterator, such as a generator a step returns into a map fork, is never written down, since serializing it would use it up before the fork ran.
 - **A checkpoint whose next node has no known type starts over.** Input types now depend on the edges as well as the nodes: an edge into a decision that gains a transform leaves it untyped, with the same nodes. Such a checkpoint is ignored, as one from a changed graph is, rather than failing the attempt.

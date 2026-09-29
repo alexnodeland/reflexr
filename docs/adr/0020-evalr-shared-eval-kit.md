@@ -7,12 +7,14 @@
 ## Context
 
 Both artifactr and reflexr need the same evaluation machinery:
+
 - datasets built from typed feedback and synced to Langfuse and Hugging Face
 - offline judges trained on those datasets
 - experiments that score new agents, prompts and models
 - end-to-end measures
 
 Two kinds of evaluator must be honored equally:
+
 - **DSPy judges**, optimized with GEPA (DSPy's reflective, text-feedback optimizer)
 - **TypeSafe's Jev**, a "System One" model that returns typed decisions (choices, scores, yes/no) with calibrated probabilities
 

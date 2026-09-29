@@ -16,6 +16,7 @@ Applications need to route agents across models and providers (model groups, fal
 ### Amendment (2026-09-28): as built
 
 The metadata, key and guardrails are added by their own capability, **`LiteLLMGateway`**, beside `EventContext`, as artifactr's is ([artifactr ADR-0043](https://github.com/alexnodeland/artifactr/blob/main/docs/adr/0043-the-litellm-adapter.md)). In `before_model_request` it adds LiteLLM `metadata` (tenant, workspace, rule, scope, run, the chain as `session_id`, the person whose event fired the rule as `trace_user_id`, the run's trace as `existing_trace_id`, and tags), the W3C trace context, the rule's `guardrails` from a `GuardrailPolicy(tenant, workspace, rule)`, and the tenant's key from a `TenantKey(tenant)`. A guardrail's HTTP 400 becomes `GuardrailBlocked`, a permanent `RunFailure` ([ADR-0036](0036-typed-run-failures.md)) with the reason `guardrail_blocked`, so the run is dead-lettered without retrying; it is recognised in `on_model_request_error` and, for streamed requests, in `wrap_run_event_stream`.
+
 - **Each tenant is a LiteLLM team**, with virtual keys, budgets and rate limits. The application supplies the key for a tenant through a callback. Keys never appear in the log or on spans.
 
 ## Options considered

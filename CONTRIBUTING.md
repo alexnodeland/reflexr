@@ -27,7 +27,7 @@ Run `make` on its own to list every command:
 | `make pg-up` / `make pg-down` | Start or stop PostgreSQL for the SQL tests, from `compose.yaml` (needs Docker) |
 | `make app-up` | Build and start oncall, the reference app, on PostgreSQL, at <http://localhost:8000> |
 | `make test-pg` | Run the tests on PostgreSQL as well as SQLite |
-| `make docs` | Build the documentation site in strict mode, as CI does |
+| `make docs` | Build the documentation site in strict mode and check that its lists rendered, as CI does |
 | `make docs-serve` | Serve the documentation site with live reload at <http://localhost:8000> |
 | `make changelog` | Regenerate `CHANGELOG.md` from commit history |
 
@@ -106,6 +106,8 @@ Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`
 | **Architecture docs** | Updated in the same PR as the code they describe | [`docs/architecture.md`][architecture], [`docs/protocol.md`][protocol] |
 
 An RFC proposes; ADRs record what was decided; the architecture docs describe what exists now. A PR that changes behaviour described in the architecture docs updates them in the same PR, never in a later cleanup. Accepted ADRs are not edited; a changed decision gets a new ADR that supersedes or amends the old one.
+
+Markdown is read on GitHub and on the documentation site, which renders it with Python-Markdown. Put a blank line before every list, including one that follows a paragraph, and indent a nested item by its parent's text: two spaces after `-`, three after `1.`. `make docs` fails on a list that rendered as text.
 
 ## Quality gates
 

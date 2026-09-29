@@ -5,6 +5,7 @@
 **Created:** 2026-09-28
 **Discussion:** accepted on 2026-09-28
 **Siblings:**
+
 - [artifactr RFC-0002](https://github.com/alexnodeland/artifactr/blob/main/docs/rfcs/0002-observability-feedback-and-evaluation.md) makes the same changes in artifactr.
 - [evalr RFC-0001](https://github.com/alexnodeland/evalr/blob/main/docs/rfcs/0001-v0.1-implementation-plan.md) builds the shared eval kit.
 - [stackr RFC-0001](https://github.com/alexnodeland/stackr/blob/main/docs/rfcs/0001-v0.1-implementation-plan.md) builds the infrastructure template.
@@ -70,6 +71,7 @@ Because reflexr is still being built (RFC-0001), tracing, metrics and feedback l
 ### Langfuse (the `[langfuse]` extra)
 
 The same parts as artifactr's:
+
 - a span filter that keeps reflexr's spans and the database, HTTP and graph spans
 - a context helper setting the session to the chain, tags for the rule and tenant, and the trace name to the rule
 - a feedback mirror (run feedback to the run's trace, chain feedback to the session, firing feedback to the evaluation trace)
@@ -92,6 +94,7 @@ The same parts as artifactr's:
 ### LLM gateway (the `[litellm]` extra)
 
 As in artifactr:
+
 - `litellm_model(...)` through pydantic-ai's `LiteLLMProvider`
 - per-request metadata: tenant team key, rule, run, chain session, trace id
 - guardrail policies, set per **rule** in reflexr
