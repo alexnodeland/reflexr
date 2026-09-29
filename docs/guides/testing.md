@@ -267,7 +267,9 @@ def client(workspaces: Workspaces) -> Iterator[TestClient]:
 def test_a_client_publishes_and_follows_the_log(client: TestClient) -> None:
     error = {"type": "service.error", "service": "auth", "severity": 8}
     published = client.post("/v1/workspaces/prod/events", json={"event": error, "id": "alert-7"})
-    assert published.json() == [{"type": "published", "seq": 1, "id": "alert-7", "duplicate": False}]
+    assert published.json() == [
+        {"type": "published", "seq": 1, "id": "alert-7", "duplicate": False}
+    ]
 
     with client.websocket_connect(
         "/v1/workspaces/prod/stream", subprotocols=["reflexr.v1"]

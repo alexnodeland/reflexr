@@ -18,7 +18,7 @@ A Python library for reactive agent workflows: rules watch streams of events, an
 
 !!! note "Pre-release"
 
-    reflexr has not been released yet. Everything described here is on `main` and built to RFC-0001's plan ([RFC-0001](rfcs/0001-v0.1-implementation-plan.md)), except the reference implementation, which is in progress. The API may change before the first release.
+    reflexr has not been released yet. Everything described here is built and on `main`, following the v0.1 plan in [RFC-0001](rfcs/0001-v0.1-implementation-plan.md), except the reference implementation, which is in progress. The API may still change before the first release.
 
 ## Why: workflows that events start
 

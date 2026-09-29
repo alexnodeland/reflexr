@@ -165,7 +165,8 @@ import asyncio
 from reflexr.langfuse import LangfuseScoreConfigs, LangfuseScores
 from reflexr.scores import FeedbackMirror, sync_score_configs
 
-langfuse = telemetry.langfuse  # from configure_telemetry(..., langfuse=True), or langfuse_client(...)
+# From configure_telemetry(..., langfuse=True), or langfuse_client(...):
+langfuse = telemetry.langfuse
 await sync_score_configs(LangfuseScoreConfigs(langfuse))  # once, at startup
 mirror = asyncio.create_task(FeedbackMirror(workspace, LangfuseScores(langfuse)).follow())
 ```

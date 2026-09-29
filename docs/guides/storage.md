@@ -31,7 +31,9 @@ Its clock stamps envelopes and expires leases, and it is injectable, so tests co
 from datetime import UTC, datetime
 
 now = datetime(2026, 1, 1, tzinfo=UTC)
-workspaces = Workspaces(InMemoryStorage(clock=lambda: now), events=[ServiceError], clock=lambda: now)
+workspaces = Workspaces(
+    InMemoryStorage(clock=lambda: now), events=[ServiceError], clock=lambda: now
+)
 ```
 
 [Testing your application](testing.md#controlling-time) shows a clock that tests move by hand.

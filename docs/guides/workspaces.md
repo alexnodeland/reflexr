@@ -96,7 +96,13 @@ await workspace.publish(ServiceError(service="auth", severity=8), id="alert-7")
 await Reactor(workspaces, actions={"triage": triage}).settle()
 
 for envelope in await workspace.read():
-    print(envelope.seq, envelope.event_type, envelope.actor.kind, envelope.correlation_id, envelope.depth)
+    print(
+        envelope.seq,
+        envelope.event_type,
+        envelope.actor.kind,
+        envelope.correlation_id,
+        envelope.depth,
+    )
 ```
 
 ```text

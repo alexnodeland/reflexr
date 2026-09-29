@@ -113,7 +113,9 @@ import asyncio
 from reflexr import SourceActor
 from reflexr.workspace import InMemoryStorage, Reactor, Workspaces
 
-workspaces = Workspaces(InMemoryStorage(), events=[ServiceError, IncidentOpened], rules=[error_spike])
+workspaces = Workspaces(
+    InMemoryStorage(), events=[ServiceError, IncidentOpened], rules=[error_spike]
+)
 reactor = Reactor(workspaces, actions={"page": page})
 
 
