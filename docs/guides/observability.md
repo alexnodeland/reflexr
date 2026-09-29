@@ -69,6 +69,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 | `reflexr.schedule {name}` | A schedule's ticks are due in a workspace | `reflexr.schedule`, `reflexr.event.count` |
 | `reflexr.stream` | A WebSocket connection, for as long as it is open. A server span | `reflexr.stream.close_code` |
 
+When a graph action cannot resume its run's checkpoint and starts over, the attempt's `invoke_workflow` span gets a `reflexr.checkpoint.discarded` event. Its `reflexr.checkpoint.reason` says why: `format` (not a checkpoint, or another version of the format), `graph_changed` (the graph's nodes changed), `untyped` (the next node's input type is no longer known) or `invalid` (a saved value no longer validates as its type). For `invalid`, `reflexr.checkpoint.error` says what did not validate, by location and message, without the values ([Actions](actions.md#graphs)).
+
 Every span reflexr records says where and who: `reflexr.tenant.id` and `reflexr.workspace.id`; for writes, `reflexr.actor.kind` (`user`, `agent`, `external_agent`, `system`, `source` or `evaluator`) and `user.id` when a person acted; and the causal chain's `session.id` and `gen_ai.conversation.id` wherever there is a chain. A failed attempt's `invoke_workflow` span has an error status carrying the error. reflexr's spans carry ids, types and counts, never event payloads; prompts and tool arguments appear only on pydantic-ai's spans, and only with `include_content`.
 
 ### One incident, three traces
