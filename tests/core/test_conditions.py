@@ -19,7 +19,7 @@ from reflexr.core import (
     on,
     sequence,
 )
-from reflexr.core.conditions import admitted_types, has_field, resolve_field
+from reflexr.core.conditions import admitted, has_field, resolve_field, where_fields
 from tests.event_types import Deploy, ServiceError
 
 MINUTE = timedelta(minutes=1)
@@ -79,6 +79,16 @@ def test_where_narrows_the_filter_and_checks_fields() -> None:
     on(ServiceError).where(PredicateFilter(name="p"))
 
 
+def test_where_checks_a_field_on_the_types_of_its_own_conjunction() -> None:
+    severe = AllFilter(of=(OnFilter(types=("service.error",)), F.severity >= 7))
+    either = AnyFilter(of=(severe, OnFilter(types=("deploy.finished",))))
+    on(ServiceError, Deploy).where(either)
+    after = sequence(on(Deploy), on(ServiceError).where(F.severity >= 7), within=MINUTE)
+    after.where(service="auth")
+    with pytest.raises(ValueError, match=r"no field 'severity' on deploy\.finished"):
+        after.where(F.severity >= 7)
+
+
 def test_patterns_and_stages() -> None:
     condition = (
         on(ServiceError)
@@ -120,5 +130,32 @@ def test_field_helpers() -> None:
     assert not has_field(ServiceError, "owner.nope")
     assert resolve_field({"a": {"b": 1}}, "a.b") == (True, 1)
     assert resolve_field({"a": 1}, "a.b") == (False, None)
-    both = OnFilter(types=("service.error", "service.error", "legacy.alert"))
-    assert admitted_types(AllFilter(of=(both, NotFilter(filter=both)))) == [ServiceError]
+
+
+def test_filters_admit_event_types() -> None:
+    errors, deploys = OnFilter(types=("service.error",)), OnFilter(types=("deploy.finished",))
+    both = OnFilter(types=("service.error", "service.error", "deploy.finished"))
+    severe = F.severity >= 7
+    assert admitted(both) == ("service.error", "deploy.finished")
+    assert admitted(severe) is None
+    assert admitted(severe, ("service.error",)) == ("service.error",)
+    assert admitted(AllFilter(of=(both, errors))) == ("service.error",)
+    assert admitted(AnyFilter(of=(errors, deploys))) == ("service.error", "deploy.finished")
+    assert admitted(AnyFilter(of=(errors, severe))) is None
+    # A not removes what its filter accepts whatever the fields, wherever it stands.
+    assert admitted(AllFilter(of=(NotFilter(filter=deploys), both))) == ("service.error",)
+    assert admitted(AllFilter(of=(both, NotFilter(filter=severe)))) == admitted(both)
+    either = AnyFilter(of=(deploys, AllFilter(of=(errors, severe))))
+    assert admitted(AllFilter(of=(both, NotFilter(filter=either)))) == ("service.error",)
+    assert admitted(NotFilter(filter=errors)) is None
+    assert where_fields(AllFilter(of=(severe, AnyFilter(of=(errors, deploys))))) == [
+        ("severity", ("service.error", "deploy.finished"))
+    ]
+    assert where_fields(AnyFilter(of=(AllFilter(of=(errors, severe)), deploys))) == [
+        ("severity", ("service.error",))
+    ]
+    assert where_fields(AllFilter(of=(errors, NotFilter(filter=severe)))) == [
+        ("severity", ("service.error",))
+    ]
+    assert where_fields(NotFilter(filter=severe)) == [("severity", None)]
+    assert where_fields(PredicateFilter(name="p")) == []

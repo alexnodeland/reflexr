@@ -7,13 +7,19 @@ from pydantic import ValidationError
 
 from reflexr.core import (
     ActionRef,
+    AllFilter,
+    AnyFilter,
+    Condition,
     F,
+    Filter,
     InvalidRule,
     NotFilter,
+    OnFilter,
     PredicateFilter,
     RetryPolicy,
     Rule,
     Scope,
+    SequencePattern,
     by,
     event_types,
     on,
@@ -137,5 +143,61 @@ def test_sequence_steps_are_checked_too() -> None:
     )
     with pytest.raises(InvalidRule) as invalid:
         rule.check(events=event_types(), actions={"rollback"})
-    assert invalid.value.problems == ["no predicate 'p'", "no predicate 'p'"]
+    assert invalid.value.problems == ["no predicate 'p'"]  # once, though two places name it
     rule.check(events=event_types(), actions={"rollback"}, predicates={"p"})
+
+
+ERRORS = OnFilter(types=("service.error",))
+DEPLOYS = OnFilter(types=("deploy.finished",))
+SEVERE = F.severity >= 7
+
+
+def problems(filter: Filter, **condition: object) -> list[str]:
+    """Check a rule with this filter, and return its problems."""
+    when = Condition.model_validate({"filter": filter, **condition})
+    rule = Rule(name="checked", when=when, scope=by(F.service), then=run("act"))
+    try:
+        rule.check(events=event_types(), actions={"act"})
+    except InvalidRule as invalid:
+        return invalid.problems
+    return []
+
+
+def test_a_field_is_checked_on_the_types_of_its_own_conjunction() -> None:
+    # A sequence whose steps filter different types.
+    severe_after_deploy = sequence(
+        on(Deploy), on(ServiceError).where(F.severity >= 7), within=MINUTE
+    )
+    assert problems(severe_after_deploy.filter, pattern=severe_after_deploy.pattern) == []
+    # on(A).where(x) | on(B): x is compared on A only.
+    assert problems(AnyFilter(of=(AllFilter(of=(ERRORS, SEVERE)), DEPLOYS))) == []
+    # where(x) & (on(A) | on(B)): x is compared on both.
+    assert problems(AllFilter(of=(SEVERE, AnyFilter(of=(ERRORS, DEPLOYS))))) == [
+        "no field 'severity' on deploy.finished"
+    ]
+    # A where inside an any is compared on what the enclosing conjunction admits.
+    either = AnyFilter(of=(SEVERE, OnFilter(types=("deploy.finished",))))
+    assert problems(AllFilter(of=(ERRORS, either))) == []
+
+
+def test_a_not_neither_admits_nor_hides_types() -> None:
+    both = OnFilter(types=("service.error", "deploy.finished"))
+    assert problems(AllFilter(of=(both, NotFilter(filter=DEPLOYS), SEVERE))) == []
+    assert problems(AllFilter(of=(ERRORS, NotFilter(filter=F.nope.eq(1))))) == [
+        "no field 'nope' on service.error"
+    ]
+    # With no on to go by, a where cannot be checked: a negated on keeps types out, no more.
+    assert problems(AllFilter(of=(NotFilter(filter=DEPLOYS), SEVERE))) == []
+    assert problems(NotFilter(filter=AllFilter(of=(DEPLOYS, SEVERE)))) == [
+        "no field 'severity' on deploy.finished"
+    ]
+
+
+def test_sequence_steps_see_only_what_passed_the_filter() -> None:
+    both = OnFilter(types=("service.error", "deploy.finished"))
+    steps: tuple[Filter, ...] = (DEPLOYS, SEVERE)
+    pattern = SequencePattern(steps=steps, within=MINUTE)
+    assert problems(both, pattern=pattern) == ["no field 'severity' on deploy.finished"]
+    narrowed = SequencePattern(steps=(DEPLOYS, AllFilter(of=(ERRORS, SEVERE))), within=MINUTE)
+    assert problems(both, pattern=narrowed) == []
+    assert problems(ERRORS, pattern=pattern) == []

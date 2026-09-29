@@ -23,6 +23,11 @@ Rules should be as easy for an agent to write as for a person: the planned third
 - **Actions are referenced by name** (`{"action": "triage"}`). `run(action)` names the action and lets the reactor register it; rules loaded from JSON resolve names against registered actions.
 - A **JSON Schema** for rules is generated from the models and checked in. A rule's identity is its name; a hash of its definition detects changes, which reset its state.
 
+### Amendment (2026-09-29): what the documentation found
+
+- **A field is checked on the types that can reach it.** A `where` is checked against the event types its own conjunction admits: the `on` filters beside it in an `all`, or, with none, what the enclosing filter admits. An `any` admits what any of its filters admits, and a `not` takes away the types its filter accepts whatever their fields, rather than adding them. A sequence's steps are checked on what the condition's filter admits, and the scope and dedupe fields on every type it admits. Checking every `where` against every type named anywhere rejected valid rules, such as a sequence of a deploy and then a severe error (`no field 'severity' on deploy.finished`). The builder and `Rule.check` share the one definition, and `Rule.check` lists each problem once.
+- **A missing field is false at run time.** A `where` on a field an envelope does not have, including a path through a value that is not an object, compares as false (so its `not` is true), and is never an evaluation error. Conformance cases pin it.
+
 ## Options considered
 
 | Option | Serializable | Checked before running | Expressiveness |

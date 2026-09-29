@@ -1034,6 +1034,182 @@
       }
     },
     {
+      "name": "a field an event's type does not have matches no comparison, and is not an error",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "where",
+                "field": "severity",
+                "op": "ge",
+                "value": 7
+              },
+              {
+                "kind": "any",
+                "of": [
+                  {
+                    "kind": "on",
+                    "types": [
+                      "deploy.finished"
+                    ]
+                  },
+                  {
+                    "kind": "on",
+                    "types": [
+                      "service.error"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "deploy.finished",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 8
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 2,
+            "matched": [
+              2
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "a path through a value that is not an object is missing",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "service.name",
+                "op": "eq",
+                "value": "auth"
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "not matches an envelope that lacks the field its filter compares",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished",
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "not",
+                "filter": {
+                  "kind": "where",
+                  "field": "severity",
+                  "op": "ge",
+                  "value": 7
+                }
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "deploy.finished",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 8
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 3
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          },
+          {
+            "seq": 3,
+            "matched": [
+              3
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
       "name": "fields can be nested",
       "rule": {
         "when": {

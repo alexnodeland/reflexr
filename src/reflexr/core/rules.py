@@ -23,6 +23,7 @@ from typing import Any, Literal, Protocol
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue
 
 from reflexr.core.conditions import (
+    Admitted,
     AllFilter,
     AnyFilter,
     Condition,
@@ -32,9 +33,10 @@ from reflexr.core.conditions import (
     OnFilter,
     PredicateFilter,
     SequencePattern,
-    WhereFilter,
+    admitted,
     has_field,
     resolve_field,
+    where_fields,
 )
 from reflexr.core.errors import InvalidRule
 from reflexr.core.events import SYSTEM_EVENTS, Event
@@ -172,39 +174,38 @@ class Rule(BaseModel):
             InvalidRule: Listing every problem found.
         """
         known = {**{t.event_type: t for t in SYSTEM_EVENTS}, **events}
-        problems: list[str] = []
-        _check_filter(self.when.filter, known, predicates, problems)
-        if isinstance(self.when.pattern, SequencePattern):
-            for step in self.when.pattern.steps:
-                _check_filter(step, known, predicates, problems)
-        admitted = _admitted(self.when.filter, known)
-        fields = [*self.scope.fields, *(self.when.dedupe.key if self.when.dedupe else ())]
-        problems.extend(_missing_fields(fields, admitted))
+        condition = self.when
+        passing = admitted(condition.filter)
+        problems = _check_filter(condition.filter, None, known, predicates)
+        if isinstance(condition.pattern, SequencePattern):
+            # The steps see only envelopes that passed the filter.
+            for step in condition.pattern.steps:
+                problems.extend(_check_filter(step, passing, known, predicates))
+        fields = [*self.scope.fields, *(condition.dedupe.key if condition.dedupe else ())]
+        problems.extend(_missing_fields([(path, passing) for path in fields], known))
         if actions is not None and self.then.action not in actions:
             problems.append(f"no action {self.then.action!r}")
         if problems:
-            raise InvalidRule(self.name, problems)
+            raise InvalidRule(self.name, list(dict.fromkeys(problems)))
 
 
 def _check_filter(
     filter: Filter,
+    within: Admitted,
     known: Mapping[str, type[Event]],
     predicates: Collection[str],
-    problems: list[str],
-) -> None:
-    problems.extend(f"no event type {n!r}" for n in _names(filter, OnFilter) if n not in known)
-    problems.extend(
-        f"no predicate {n!r}" for n in _names(filter, PredicateFilter) if n not in predicates
-    )
-    problems.extend(_missing_fields(_names(filter, WhereFilter), _admitted(filter, known)))
+) -> list[str]:
+    return [
+        *(f"no event type {n!r}" for n in _names(filter, OnFilter) if n not in known),
+        *(f"no predicate {n!r}" for n in _names(filter, PredicateFilter) if n not in predicates),
+        *_missing_fields(where_fields(filter, within), known),
+    ]
 
 
-def _names(filter: Filter, kind: type[OnFilter | WhereFilter | PredicateFilter]) -> list[str]:
+def _names(filter: Filter, kind: type[OnFilter | PredicateFilter]) -> list[str]:
     match filter:
         case OnFilter(types=types) if kind is OnFilter:
             return list(types)
-        case WhereFilter(field=path) if kind is WhereFilter:
-            return [path]
         case PredicateFilter(name=name) if kind is PredicateFilter:
             return [name]
         case AllFilter(of=of) | AnyFilter(of=of):
@@ -215,14 +216,16 @@ def _names(filter: Filter, kind: type[OnFilter | WhereFilter | PredicateFilter])
             return []
 
 
-def _admitted(filter: Filter, known: Mapping[str, type[Event]]) -> list[type[Event]]:
-    return [known[name] for name in dict.fromkeys(_names(filter, OnFilter)) if name in known]
+def _missing_fields(
+    fields: list[tuple[str, Admitted]], known: Mapping[str, type[Event]]
+) -> list[str]:
+    """Return a problem for each field that a type it is compared on does not have.
 
-
-def _missing_fields(paths: list[str], admitted: list[type[Event]]) -> list[str]:
+    Types that are not known cannot be checked, and a field any type can reach cannot either.
+    """
     return [
         f"no field {path!r} on {event_type.event_type}"
-        for path in dict.fromkeys(paths)
-        for event_type in admitted
-        if not has_field(event_type, path)
+        for path, types in fields
+        for name in types or ()
+        if (event_type := known.get(name)) is not None and not has_field(event_type, path)
     ]
