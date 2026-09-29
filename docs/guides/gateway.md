@@ -26,6 +26,20 @@ triage = AgentAction(triage_agent, name="triage")
 
 `litellm_model` names one of the proxy's model groups; which provider and model serve it, and what happens when one fails, is the proxy's configuration. `api_key` is the key used for requests that carry no tenant's key. Without `api_base` and `api_key`, the provider reads its environment variables.
 
+Its `settings` are the model's default settings, as every pydantic-ai model takes them: a `temperature`, a `max_tokens`, or an `extra_body` the proxy reads. A smoke test can have the proxy answer without calling a provider, with LiteLLM's `mock_response`:
+
+```python
+from pydantic_ai.settings import ModelSettings
+
+model = litellm_model(
+    "claude-sonnet",
+    api_base="http://litellm:4000",
+    settings=ModelSettings(temperature=0, extra_body={"mock_response": "Done."}),
+)
+```
+
+The agent's and each run's `model_settings` override these key by key, so an `extra_body` there replaces the model's. The gateway adds its metadata to whichever `extra_body` a request ends up with.
+
 ## What each request carries
 
 `LiteLLMGateway` adds to every model request of a run attempt:

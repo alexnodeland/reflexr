@@ -19,6 +19,13 @@ The metadata, key and guardrails are added by their own capability, **`LiteLLMGa
 
 - **Each tenant is a LiteLLM team**, with virtual keys, budgets and rate limits. The application supplies the key for a tenant through a callback. Keys never appear in the log or on spans.
 
+### Amendment (2026-09-29): `litellm_model` takes model settings
+
+`litellm_model` took no model settings, so an application that wanted a temperature, or a reply the proxy mocks for a smoke test, had to set them on every agent with `Agent(model_settings=...)`. stackr's application template found it, in artifactr and here ([artifactr#51](https://github.com/alexnodeland/artifactr/issues/51)).
+
+- **`litellm_model(name, api_base=, api_key=, http_client=, settings=)`** passes `settings` to `OpenAIChatModel` as the model's defaults, as every pydantic-ai model takes them. pydantic-ai merges the model's, the agent's and the run's settings key by key, the run's winning, before `LiteLLMGateway` adds its metadata to the request's `extra_body`, so a model's `extra_body={"mock_response": ...}` reaches the proxy beside the gateway's metadata.
+- artifactr's `litellm_model` takes the same `settings`, with the same meaning ([artifactr ADR-0043](https://github.com/alexnodeland/artifactr/blob/main/docs/adr/0043-the-litellm-adapter.md), amended the same day).
+
 ## Options considered
 
 | Option | Library dependencies | Where routing lives | Per-tenant budgets |

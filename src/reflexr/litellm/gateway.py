@@ -78,6 +78,7 @@ def litellm_model(
     api_base: str | None = None,
     api_key: str | None = None,
     http_client: httpx2.AsyncClient | None = None,
+    settings: ModelSettings | None = None,
 ) -> OpenAIChatModel:
     """Return a pydantic-ai model that calls a LiteLLM proxy's model group.
 
@@ -90,12 +91,17 @@ def litellm_model(
             environment variables.
         api_key: The proxy key used when a request carries no tenant's key.
         http_client: The HTTP client, for tests or a shared connection pool.
+        settings: The model's default settings, as every pydantic-ai model takes them, such as
+            a ``temperature``, or ``extra_body={"mock_response": "..."}`` for a reply the proxy
+            mocks. An agent's or a run's ``model_settings`` override them key by key, so an
+            ``extra_body`` there replaces this one; :class:`LiteLLMGateway` adds its metadata
+            to whichever ``extra_body`` a request ends up with.
     """
     if http_client is None:
         provider = LiteLLMProvider(api_key=api_key, api_base=api_base)
     else:
         provider = LiteLLMProvider(api_key=api_key, api_base=api_base, http_client=http_client)
-    return OpenAIChatModel(model, provider=provider)
+    return OpenAIChatModel(model, provider=provider, settings=settings)
 
 
 @dataclass
