@@ -28,9 +28,10 @@ LAYERS: dict[str, tuple[set[str], set[str]]] = {
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.mcp"},
         {"pydantic", "opentelemetry", "mcp", "starlette"},
     ),
+    # The feedback mirror, on evalr's score mapping and ports (ADR-0025).
     "scores": (
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.scores"},
-        {"pydantic"},
+        {"pydantic", "evalr"},
     ),
     "evals": (
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.evals"},
@@ -48,7 +49,7 @@ LAYERS: dict[str, tuple[set[str], set[str]]] = {
             "reflexr.scores",
             "reflexr.langfuse",
         },
-        {"langfuse", "opentelemetry"},
+        {"langfuse", "opentelemetry", "evalr"},
     ),
     "litellm": (
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.litellm"},

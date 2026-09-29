@@ -12,7 +12,7 @@ The packages are layers. Each depends only on the ones below it, so each is usab
 | [`reflexr.telemetry`](telemetry.md) | Tracing and metrics through the OpenTelemetry API: attribute names, the metric registry and its cardinality policy | core |
 | [`reflexr.workspace`](workspace.md) | Tenant-scoped workspace handles, the `Reactor`, the action port and `Reaction`, schedules, the storage protocol and in-memory storage | core |
 | [`reflexr.agent`](agent.md) | pydantic-ai agents and pydantic-graph graphs as actions, with the `EventContext` capability and graph checkpoints | core |
-| [`reflexr.scores`](scores.md) | Feedback as scores: the mapping, the mirror that follows the log, and the ports scores leave through | core |
+| [`reflexr.scores`](scores.md) | Feedback as scores: the mirror that follows the log, on evalr's mapping and ports | `langfuse` or `evals` extra |
 | [`reflexr.sql`](sql.md) | SQL storage on PostgreSQL and SQLite, and its migrations | `sql`, `postgres` or `sqlite` extra |
 | [`reflexr.fastapi`](fastapi.md) | HTTP ingest, REST reads and administration, and the WebSocket stream, as a FastAPI router | `fastapi` extra |
 | [`reflexr.mcp`](mcp.md) | An MCP server for external agents | `mcp` extra |

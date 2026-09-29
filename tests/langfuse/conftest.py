@@ -3,6 +3,7 @@
 import json
 import uuid
 from collections.abc import Iterator
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -20,6 +21,8 @@ class FakeLangfuseApi:
     def __init__(self, *configs: str, page_size: int = 2) -> None:
         self.configs: list[dict[str, Any]] = [{"name": name} for name in configs]
         self.scores: dict[str, dict[str, Any]] = {}
+        self.times: dict[str, datetime] = {}
+        """When each score was given, by id: its ingestion event's timestamp."""
         self.page_size = page_size
 
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -28,6 +31,7 @@ class FakeLangfuseApi:
             for event in json.loads(request.content)["batch"]:
                 if event["type"] == "score-create":
                     self.scores[event["body"]["id"]] = event["body"]
+                    self.times[event["body"]["id"]] = datetime.fromisoformat(event["timestamp"])
             return httpx.Response(207, json={"successes": [], "errors": []})
         if path == "/api/public/score-configs" and request.method == "POST":
             self.configs.append(json.loads(request.content))

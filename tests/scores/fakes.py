@@ -1,29 +1,13 @@
-"""Fakes of the score ports, for tests of the mirror and as a reference for adapters."""
+"""The score ports' in-memory adapters come from evalr; this seeds its config store."""
 
-from collections.abc import Collection
-
-from reflexr.scores import Score, ScoreConfig
-
-
-class FakeSink:
-    """A score sink that keeps scores by id, so sending one again replaces it."""
-
-    def __init__(self) -> None:
-        self.scores: dict[str, Score] = {}
-
-    async def send(self, score: Score) -> None:
-        self.scores[score.id] = score
+from evalr.core import ScoreConfig
+from evalr.memory import InMemoryScoreConfigStore
 
 
-class FakeConfigStore:
-    """A score config store in memory."""
-
-    def __init__(self, *names: str) -> None:
-        self.configs: dict[str, ScoreConfig | None] = dict.fromkeys(names)
-
-    async def names(self) -> Collection[str]:
-        return set(self.configs)
-
-    async def create(self, config: ScoreConfig) -> None:
-        assert config.name not in self.configs, f"{config.name} exists already"
-        self.configs[config.name] = config
+def seeded(*names: str) -> InMemoryScoreConfigStore:
+    """An in-memory score config store that already has configs of these names."""
+    store = InMemoryScoreConfigStore()
+    for name in names:
+        type_name, field = name.split(".")
+        store.configs[name] = ScoreConfig(name, type_name, field, "NUMERIC")
+    return store

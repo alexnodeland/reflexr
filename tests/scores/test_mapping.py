@@ -1,4 +1,7 @@
-"""Feedback types as score configs, and feedback values as scores."""
+"""Feedback types as score configs, and feedback values as scores, named as registered.
+
+evalr owns the mapping and pins it with a fixture of what these tests expected before it did.
+"""
 
 from typing import Annotated
 
@@ -13,14 +16,14 @@ def test_each_field_is_scored_by_its_type() -> None:
     assert score_configs(Helpfulness) == (
         ScoreConfig(
             name="helpfulness.rating",
-            feedback_type="helpfulness",
+            type_name="helpfulness",
             field="rating",
             data_type="NUMERIC",
             minimum=1,
             maximum=5,
         ),
         ScoreConfig(
-            name="helpfulness.reason", feedback_type="helpfulness", field="reason", data_type="TEXT"
+            name="helpfulness.reason", type_name="helpfulness", field="reason", data_type="TEXT"
         ),
     )
     correct, verdict, tone, confidence = score_configs(Accuracy)
@@ -51,5 +54,5 @@ def test_values_become_scores() -> None:
     long = score_values(Helpfulness, {"rating": 1, "reason": "x" * 900})[1][1]
     assert long == "x" * MAX_TEXT
     value = {"correct": False, "verdict": "wrong", "tone": "casual", "confidence": 0.5}
-    assert [v for _, v in score_values(Accuracy, value)] == [0.0, "wrong", "casual", 0.5]
-    assert score_values(Accuracy, value | {"correct": True})[0][1] == 1.0
+    assert [v for _, v in score_values(Accuracy, value)] == [False, "wrong", "casual", 0.5]
+    assert score_values(Accuracy, value | {"correct": True})[0][1] is True

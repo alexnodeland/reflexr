@@ -5,8 +5,8 @@ An adapter (ADR-0025) that files reflexr's traces and feedback in Langfuse, as a
 - :func:`should_export_span` keeps whole traces, not only their LLM spans
 - :func:`langfuse_run` is a ``RunContext`` for the reactor that sets each run's session (its
   causal chain), user, trace name (its rule), tags and metadata
-- :class:`LangfuseScores` and :class:`LangfuseScoreConfigs` implement the score ports, so a
-  ``FeedbackMirror`` records feedback as Langfuse scores
+- :class:`LangfuseScores` and :class:`LangfuseScoreConfigs` implement evalr's score ports, so
+  a ``FeedbackMirror`` records feedback as Langfuse scores
 
 ::
 

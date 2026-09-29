@@ -1,37 +1,28 @@
-"""Langfuse behind the score ports, checked by the same contract as the fakes."""
+"""Langfuse behind evalr's score ports, checked by evalr's contract suites."""
 
-from collections.abc import Callable, Iterator
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from evalr.contracts import check_score_config_store, check_score_sink
+from evalr.core import Score, ScoreConfig
 from opentelemetry.sdk.trace import TracerProvider
 
 from reflexr import Rule, SourceActor, UserActor, on, run
 from reflexr.core import RunTarget
 from reflexr.langfuse import LangfuseScoreConfigs, LangfuseScores
-from reflexr.scores import (
-    FeedbackMirror,
-    Score,
-    ScoreConfig,
-    ScoreConfigStore,
-    ScoreSink,
-    sync_score_configs,
-)
+from reflexr.scores import FeedbackMirror, sync_score_configs
 from reflexr.workspace import InMemoryStorage, Reaction, Reactor, Workspaces
 from tests.event_types import Deploy
 from tests.langfuse.conftest import Backend, FakeLangfuseApi
-from tests.scores.fakes import FakeConfigStore, FakeSink
 from tests.scores.kinds import Accuracy, Helpfulness
 
 TRACE = "4bf92f3577b34da6a3ce929d0e0e4736"
 NOW = datetime(2026, 9, 28, tzinfo=UTC)
 
-type Recorded = dict[str, tuple[str, float | str, str | None, str | None]]
-"""Scores a backend holds, by id: name, value, trace and session."""
 
-
-def score(id: str, value: float | str, data_type: Any, **target: Any) -> Score:
+def score(id: str, value: bool | float | str, data_type: Any, **target: Any) -> Score:
     return Score(
         id=id,
         name=f"helpfulness.{id}",
@@ -40,71 +31,67 @@ def score(id: str, value: float | str, data_type: Any, **target: Any) -> Score:
         trace_id=target.get("trace_id"),
         session_id=target.get("session_id"),
         timestamp=NOW,
-        metadata={"tenant_id": "acme"},
+        source={"tenant_id": "acme"},
     )
 
 
-@pytest.fixture(params=["fake", "langfuse"])
-def sink(
-    request: pytest.FixtureRequest, backend: Backend
-) -> Iterator[tuple[ScoreSink, Callable[[], Recorded]]]:
-    if request.param == "fake":
-        fake = FakeSink()
-        yield (
-            fake,
-            lambda: {
-                s.id: (s.name, s.value, s.trace_id, s.session_id) for s in fake.scores.values()
-            },
+def received(api: FakeLangfuseApi) -> list[Score]:
+    """The scores the fake Langfuse holds, read back as evalr's scores."""
+    held: list[Score] = []
+    for body in api.scores.values():
+        value = body["value"]
+        held.append(
+            Score(
+                id=body["id"],
+                name=body["name"],
+                value=value == 1 if body["dataType"] == "BOOLEAN" else value,
+                data_type=body["dataType"],
+                trace_id=body.get("traceId"),
+                session_id=body.get("sessionId"),
+            )
         )
-        return
+    return held
 
-    def recorded() -> Recorded:
+
+async def test_the_score_sink_contract(backend: Backend) -> None:
+    async def recorded() -> Sequence[Score]:
         backend.client.flush()
-        return {
-            id: (body["name"], body["value"], body.get("traceId"), body.get("sessionId"))
-            for id, body in backend.api.scores.items()
-        }
+        return received(backend.api)
 
-    yield LangfuseScores(backend.client), recorded
+    await check_score_sink(LangfuseScores(backend.client), recorded)
 
 
-async def test_the_score_sink_contract(sink: tuple[ScoreSink, Callable[[], Recorded]]) -> None:
-    port, recorded = sink
-    await port.send(score("rating", 4.0, "NUMERIC", trace_id=TRACE))
-    await port.send(score("useful", 1.0, "BOOLEAN", session_id="thr_1"))
-    await port.send(score("tone", "casual", "CATEGORICAL", trace_id=TRACE))
-    await port.send(score("reason", "slow", "TEXT", trace_id=TRACE))
-    await port.send(score("reason", "too slow", "TEXT", trace_id=TRACE))
-    assert recorded() == {
-        "rating": ("helpfulness.rating", 4.0, TRACE, None),
-        "useful": ("helpfulness.useful", 1.0, None, "thr_1"),
-        "tone": ("helpfulness.tone", "casual", TRACE, None),
-        "reason": ("helpfulness.reason", "too slow", TRACE, None),
-    }
+async def test_the_score_config_store_contract(backend: Backend) -> None:
+    await check_score_config_store(LangfuseScoreConfigs(backend.client))
 
 
-async def test_langfuse_scores_carry_their_type_and_metadata(backend: Backend) -> None:
-    await LangfuseScores(backend.client).send(score("rating", 4.0, "NUMERIC", trace_id=TRACE))
+async def test_langfuse_scores_carry_their_type_time_and_metadata(backend: Backend) -> None:
+    await LangfuseScores(backend.client).record(
+        [
+            score("rating", 4.0, "NUMERIC", trace_id=TRACE),
+            score("useful", True, "BOOLEAN", session_id="thr_1"),
+        ]
+    )
     backend.client.flush()
-    body = backend.api.scores["rating"]
-    assert (body["dataType"], body["metadata"]) == ("NUMERIC", {"tenant_id": "acme"})
+    rating, useful = backend.api.scores["rating"], backend.api.scores["useful"]
+    assert (rating["dataType"], rating["metadata"]) == ("NUMERIC", {"tenant_id": "acme"})
+    assert (useful["dataType"], useful["value"], useful["sessionId"]) == ("BOOLEAN", 1, "thr_1")
+    assert "traceId" not in useful
+    assert backend.api.times["rating"] == NOW
+
+
+async def test_a_value_not_of_its_type_queues_nothing(backend: Backend) -> None:
     with pytest.raises(ValueError, match="a NUMERIC score cannot be 'four'"):
-        await LangfuseScores(backend.client).send(score("rating", "four", "NUMERIC"))
+        await LangfuseScores(backend.client).record(
+            [score("tone", "casual", "CATEGORICAL"), score("rating", "four", "NUMERIC")]
+        )
+    backend.client.flush()
+    assert backend.api.scores == {}
 
 
-@pytest.fixture(params=["fake", "langfuse"])
-def store(request: pytest.FixtureRequest) -> Iterator[ScoreConfigStore]:
-    existing = ("helpfulness.rating", "other.a", "other.b")
-    if request.param == "fake":
-        yield FakeConfigStore(*existing)
-        return
-    backend = Backend(FakeLangfuseApi(*existing))
-    yield LangfuseScoreConfigs(backend.client)
-    backend.client.shutdown()
-
-
-async def test_the_score_config_store_contract(store: ScoreConfigStore) -> None:
-    assert set(await store.names()) == {"helpfulness.rating", "other.a", "other.b"}
+async def test_score_configs_are_synced_once_past_those_langfuse_has() -> None:
+    backend = Backend(FakeLangfuseApi("helpfulness.rating", "other.a", "other.b"))
+    store = LangfuseScoreConfigs(backend.client)
     created = await sync_score_configs(store, [Helpfulness, Accuracy])
     assert created == [
         "helpfulness.reason",
@@ -113,8 +100,9 @@ async def test_the_score_config_store_contract(store: ScoreConfigStore) -> None:
         "accuracy.tone",
         "accuracy.confidence",
     ]
-    assert len(set(await store.names())) == 8
+    assert len(await store.names()) == 8
     assert await sync_score_configs(store, [Helpfulness, Accuracy]) == []
+    backend.client.shutdown()
 
 
 async def test_langfuse_score_configs_describe_each_field(api: FakeLangfuseApi) -> None:
@@ -133,7 +121,7 @@ async def test_langfuse_score_configs_describe_each_field(api: FakeLangfuseApi) 
     assert "categories" not in created["accuracy.correct"]
     too_long = ScoreConfig(
         name="a_rather_long_feedback_type.a_long_field",
-        feedback_type="a_rather_long_feedback_type",
+        type_name="a_rather_long_feedback_type",
         field="a_long_field",
         data_type="TEXT",
         description="Explained.",
@@ -141,7 +129,7 @@ async def test_langfuse_score_configs_describe_each_field(api: FakeLangfuseApi) 
     with pytest.raises(ValueError, match="shorten"):
         await configs.create(too_long)
     await configs.create(
-        ScoreConfig(name="t.f", feedback_type="t", field="f", data_type="TEXT", description="Why")
+        ScoreConfig(name="t.f", type_name="t", field="f", data_type="TEXT", description="Why")
     )
     assert api.configs[-1]["description"] == "Why"
     backend.client.shutdown()
@@ -170,3 +158,4 @@ async def test_feedback_reaches_langfuse_on_its_trace(backend: Backend) -> None:
         5.0,
         done.trace_ids[-1],
     )
+    assert body["metadata"]["actor"] == "user:ada"
