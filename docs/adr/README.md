@@ -18,7 +18,7 @@ Each record captures one decision: the context that forced it, the options consi
 | [0012](0012-trunk-based-development-with-rfcs-and-adrs.md) | Trunk-based development with RFCs, ADRs and evergreen docs | Accepted |
 | [0013](0013-quality-gates.md) | Quality gates | Accepted |
 | [0014](0014-mit-license.md) | MIT license | Accepted |
-| [0015](0015-reference-implementation-oncall.md) | Reference implementation: incident response | Accepted |
+| [0015](0015-reference-implementation-oncall.md) | Reference implementation: incident response | Accepted, amended by 0031 |
 | [0016](0016-tenants-and-workspaces-like-artifactr.md) | Tenants and workspaces, like artifactr | Accepted |
 | [0017](0017-the-cores-evaluation-contract.md) | The core's evaluation contract | Accepted |
 | [0018](0018-opentelemetry-observability-with-langfuse.md) | OpenTelemetry-native observability, with Langfuse primary | Accepted |
@@ -34,6 +34,7 @@ Each record captures one decision: the context that forced it, the options consi
 | [0028](0028-schedules-and-cronsim.md) | Schedules, with cronsim for cron expressions | Accepted |
 | [0029](0029-metric-detail-through-sdk-views.md) | Metric detail through SDK views, and the OpenTelemetry and Langfuse adapters | Accepted |
 | [0030](0030-sql-storage.md) | SQL storage with one dialect-neutral implementation | Accepted |
+| [0031](0031-the-reference-implementations-events-and-rules.md) | The reference implementation's events and rules | Accepted |
 | [0036](0036-typed-run-failures.md) | Typed run failures | Accepted |
 
 To add a record, copy [`template.md`](template.md) to the next number and add a row above.

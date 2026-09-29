@@ -84,12 +84,16 @@ evalr = { git = "https://github.com/alexnodeland/evalr", rev = "62582e2a677947bb
 requires = ["uv_build>=0.12,<0.13"]
 build-backend = "uv_build"
 
+# The reference implementation is a workspace member, built on the public API only.
+[tool.uv.workspace]
+members = ["examples/oncall"]
+
 # ─── lint and format ──────────────────────────────────────────────────────────
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["src", "tests"]
+src = ["src", "tests", "examples/oncall/src"]
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -115,14 +119,15 @@ known-third-party = ["fastapi", "mcp", "evalr", "langfuse"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D", "ARG"]
+"examples/*/tests/**" = ["D", "ARG"]
 # pydantic-ai hides a tool's RunContext from the model, so tool docstrings don't document it.
 "src/reflexr/agent/tools.py" = ["D417"]
 
 # ─── types ────────────────────────────────────────────────────────────────────
 
 [tool.pyright]
-include = ["src", "tests"]
-strict = ["src"]
+include = ["src", "tests", "examples"]
+strict = ["src", "examples/oncall/src"]
 typeCheckingMode = "standard"
 pythonVersion = "3.12"
 venvPath = "."
@@ -131,7 +136,7 @@ venv = ".venv"
 # ─── tests and coverage ───────────────────────────────────────────────────────
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "examples/oncall/tests"]
 addopts = ["--strict-markers", "--strict-config", "-ra"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -148,7 +153,7 @@ markers = [
 branch = true
 # By path, not package name, so that modules loaded under other names (such as Alembic
 # migrations) are still measured.
-source = ["src/reflexr"]
+source = ["src/reflexr", "examples/oncall/src/oncall"]
 
 [tool.coverage.report]
 fail_under = 100
