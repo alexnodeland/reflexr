@@ -548,7 +548,7 @@ wheels = [
 [[package]]
 name = "evalr"
 version = "0.1.0.dev0"
-source = { git = "https://github.com/alexnodeland/evalr?rev=15ac4a53b73b9ea13b986ab06cd3cdff54ab5ead#15ac4a53b73b9ea13b986ab06cd3cdff54ab5ead" }
+source = { git = "https://github.com/alexnodeland/evalr?rev=62582e2a677947bbb540e367e28bb6ad7d33b7f9#62582e2a677947bbb540e367e28bb6ad7d33b7f9" }
 dependencies = [
     { name = "opentelemetry-api" },
     { name = "pydantic" },
@@ -1881,7 +1881,7 @@ requires-dist = [
     { name = "alembic", marker = "extra == 'sql'", specifier = ">=1.20" },
     { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.31" },
     { name = "cronsim", specifier = ">=2.7" },
-    { name = "evalr", marker = "extra == 'evals'", git = "https://github.com/alexnodeland/evalr?rev=15ac4a53b73b9ea13b986ab06cd3cdff54ab5ead" },
+    { name = "evalr", marker = "extra == 'evals'", git = "https://github.com/alexnodeland/evalr?rev=62582e2a677947bbb540e367e28bb6ad7d33b7f9" },
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.141" },
     { name = "langfuse", marker = "extra == 'langfuse'", specifier = ">=4.15,<5" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.2" },
@@ -1908,7 +1908,7 @@ provides-extras = ["sql", "sqlite", "postgres", "fastapi", "mcp", "evals", "lang
 dev = [
     { name = "aiosqlite", specifier = ">=0.22" },
     { name = "asyncpg", specifier = ">=0.31" },
-    { name = "evalr", git = "https://github.com/alexnodeland/evalr?rev=15ac4a53b73b9ea13b986ab06cd3cdff54ab5ead" },
+    { name = "evalr", git = "https://github.com/alexnodeland/evalr?rev=62582e2a677947bbb540e367e28bb6ad7d33b7f9" },
     { name = "fastapi", specifier = ">=0.141" },
     { name = "git-cliff", specifier = ">=2.14" },
     { name = "httpx", specifier = ">=0.28" },
@@ -1929,7 +1929,7 @@ lint = [
 test = [
     { name = "aiosqlite", specifier = ">=0.22" },
     { name = "asyncpg", specifier = ">=0.31" },
-    { name = "evalr", git = "https://github.com/alexnodeland/evalr?rev=15ac4a53b73b9ea13b986ab06cd3cdff54ab5ead" },
+    { name = "evalr", git = "https://github.com/alexnodeland/evalr?rev=62582e2a677947bbb540e367e28bb6ad7d33b7f9" },
     { name = "fastapi", specifier = ">=0.141" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "hypothesis", specifier = ">=6.168" },

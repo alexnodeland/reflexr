@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from evalr.contracts import check_feedback_source
 from evalr.core import FunctionEvaluator, HandOff
 from opentelemetry.sdk.trace import TracerProvider
 from pydantic import BaseModel
@@ -161,3 +162,16 @@ async def test_an_evaluator_that_hands_off_records_nothing() -> None:
     [judged] = await workspace.runs(rule="judge-triage")
     assert judged.output == {"handed_off": "unsure"}
     assert not [e for e in await workspace.read() if isinstance(e.event, FeedbackGiven)]
+
+
+async def test_the_source_passes_evalrs_feedback_source_contract() -> None:
+    workspace = await setup()
+    [done] = await workspace.runs(rule="triage")
+    await workspace.give_feedback(TriageQuality(correct=True), on=RunTarget(run_id=done.id))
+    await workspace.give_feedback(
+        TriageQuality(correct=False), on=ChainTarget(correlation_id=done.correlation_id)
+    )
+    source = LogFeedbackSource(
+        workspace, feedback_type=TriageQuality, input_type=TriageInput, input=build
+    )
+    await check_feedback_source(source)
