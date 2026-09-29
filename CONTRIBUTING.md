@@ -42,11 +42,11 @@ Commits and PR titles follow Conventional Commits, checked by a `commit-msg` hoo
 
 ```
 feat(core): add the sequence pattern
-fix(stream): release a run's lease when the run is cancelled
+fix(workspace): release a run's lease when the run is cancelled
 docs(adr): record the cron parsing decision
 ```
 
-Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`. Scopes are package or area names: `core`, `stream`, `agent`, `sql`, `fastapi`, `mcp`, `examples`, `docs`, `adr`, `rfc`. Mark breaking changes with `!` (`feat(core)!: ...`) and a `BREAKING CHANGE:` footer. The changelog is generated from these messages.
+Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`. Scopes are package or area names: `core`, `workspace`, `agent`, `sql`, `fastapi`, `mcp`, `examples`, `docs`, `adr`, `rfc`. Mark breaking changes with `!` (`feat(core)!: ...`) and a `BREAKING CHANGE:` footer. The changelog is generated from these messages.
 
 ## Dependencies
 
