@@ -39,4 +39,5 @@ The only coverage exclusions are configured centrally (`if TYPE_CHECKING:`, `Pro
 
 ## Action items
 
-1. [ ] Configure the gates and CI (RFC-0001 phase 0), and add the PostgreSQL job (phase 4).
+1. [x] Configure the gates and CI (RFC-0001 phase 0).
+2. [ ] Add the PostgreSQL job (phase 4), and the schema and docs checks (phases 5 and 7).

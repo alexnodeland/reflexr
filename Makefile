@@ -1,98 +1,39 @@
-.PHONY: dev test lint type-check format clean logs shell ci docs docs-build docs-deploy api-test api-test-health api-test-events
+# reflexr: everyday developer commands. `make` lists them.
+#
+# Everything runs through uv, so the versions used here are the ones in uv.lock.
 
-# CI - Emulate GitHub Actions pipeline locally
-ci:
-	@echo "=== Running CI Pipeline ==="
-	@echo "\n--- Lint Check ---"
-	uv run ruff check src tests
-	@echo "\n--- Format Check ---"
-	uv run ruff format --check src tests
-	@echo "\n--- Type Check ---"
-	uv run pyright src
-	@echo "\n--- Tests ---"
-	uv run pytest -v
-	@echo "\n=== CI Pipeline Complete ==="
+.DEFAULT_GOAL := help
+UV ?= uv
 
-# Development
-dev:
-	docker compose up
+.PHONY: help install fmt lint typecheck test check changelog clean
 
-dev-build:
-	docker compose up --build
+help: ## List the available commands
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-dev-down:
-	docker compose down
+install: ## Install every dependency group and extra, plus the git hooks
+	$(UV) sync --all-groups --all-extras
+	$(UV) run pre-commit install --hook-type pre-commit --hook-type commit-msg
 
-logs:
-	docker compose logs -f app
+fmt: ## Format the code and apply safe lint fixes
+	$(UV) run ruff format .
+	$(UV) run ruff check --fix .
 
-shell:
-	docker compose exec app bash
+lint: ## Check formatting and lint rules
+	$(UV) run ruff format --check .
+	$(UV) run ruff check .
 
-db-shell:
-	docker compose exec db psql -U reflex
+typecheck: ## Type-check (strict for src/)
+	$(UV) run pyright
 
-# Testing
-test:
-	docker compose run --rm app pytest -v
+test: ## Run the tests with the 100% branch-coverage gate
+	$(UV) run pytest --cov --cov-report=term-missing
 
-test-cov:
-	docker compose run --rm app pytest --cov=reflex --cov-report=html
+check: lint typecheck test ## Run everything CI runs
 
-# Code quality
-lint:
-	uv run ruff check src tests
+changelog: ## Regenerate CHANGELOG.md from conventional commits
+	$(UV) run git-cliff --output CHANGELOG.md
+	@$(UV) run python -c "import pathlib; p = pathlib.Path('CHANGELOG.md'); p.write_text(p.read_text().rstrip() + '\n')"
 
-lint-fix:
-	uv run ruff check --fix src tests
-
-format:
-	uv run ruff format src tests
-
-type-check:
-	uv run pyright src
-
-check: lint type-check test
-
-# Database
-migrate:
-	docker compose run --rm app python scripts/migrate.py
-
-# Utilities
-demo:
-	uv run python scripts/demo.py
-
-replay:
-	docker compose run --rm app python scripts/replay.py $(ARGS)
-
-dlq:
-	docker compose run --rm app python scripts/dlq.py
-
-# API Testing (Bruno)
-api-test:
-	bru run bruno --env docker
-
-api-test-health:
-	bru run bruno/health --env docker
-
-api-test-events:
-	bru run bruno/events --env docker
-
-# Documentation
-docs:
-	uv run --extra docs mkdocs serve
-
-docs-build:
-	uv run --extra docs mkdocs build
-
-docs-deploy:
-	uv run --extra docs mkdocs gh-deploy --force
-
-# Cleanup
-clean:
-	docker compose down -v
-	find . -type d -name __pycache__ -exec rm -rf {} +
-	find . -type d -name .pytest_cache -exec rm -rf {} +
-	find . -type d -name .ruff_cache -exec rm -rf {} +
-	find . -type d -name site -exec rm -rf {} +
-	find . -type f -name "*.pyc" -delete
+clean: ## Remove caches and build output
+	rm -rf .pytest_cache .ruff_cache .coverage coverage.xml htmlcov dist site .cache
+	find . -name __pycache__ -type d -prune -not -path './.venv/*' -exec rm -rf {} +
