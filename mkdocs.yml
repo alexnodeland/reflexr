@@ -202,6 +202,7 @@ nav:
           - adr/0036-typed-run-failures.md
           - adr/0037-joining-stackrs-network.md
           - adr/0038-dashboards-generated-tested-and-released.md
+          - adr/0039-namespaced-event-types.md
           - adr/template.md
       - RFCs:
           - rfcs/README.md

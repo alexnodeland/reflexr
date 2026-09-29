@@ -540,6 +540,7 @@ The contributor stack is `compose.yaml`: PostgreSQL for the tests, and oncall un
 | [0036](adr/0036-typed-run-failures.md) | Typed run failures |
 | [0037](adr/0037-joining-stackrs-network.md) | Joining stackr's network when it runs |
 | [0038](adr/0038-dashboards-generated-tested-and-released.md) | Dashboards generated, tested and released |
+| [0039](adr/0039-namespaced-event-types.md) | Namespaced event types |
 
 ## Open questions
 

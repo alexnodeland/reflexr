@@ -40,5 +40,6 @@ Each record captures one decision: the context that forced it, the options consi
 | [0036](0036-typed-run-failures.md) | Typed run failures | Accepted |
 | [0037](0037-joining-stackrs-network.md) | Joining stackr's network when it runs | Accepted |
 | [0038](0038-dashboards-generated-tested-and-released.md) | Dashboards generated, tested and released | Accepted |
+| [0039](0039-namespaced-event-types.md) | Namespaced event types | Accepted |
 
 To add a record, copy [`template.md`](template.md) to the next number and add a row above.
