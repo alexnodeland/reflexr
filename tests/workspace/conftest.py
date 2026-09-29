@@ -1,8 +1,12 @@
-"""Fixtures for the workspace behaviour suite, which every storage must pass."""
+"""Fixtures for the workspace behaviour suite, which every storage must pass.
 
-from collections.abc import Iterable, Iterator
+The suite runs on in-memory storage, on SQLite, and on PostgreSQL when it is configured.
+"""
+
+from collections.abc import AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Protocol
 
 import pytest
@@ -15,7 +19,9 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 import tests.event_types  # noqa: F401  (registers the test event types)
 from reflexr import Rule, UserActor
 from reflexr.core import Predicates
+from reflexr.sql import SqlStorage, create_schema
 from reflexr.workspace import InMemoryStorage, Storage, Workspace, Workspaces
+from tests.databases import SQL_BACKENDS, empty_database
 from tests.event_types import Deploy, Flag, Heartbeat, ServiceError
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -75,10 +81,17 @@ def telemetry() -> Iterator[Telemetry]:
     meter_provider.shutdown()
 
 
-@pytest.fixture(params=["memory"])
-def storage(request: pytest.FixtureRequest, clock: FakeClock) -> Storage:
-    assert request.param == "memory"
-    return InMemoryStorage(clock=clock)
+@pytest.fixture(params=["memory", *SQL_BACKENDS])
+async def storage(
+    request: pytest.FixtureRequest, clock: FakeClock, tmp_path: Path
+) -> AsyncIterator[Storage]:
+    if request.param == "memory":
+        yield InMemoryStorage(clock=clock)
+        return
+    async with empty_database(request.param, tmp_path) as database:
+        engine = database.engine()
+        await create_schema(engine)
+        yield SqlStorage(engine, clock=clock)
 
 
 class Build(Protocol):

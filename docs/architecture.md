@@ -10,7 +10,7 @@
 | `reflexr.evals` (extra) | Implemented: feedback as evalr examples, and evaluators as rules; experiments planned |
 | `reflexr.workspace` | Implemented: storage protocol, in-memory storage, workspace handles, the `Reactor` (evaluation, execution and schedules) and function actions |
 | `reflexr.agent` | Implemented: agent actions with the `EventContext` capability, and checkpointed graph actions |
-| `reflexr.sql` | Planned (phase 4) |
+| `reflexr.sql` | Implemented: `SqlStorage` on PostgreSQL and SQLite, with packaged Alembic migrations |
 | `reflexr.fastapi` | Implemented: REST and the WebSocket stream, over one command handler |
 | `reflexr.mcp` | Implemented: publishing, reading and administration as MCP tools, and runs as resources |
 | `examples/oncall` | Planned (phase 6) |
@@ -403,9 +403,27 @@ Every write is a span (`reflexr.publish {type}`, a producer span; `reflexr.feedb
 `reflexr.workspace` defines the storage protocol, and the same behaviour suite runs against every implementation:
 
 - **`InMemoryStorage`**, for tests, examples and single-process prototypes.
-- **`SqlStorage`** (`reflexr.sql`), on PostgreSQL and SQLite with SQLAlchemy 2's asyncio extension, with Alembic migrations shipped in the package.
+- **`SqlStorage`** (`reflexr.sql`), on PostgreSQL and SQLite with SQLAlchemy 2's asyncio extension, with Alembic migrations shipped in the package ([ADR-0030](adr/0030-sql-storage.md)).
 
 A transaction is scoped to one workspace (a `WorkspaceRef` of tenant and workspace) and serialized with every other transaction on it. Within it the host appends envelopes, loads and saves rule cursors and states, creates and updates runs, and dead-letters evaluation errors; it reads its own writes, commits when its block exits normally and rolls back if it raises. Appending an id that is already in the log is an error, so callers look ids up first. Outside transactions, storage serves reads (`read`, `subscribe`, runs, dead letters), discovery (`workspaces`, `due_runs`), leases with an injectable clock, and schedule state.
+
+```python
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from reflexr.sql import SqlStorage, create_sqlite_engine, migrate
+
+engine = create_async_engine("postgresql+asyncpg://localhost/app")  # reflexr[postgres]
+# or: engine = create_sqlite_engine("sqlite+aiosqlite:///app.db")   # reflexr[sqlite]
+await migrate(engine)  # safe on every start
+workspaces = Workspaces(SqlStorage(engine), events=[...], rules=[...])
+```
+
+`SqlStorage` is one implementation for both databases, with no dialect-specific code:
+
+- **Locking.** A transaction selects its workspace's row `FOR UPDATE` before it reads anything, creating the row if the workspace is new, and holds the lock until it commits. `seq` and `ts` are assigned from the `head_seq` and `head_ts` kept on that row. On SQLite, which has no row locks, every transaction begins with `BEGIN IMMEDIATE`, and an engine from `create_sqlite_engine` keeps one connection, so a process's transactions take turns in the order they begin.
+- **Subscriptions** read the log a page at a time and, once caught up, wake at once for commits made through the same `SqlStorage`, or poll every `poll_interval` (0.5 s by default) for commits made elsewhere.
+- **Leases** are rows, taken with a conditional `UPDATE` or else an `INSERT`, and expire by the storage's clock.
+- **Schema.** `migrate(engine)` runs the packaged Alembic migrations, which record their version in `reflexr_alembic_version` beside the application's own; `create_schema(engine)` creates the tables directly, for tests and prototypes.
 
 ## Data model
 
@@ -413,16 +431,19 @@ A transaction is scoped to one workspace (a `WorkspaceRef` of tenant and workspa
 erDiagram
     TENANT ||--o{ WORKSPACE : owns
     WORKSPACE ||--o{ EVENT : "log ordered by seq"
-    WORKSPACE ||--o{ RULE_CURSOR : "one per rule"
-    RULE_CURSOR ||--o{ RULE_STATE : "one per scope"
+    WORKSPACE ||--o{ RULE_PROGRESS : "one per rule"
+    RULE_PROGRESS ||--o{ SCOPE_STATE : "one per scope"
     WORKSPACE ||--o{ RUN : "one per firing"
     RUN }o--|| EVENT : "fired at"
     WORKSPACE ||--o{ DEAD_LETTER : "per rule"
+    WORKSPACE ||--o{ SCHEDULE : "last tick of each"
+    WORKSPACE ||--o{ LEASE : "evaluation and runs"
 ```
 
 - **Rules live in code** (v0.1) and are identified by name. A rule's cursor row stores a hash of its definition; changing the definition resets its state and is recorded in the log.
 - **Rule state** is a JSON document per rule and scope, owned by the rule's condition, saved with its cursor.
 - **Runs** hold their status, attempts, next attempt time, causal chain, the trace id of each attempt, and for graphs the latest checkpoint.
+- **In SQL** each entity is a `reflexr_` table whose primary key starts with the tenant and the workspace. Envelopes, runs, rule progress, scope states and dead letters are stored as the JSON of their Pydantic models (`JSON`, not `JSONB`, so key order is kept), beside the columns queries filter and order by: an event's unique id, a run's rule, scope, status, `fired_seq` and `next_attempt_at`. The workspace row holds the log's head and a counter that orders runs, dead letters, progress and schedules by creation. Timestamps in columns are stored in UTC ([ADR-0030](adr/0030-sql-storage.md)).
 
 ## Aligned with artifactr
 
@@ -440,12 +461,13 @@ erDiagram
 
 ## Dependencies
 
-Python 3.12+. Runtime: `pydantic` (core); `opentelemetry-api` (telemetry and workspace); `cronsim` (schedules); `pydantic-ai-slim` and `pydantic-graph` (agent). Extras: `sql` (`sqlalchemy[asyncio]`, `alembic`), `postgres` and `sqlite` (drivers), `fastapi`, `mcp`. Tooling: uv, ruff, pyright in strict mode, pytest, and Zensical with mkdocstrings for the documentation site.
+Python 3.12+. Runtime: `pydantic` (core); `opentelemetry-api` (telemetry and workspace); `cronsim` (schedules); `pydantic-ai-slim` and `pydantic-graph` (agent). Extras: `sql` (`sqlalchemy[asyncio]` and `alembic`), `postgres` (`sql` and asyncpg) and `sqlite` (`sql` and aiosqlite), `fastapi`, `mcp`. Tooling: uv, ruff, pyright in strict mode, pytest, and Zensical with mkdocstrings for the documentation site.
 
 ## Testing
 
 - **Core:** the conformance fixtures, plus property tests that replaying any log reproduces its firings.
-- **Workspace:** one behaviour suite (publishing, evaluation, runs, retries, leases, schedules) against every storage.
+- **Workspace:** one behaviour suite (publishing, evaluation, runs, retries, leases, schedules) against every storage: in memory, SQLite, and PostgreSQL when `REFLEXR_TEST_POSTGRES_URL` is set, as in CI's PostgreSQL job (`make pg-up test-pg` locally).
+- **SQL:** the migrations checked against the models on both databases, and locking, polling, leases and stored values across processes.
 - **Agent:** scripted models with pydantic-ai's `FunctionModel` and `TestModel`; graph runs interrupted and resumed.
 - **Surfaces:** contract tests for every frame and endpoint, and an MCP client round trip.
 - **Reference implementation:** the real server and client end to end, with a scripted model.
@@ -484,6 +506,7 @@ Coverage is 100% of lines and branches, and pyright runs in strict mode with no 
 | [0026](adr/0026-the-reactors-evaluation.md) | The reactor's evaluation: rules on workspaces, the depth of reflexr's facts, and rebuilds |
 | [0027](adr/0027-executing-runs.md) | Executing runs |
 | [0028](adr/0028-schedules-and-cronsim.md) | Schedules, with cronsim for cron expressions |
+| [0030](adr/0030-sql-storage.md) | SQL storage with one dialect-neutral implementation |
 
 ## Open questions
 
@@ -492,4 +515,5 @@ Coverage is 100% of lines and branches, and pyright runs in strict mode with no 
 - **Live output from runs.** Token-level streaming of agent runs over the WebSocket, as artifactr streams its runs.
 - **Resuming inside parallel branches.** Graph checkpoints are proven for sequential steps; a run that crashes inside a fork restarts from the last checkpoint before it.
 - **Retention.** Compacting old envelopes, and what a rule replaying past the retained log starts from.
+- **Subscribers in other processes.** SQL subscriptions poll for commits made elsewhere; PostgreSQL `LISTEN/NOTIFY` could wake them at once, with polling kept for SQLite ([ADR-0030](adr/0030-sql-storage.md)).
 - **Hot workspaces.** A workspace's appends are serialized. Partitioning one workspace's log by key may be needed for high-volume sources.
