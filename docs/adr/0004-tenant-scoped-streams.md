@@ -11,7 +11,7 @@ Reflex kept every event in one table with a processing status per row, shared by
 ## Decision
 
 - **A stream is the unit of ordering, isolation and scale**: a tenant-scoped, append-only log. `Streams(storage, events=[...])` is the entry point, and `await streams.open(tenant_id, stream_id, actor=...)` returns a `Stream` bound to one tenant, stream and actor. Nothing below it takes a raw tenant id.
-- **One log per stream with a gap-free `seq`**, assigned inside the append transaction while holding the stream's lock.
+- **One log per stream with a gap-free `seq`**, assigned inside the append transaction while holding the stream's lock. The envelope's `ts` is assigned under the same lock as the later of the clock and the previous `ts`, so log time never decreases within a stream.
 - **Publishing is idempotent by event id** within a stream.
 - **reflexr's own facts** (firings, run lifecycle, ticks) are appended to the same log, so one `seq` orders everything, one subscription sees everything, and rules can react to them (for example, to a dead-lettered run).
 - **Event types are allowlisted** per `Streams`.

@@ -12,7 +12,8 @@ Rules like "three errors within a minute" or "no heartbeat for five minutes" nee
 
 - Every stateful stage has a **pure reducer**: `reduce(state, envelope) -> (state, output)`. State is a Pydantic model, stored as JSON per rule and scope, and saved in the same transaction as the rule's cursor ([ADR-0005](0005-per-rule-cursors.md)).
 - **The log is the clock.** Windows are measured with envelopes' `ts`, assigned when they are appended. Evaluation never reads a clock.
-- **Time-based patterns advance with the log.** `absence` fires when a later envelope's `ts` passes the deadline; schedules append `Tick` events so that quiet streams still move time forward.
+- **Time advances with the log.** Every envelope advances a rule's clock, including envelopes its filter rejects: time is a separate input to the stateful stages. A deadline that passes (such as the end of an `absence` window) applies to every scope that already has state. Schedules append `Tick` events so that quiet streams still move time forward.
+- **Log time never decreases** within a stream: `ts` is assigned under the stream's lock as the later of the clock and the previous `ts` ([ADR-0004](0004-tenant-scoped-streams.md)).
 - **Replay is exact**: evaluating a log from the start reproduces its firings and states. Property tests check it.
 - **Changing a rule's definition resets its state**, and the reset is recorded in the log.
 

@@ -195,11 +195,13 @@ Field references (`F.severity`, `F.labels.env`) are checked against the event ty
 
 ### Scopes
 
-`scope=F.service` gives a rule independent state and ordering per service: three errors from `auth` and two from `billing` are two counts, and a slow run for `auth` never delays `billing`. The default scope is the whole stream. An event whose scope fields are missing is an evaluation error for that rule.
+`scope=F.service` gives a rule independent state and ordering per service: three errors from `auth` and two from `billing` are two counts, and a slow run for `auth` never delays `billing`. The default scope is the whole stream. An envelope that passes a rule's filter but lacks its scope fields is an evaluation error for that rule.
 
 ### Time
 
-Rules measure time by the log: an envelope's `ts`, assigned when it is appended ([ADR-0007](adr/0007-rule-state-as-pure-reducers.md)). Evaluation never reads a clock, so replaying a log reproduces its firings exactly. Patterns that wait for time to pass, like `absence`, are evaluated as later envelopes arrive; a [schedule](#schedules) appending a `Tick` every so often guarantees time keeps moving in a quiet stream.
+Rules measure time by the log: an envelope's `ts`, assigned when it is appended ([ADR-0007](adr/0007-rule-state-as-pure-reducers.md)). Evaluation never reads a clock, so replaying a log reproduces its firings exactly.
+
+Every envelope advances a rule's clock, including envelopes its filter rejects: time is a separate input to the stateful stages, not an event they have to match. When the clock passes a deadline, such as the end of an `absence` window, it applies to every scope that already has state. So a `Tick`, which matches no heartbeat filter and has no `service` field, still lets `absence` fire for each service the rule has seen. A [schedule](#schedules) appending a `Tick` every so often guarantees that time keeps moving in a quiet stream.
 
 ## Deciding and acting
 
@@ -278,7 +280,7 @@ LLM workflows triggered by events can loop and can spend ([ADR-0010](adr/0010-lo
 ## Tenancy and concurrency
 
 - **Scoped handles.** `await streams.open(tenant_id, stream_id, actor=...)` returns a `Stream` bound to that tenant, stream and actor. Nothing below it accepts a raw tenant id ([ADR-0004](adr/0004-tenant-scoped-streams.md)).
-- **Sequencing.** `seq` is assigned inside the append transaction, which holds the stream's lock (in SQL, the stream row, locked `FOR UPDATE`), giving a gap-free total order per stream. Appends to one stream are serialized; many streams scale out.
+- **Sequencing.** `seq` is assigned inside the append transaction, which holds the stream's lock (in SQL, the stream row, locked `FOR UPDATE`), giving a gap-free total order per stream. `ts` is assigned under the same lock as the later of the clock and the previous envelope's `ts`, so it never decreases within a stream, whatever the clock skew between processes. Appends to one stream are serialized; many streams scale out.
 - **Leases.** One evaluator per stream, one executor per run, and one schedule runner per schedule, each a storage lease with a time-to-live that its holder renews and that lapses if it dies. Any number of reactor processes can share the work.
 
 ## Schedules

@@ -18,7 +18,7 @@ A command is a JSON object with a `type`. Over REST and WebSocket it travels in 
 | `retry_run` | `run_id` | The run becomes runnable now, whatever its status except `succeeded`. |
 | `skip_run` | `run_id`, `reason?` | A pending, retrying or dead-lettered run is marked skipped, unblocking its scope. |
 | `cancel_run` | `run_id` | A running run is cancelled and recorded as cancelled. |
-| `replay_rule` | `rule`, `from_seq`, `mode` (`rebuild` or `refire`) | Resets the rule's cursor to `from_seq`. `rebuild` recomputes state without creating runs; `refire` creates runs for the firings found, with new ids. |
+| `replay_rule` | `rule`, `from_seq`, `mode` (`rebuild` or `refire`) | Resets the rule's cursor to `from_seq`. `rebuild` recomputes state and appends no `rule_fired` events and creates no runs; `refire` records the firings found and creates runs for them, with new ids. |
 
 Rejections carry a stable `type` and a `message`: `not_found`, `invalid_state`, `validation_failed` (with Pydantic's `errors`), `forbidden`, `depth_exceeded` (a publish beyond the causation limit), and `unsupported_protocol`.
 
