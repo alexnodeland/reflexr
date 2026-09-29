@@ -106,7 +106,7 @@ reflexr's own events, alongside the application's:
 
 ## MCP
 
-`reflexr.mcp` serves the same commands and reads to MCP clients, with the host's `resolve(ctx)` returning the client's tenant and `ExternalAgentActor`. An optional `authorize(tenant, workspace, actor)`, the same hook as REST's, is asked on every tool call and resource read that names a workspace, and a refusal is a tool error carrying the `forbidden` rejection's message. Commands go through the same handler as REST and the WebSocket; a rejection is a tool error carrying its message.
+`reflexr.mcp` serves the same commands and reads to MCP clients, with the host's `resolve(ctx)` returning the client's tenant and `ExternalAgentActor`. An optional `authorize(tenant, workspace, actor)`, the same hook as REST's, is asked on every tool call, resource read and resource subscription that names a workspace, and a refusal is a tool error, or a failed read or subscription, carrying the `forbidden` rejection's message. Commands go through the same handler as REST and the WebSocket; a rejection is a tool error carrying its message.
 
 | MCP | reflexr |
 |---|---|
@@ -115,7 +115,8 @@ reflexr's own events, alongside the application's:
 | Tool `schedule_status` | Each schedule targeting the workspace, with its last and next tick, as `GET /v1/workspaces/{workspace_id}/schedules` reports them. |
 | Tools `list_runs`, `get_run`, `retry_run`, `skip_run`, `cancel_run`, `list_dead_letters` | Operate runs. `list_runs` and `list_dead_letters` take the filters REST's reads do. |
 | Tool `give_feedback` | Typed feedback on a run, a firing or a chain. |
-| Resource template `reflexr://{tenant_id}/{workspace_id}/runs/{run_id}` | A run's current JSON, with resource-updated notifications as it progresses. Readable only by clients of that tenant. |
+| Resource template `reflexr://{tenant_id}/{workspace_id}/runs/{run_id}` | A run's current JSON, with resource-updated notifications as it progresses. Readable only by clients of that tenant, in a workspace `authorize` allows. |
+| `subscriptions/listen` and resource-updated notifications | Published for every run fact in each workspace a client has used through a tool. A `listen` request that names a run of another tenant, or of a workspace `authorize` refuses, fails with `INVALID_PARAMS` and the message a read of it would fail with. |
 
 ## Versioning and schema
 

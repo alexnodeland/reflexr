@@ -381,7 +381,7 @@ Every surface is a thin adapter over a `Workspace` handle ([ADR-0011](adr/0011-s
 | Schedules | `reflexr.workspace` | Cron and interval schedules that publish into workspaces. |
 | MCP | `reflexr.mcp` | Publishing, reading and administration as MCP tools, so external agents can feed and operate workspaces. |
 
-Authentication is the host's: each surface takes a resolver that returns the tenant and actor for a request. Authorization within a tenant is the host's too: the router and the MCP server take the same `authorize(tenant_id, workspace_id, actor)` hook (`reflexr.workspace.Authorize`), asked before a request uses a workspace.
+Authentication is the host's: each surface takes a resolver that returns the tenant and actor for a request. Authorization within a tenant is the host's too: the router and the MCP server take the same `authorize(tenant_id, workspace_id, actor)` hook (`reflexr.workspace.Authorize`), asked before a request uses a workspace, and by the MCP server before a client reads or subscribes to a run.
 
 ## Workspace handles
 

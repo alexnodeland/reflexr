@@ -3,12 +3,16 @@
 import asyncio
 import contextlib
 import json
-from collections.abc import AsyncGenerator, Awaitable, Callable
+import re
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from typing import Any, Literal
 
+from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 from mcp.server.subscriptions import InMemorySubscriptionBus, ResourceUpdated, SubscriptionBus
+from mcp.shared.exceptions import MCPError
+from mcp.types import INVALID_PARAMS, SubscriptionsListenRequestParams
 from opentelemetry import trace
 from pydantic import JsonValue
 from starlette.applications import Starlette
@@ -54,6 +58,12 @@ INSTRUCTIONS = (
 
 _RUN_FACTS = frozenset(t.event_type for t in SYSTEM_EVENTS if t.event_type.startswith("run_"))
 
+_FORBIDDEN = "this workspace is not yours to use"
+"""Why ``authorize`` refused, as the router's 403 says it."""
+
+_RUN_URI = re.compile(r"reflexr://(?P<tenant>[^/]+)/(?P<workspace>.+)/runs/[^/]+")
+"""A run's URI as :func:`run_uri` writes it, which is what notifications name."""
+
 
 def run_uri(tenant_id: TenantId, workspace_id: WorkspaceId, run_id: str) -> str:
     """Return a run's resource URI."""
@@ -73,9 +83,10 @@ class ReflexrMcp:
     Args:
         workspaces: Opens tenant-scoped workspaces, and holds the rules.
         resolve: Authenticates each request.
-        authorize: Whether a client may use a workspace of its tenant, asked on every tool call
-            and resource read that names a workspace; allows everything if omitted. A refusal
-            is a tool error carrying the ``forbidden`` rejection's message.
+        authorize: Whether a client may use a workspace of its tenant, asked on every tool call,
+            resource read and resource subscription that names a workspace; allows everything
+            if omitted. A refusal is a tool error, or a failed resource read or subscription,
+            carrying the ``forbidden`` rejection's message.
         name: The server's name.
         bus: Where resource-change notifications go; in-process by default.
     """
@@ -94,7 +105,12 @@ class ReflexrMcp:
         self._authorize = authorize
         self._bus = bus or InMemorySubscriptionBus()
         self._watchers: dict[tuple[TenantId, WorkspaceId], asyncio.Task[None]] = {}
-        self.server = MCPServer(name=name, instructions=INSTRUCTIONS, subscriptions=self._bus)
+        self.server = MCPServer(
+            name=name,
+            instructions=INSTRUCTIONS,
+            subscriptions=self._bus,
+            middleware=[self._check_subscriptions],
+        )
         self._register()
 
     def http_app(self, **options: Any) -> Starlette:
@@ -132,15 +148,47 @@ class ReflexrMcp:
         trace.get_current_span().set_attributes(
             {**workspace_attributes(tenant_id, workspace_id), **actor_attributes(actor)}
         )
-        if self._authorize is not None and not await self._authorize(
-            tenant_id, workspace_id, actor
-        ):
-            raise Forbidden("this workspace is not yours to use")
+        if not await self._allows(tenant_id, workspace_id, actor):
+            raise Forbidden(_FORBIDDEN)
         workspace = await self._workspaces.open(tenant_id, workspace_id, actor=actor)
         key = (tenant_id, workspace_id)
         if key not in self._watchers:
             self._watchers[key] = asyncio.create_task(self._notify(tenant_id, workspace))
         return workspace
+
+    async def _allows(
+        self, tenant_id: TenantId, workspace_id: WorkspaceId, actor: ExternalAgentActor
+    ) -> bool:
+        return self._authorize is None or await self._authorize(tenant_id, workspace_id, actor)
+
+    async def _check_subscriptions(
+        self, ctx: ServerRequestContext[Any, Any], call_next: CallNext
+    ) -> HandlerResult:
+        """Check a subscription to runs as a read of them is checked.
+
+        The MCP SDK serves ``subscriptions/listen`` itself, so this middleware asks, when a
+        stream opens, what reading each run it names would: its tenant, and ``authorize``.
+        A refusal fails the request with ``INVALID_PARAMS`` and the read's message.
+        """
+        if ctx.method == "subscriptions/listen":
+            params = SubscriptionsListenRequestParams.model_validate(ctx.params, by_name=False)
+            await self._check_uris(ctx, params.notifications.resource_subscriptions or ())
+        return await call_next(ctx)
+
+    async def _check_uris(self, ctx: ServerRequestContext[Any, Any], uris: Sequence[str]) -> None:
+        named: dict[tuple[str, str], str] = {}
+        for uri in uris:
+            if (match := _RUN_URI.fullmatch(uri)) is not None:
+                named.setdefault((match["tenant"], match["workspace"]), uri)
+        if not named:
+            return  # no run, so nothing of a workspace's to refuse
+        context = Context(request_context=ctx, mcp_server=self.server, subscriptions=self._bus)
+        tenant_id, actor = await self._resolve(context)
+        for (tenant, workspace_id), uri in named.items():
+            if tenant != tenant_id:
+                raise MCPError(INVALID_PARAMS, _unavailable(tenant), data={"uri": uri})
+            if not await self._allows(tenant_id, workspace_id, actor):
+                raise MCPError(INVALID_PARAMS, _FORBIDDEN, data={"uri": uri})
 
     async def _notify(self, tenant_id: TenantId, workspace: Workspace) -> None:
         head = await workspace.head_seq()
@@ -309,13 +357,17 @@ class ReflexrMcp:
         async def run_resource(tenant_id: str, workspace_id: str, run_id: str, ctx: Context) -> str:
             resolved, actor = await self._resolve(ctx)
             if resolved != tenant_id:
-                raise ResourceError(f"runs of tenant {tenant_id} are not available")
+                raise ResourceError(_unavailable(tenant_id))
             try:
                 workspace = await self._open(ctx, workspace_id, (resolved, actor))
                 run = await workspace.run(run_id)
             except Rejection as rejection:
                 raise ResourceError(rejection.message) from rejection
             return run.model_dump_json()
+
+
+def _unavailable(tenant_id: TenantId) -> str:
+    return f"runs of tenant {tenant_id} are not available"
 
 
 def _rule_line(status: RuleStatus) -> str:

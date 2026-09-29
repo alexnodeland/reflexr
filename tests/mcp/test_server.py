@@ -10,7 +10,8 @@ import pytest
 from mcp import Client
 from mcp.server.mcpserver import Context
 from mcp.server.subscriptions import InMemorySubscriptionBus, ResourceUpdated, ServerEvent
-from mcp.types import TextContent, TextResourceContents
+from mcp.shared.exceptions import MCPError
+from mcp.types import INVALID_PARAMS, TextContent, TextResourceContents
 
 from reflexr import Actor, F, Feedback, Rule, by, on, run
 from reflexr.core import EvaluationError, ExternalAgentActor, TenantId, WorkspaceId
@@ -26,6 +27,7 @@ from reflexr.workspace import (
 from tests.event_types import Deploy, ServiceError
 
 CLAUDE = ExternalAgentActor(client_id="claude-code", name="Claude Code")
+FORBIDDEN = "this workspace is not yours to use"
 deploys = Rule(name="deploys", when=on(Deploy), scope=by(F.service), then=run("note"))
 
 
@@ -190,9 +192,22 @@ async def test_runs_are_resources_of_their_tenant_only(
         assert json.loads(content.text)["id"] == done.id
         with pytest.raises(Exception, match="run nope does not exist"):
             await client.read_resource(run_uri("acme", "prod", "nope"))
+        async with client.listen(resource_subscriptions=[run_uri("acme", "prod", done.id)]):
+            pass
+        resolved = identity.resolved
+        others = ["file:///elsewhere"]  # not a run, so neither checked nor authenticated
+        async with client.listen(tools_list_changed=True, resource_subscriptions=others) as sub:
+            assert sub.honored.resource_subscriptions == others
+        assert identity.resolved == resolved
         identity.tenant = "globex"
         with pytest.raises(Exception, match="runs of tenant acme are not available"):
             await client.read_resource(run_uri("acme", "prod", done.id))
+        for workspace_id in ("prod", "team/prod"):  # as notifications name them
+            uri = run_uri("acme", workspace_id, done.id)
+            with pytest.raises(MCPError, match="runs of tenant acme are not available") as refused:
+                async with client.listen(resource_subscriptions=[*others, uri]):
+                    pass
+            assert (refused.value.code, refused.value.data) == (INVALID_PARAMS, {"uri": uri})
 
 
 async def test_authorize_decides_which_workspaces_a_client_may_use(
@@ -209,7 +224,8 @@ async def test_authorize_decides_which_workspaces_a_client_may_use(
     await Reactor(workspaces, actions={"note": note}).settle()
     [done] = await secret.runs()
     head = await secret.head_seq()
-    mcp = ReflexrMcp(workspaces, resolve=Identity().resolve, authorize=authorize)
+    bus = RecordingBus()
+    mcp = ReflexrMcp(workspaces, resolve=Identity().resolve, authorize=authorize, bus=bus)
     run_id = {"run_id": done.id}
     tools: dict[str, dict[str, Any]] = {
         "publish_event": {"event": {"type": "deploy.finished", "service": "auth"}},
@@ -231,21 +247,35 @@ async def test_authorize_decides_which_workspaces_a_client_may_use(
     }
     try:
         async with Client(mcp.server) as client:
+            served = {tool.name for tool in (await client.list_tools()).tools}
+            assert served == {*tools, "list_rules"}, "every tool but list_rules names a workspace"
             for tool, args in tools.items():
                 error, text = await call(client, tool, workspace_id="secret", **args)
-                assert (error, text.endswith("this workspace is not yours to use")) == (
-                    True,
-                    True,
-                ), tool
-            with pytest.raises(Exception, match="this workspace is not yours to use"):
-                await client.read_resource(run_uri("acme", "secret", done.id))
+                assert (error, text.endswith(FORBIDDEN)) == (True, True), tool
+            uri = run_uri("acme", "secret", done.id)
+            with pytest.raises(Exception, match=FORBIDDEN):
+                await client.read_resource(uri)
+            with pytest.raises(MCPError, match=FORBIDDEN) as refused:
+                async with client.listen(resource_subscriptions=[uri]):
+                    pass
+            assert refused.value.code == INVALID_PARAMS
             assert (await call(client, "read_events", workspace_id="prod"))[0] is False
             assert (await call(client, "list_rules"))[0] is False  # names no workspace
+            assert await secret.head_seq() == head  # nothing was written
+            prod = await workspaces.open("acme", "prod", actor=CLAUDE)
+            for workspace in (secret, prod):
+                await workspace.publish(Deploy(service="auth"))
+            await Reactor(workspaces, actions={"note": note}).settle()
+            for _ in range(50):  # until the followed workspace's run facts arrive
+                if bus.events:
+                    break
+                await asyncio.sleep(0.01)
     finally:
         await mcp.aclose()
-    assert asked.count(("acme", "secret", "external_agent")) == len(tools) + 1
+    assert asked.count(("acme", "secret", "external_agent")) == len(tools) + 2
     assert asked[-1] == ("acme", "prod", "external_agent")
-    assert await secret.head_seq() == head  # nothing was written
+    followed = {str(event.uri).split("/")[3] for event in bus.events}
+    assert followed == {"prod"}, "a refused workspace is not followed"
 
 
 async def test_the_rule_status_lists_every_registered_rule_as_rest_does() -> None:
