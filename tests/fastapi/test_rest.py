@@ -1,7 +1,7 @@
 """REST: publishing, commands, reads and administration, with auth and rejections."""
 
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -9,7 +9,10 @@ from fastapi import FastAPI
 
 import reflexr.fastapi
 import reflexr.workspace
+from reflexr import Rule, on, run
+from reflexr.core import Event, PredicateFilter
 from reflexr.workspace import Reactor, Schedule, Workspaces
+from tests.event_types import Deploy
 from tests.fastapi.conftest import build, heartbeat, spike
 
 ERROR = {"type": "service.error", "service": "auth"}
@@ -138,6 +141,82 @@ async def test_the_rule_status_says_whether_a_rule_is_enabled() -> None:
             await client.post("/workspaces/prod/events", json={"event": ERROR})
         [status] = (await client.get("/workspaces/prod/rules")).json()
     assert (status["enabled"], status["cursor"], status["lag"]) == (False, 0, 2)
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = datetime(2026, 1, 1, tzinfo=UTC)
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+def boom(event: Event) -> bool:
+    raise RuntimeError("no")
+
+
+async def test_the_rule_and_schedule_status_bodies_keep_their_json() -> None:
+    fragile = Rule(
+        name="fragile", when=on(Deploy).where(PredicateFilter(name="boom")), then=run("page")
+    )
+    off = spike.model_copy(update={"name": "off", "enabled": False})
+    staging = Schedule(
+        name="staging", every=timedelta(minutes=5), workspaces=(("acme", "staging"),)
+    )
+    clock = Clock()
+    application, _, reactor = build(
+        rules=[spike, fragile, off],
+        schedules=[heartbeat, staging],
+        predicates={"boom": boom},
+        clock=clock,
+    )
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test/v1") as client:
+        for _ in range(2):
+            await client.post("/workspaces/prod/events", json={"event": ERROR})
+        await client.post(
+            "/workspaces/prod/events", json={"event": {"type": "deploy.finished", "service": "a"}}
+        )
+        await reactor.settle()
+        clock.now += timedelta(seconds=65)
+        await reactor.settle()
+        rules = (await client.get("/workspaces/prod/rules")).json()
+        schedules = (await client.get("/workspaces/prod/schedules")).json()
+        fresh = (await client.get("/workspaces/empty/schedules")).json()
+    assert rules == [
+        {
+            "rule": "spike",
+            "enabled": True,
+            "cursor": 8,
+            "lag": 0,
+            "generation": 0,
+            "dead_letters": 0,
+        },
+        {
+            "rule": "fragile",
+            "enabled": True,
+            "cursor": 8,
+            "lag": 0,
+            "generation": 0,
+            "dead_letters": 1,
+        },
+        {
+            "rule": "off",
+            "enabled": False,
+            "cursor": 0,
+            "lag": 8,
+            "generation": 0,
+            "dead_letters": 0,
+        },
+    ]
+    assert schedules == [
+        {
+            "schedule": "heartbeat-check",
+            "last_tick": "2026-01-01T00:01:00Z",
+            "next_tick": "2026-01-01T00:01:30Z",
+        }
+    ]
+    assert fresh == [{"schedule": "heartbeat-check", "last_tick": None, "next_tick": None}]
 
 
 async def test_requests_are_authenticated_and_authorized(app: App) -> None:

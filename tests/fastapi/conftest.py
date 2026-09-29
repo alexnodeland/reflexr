@@ -8,9 +8,17 @@ from fastapi import FastAPI
 from starlette.requests import HTTPConnection
 
 from reflexr import Actor, F, Feedback, Rule, UserActor, by, on, run
-from reflexr.core import TenantId, WorkspaceId
+from reflexr.core import Predicates, TenantId, WorkspaceId
 from reflexr.fastapi import Unauthorized, reflexr_router
-from reflexr.workspace import InMemoryStorage, Reaction, Reactor, Schedule, Workspaces
+from reflexr.workspace import (
+    Clock,
+    InMemoryStorage,
+    Reaction,
+    Reactor,
+    Schedule,
+    Workspaces,
+    utc_now,
+)
 from tests.event_types import Deploy, Heartbeat, ServiceError
 
 spike = Rule(
@@ -46,13 +54,17 @@ def build(
     *,
     rules: Iterable[Rule] = (spike,),
     schedules: Iterable[Schedule] = (heartbeat,),
+    predicates: Predicates | None = None,
+    clock: Clock = utc_now,
     **options: Any,
 ) -> tuple[FastAPI, Workspaces, Reactor[None]]:
     workspaces = Workspaces(
-        InMemoryStorage(),
+        InMemoryStorage(clock=clock),
         events=[ServiceError, Deploy, Heartbeat],
         rules=rules,
+        predicates=predicates,
         schedules=schedules,
+        clock=clock,
     )
     app = FastAPI()
     router = reflexr_router(workspaces, resolve_actor=resolve_actor, authorize=authorize, **options)
