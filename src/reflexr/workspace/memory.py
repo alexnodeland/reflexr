@@ -23,7 +23,7 @@ from reflexr.core import (
     ScopeKey,
     ScopeState,
 )
-from reflexr.workspace.storage import Entry, WorkspaceRef
+from reflexr.workspace.storage import Entry, WorkspaceRef, run_lease
 
 Clock = Callable[[], datetime]
 """Returns the current time; injectable so tests control time."""
@@ -247,14 +247,21 @@ class InMemoryStorage:
         return [ref for ref, data in self._workspaces.items() if data.log]
 
     async def due_runs(self, *, now: datetime, limit: int) -> list[tuple[WorkspaceRef, Run]]:
-        """Return pending and retrying runs due by ``now``, across workspaces, oldest first."""
-        due = [
+        """Return the runs to attempt now, across workspaces, oldest first."""
+
+        def due(data: _Data, run: Run) -> bool:
+            if run.status == "running":
+                lease = data.leases.get(run_lease(run.id))
+                return lease is None or lease[1] <= now
+            return run.status in ("pending", "retrying") and run.next_attempt_at <= now
+
+        found = [
             (ref, run)
             for ref, data in self._workspaces.items()
             for run in data.runs.values()
-            if run.status in ("pending", "retrying") and run.next_attempt_at <= now
+            if due(data, run)
         ]
-        return sorted(due, key=lambda item: item[1].next_attempt_at)[:limit]
+        return sorted(found, key=lambda item: item[1].next_attempt_at)[:limit]
 
     async def acquire_lease(
         self, workspace: WorkspaceRef, key: str, holder: str, ttl: timedelta

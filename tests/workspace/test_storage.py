@@ -6,7 +6,7 @@ from datetime import timedelta
 import pytest
 
 from reflexr.core import EvaluationError, RuleProgress, ScopeState, start, succeed
-from reflexr.workspace import Storage, WorkspaceRef
+from reflexr.workspace import Storage, WorkspaceRef, run_lease
 from tests.workspace.conftest import START, FakeClock
 from tests.workspace.helpers import entry, fired
 
@@ -163,9 +163,24 @@ async def test_due_runs_span_workspaces_oldest_first(storage: Storage) -> None:
         await transaction.save_runs([soon, later, running])
     async with storage.transaction(OTHER) as transaction:
         await transaction.save_runs([now])
+    await storage.acquire_lease(ACME, run_lease("r4"), "executor", timedelta(minutes=1))
     due = await storage.due_runs(now=START + timedelta(seconds=10), limit=10)
     assert due == [(OTHER, now), (ACME, soon)]
     assert await storage.due_runs(now=START + timedelta(seconds=10), limit=1) == [(OTHER, now)]
+
+
+async def test_running_runs_are_due_when_their_lease_lapses(
+    storage: Storage, clock: FakeClock
+) -> None:
+    held, _ = start(fired("r1"), now=START)
+    orphaned, _ = start(fired("r2", scope="billing"), now=START)
+    async with storage.transaction(ACME) as transaction:
+        await transaction.save_runs([held, orphaned])
+    await storage.acquire_lease(ACME, run_lease("r1"), "executor", timedelta(seconds=30))
+    assert await storage.due_runs(now=START, limit=10) == [(ACME, orphaned)]
+    clock.advance(31)
+    due = await storage.due_runs(now=clock(), limit=10)
+    assert {run.id for _, run in due} == {"r1", "r2"}
 
 
 async def test_dead_letters_are_kept_per_rule(storage: Storage) -> None:

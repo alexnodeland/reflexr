@@ -6,7 +6,7 @@
 |---|---|
 | `reflexr.core` | Implemented |
 | `reflexr.telemetry` | Implemented: spans, attributes and the metric registry |
-| `reflexr.workspace` | In progress (phase 2): storage protocol, in-memory storage, workspace handles and the `Reactor`'s evaluation implemented; execution and schedules planned |
+| `reflexr.workspace` | In progress (phase 2): storage protocol, in-memory storage, workspace handles, the `Reactor` (evaluation and execution) and function actions implemented; schedules planned |
 | `reflexr.agent` | Planned (phase 3) |
 | `reflexr.sql` | Planned (phase 4) |
 | `reflexr.fastapi`, `reflexr.mcp` | Planned (phase 5) |
@@ -56,7 +56,7 @@ Neither library imports the other. They share conventions (tenants and workspace
 | **Run** | One execution of an action for one firing. Retried until it succeeds or is dead-lettered; its lifecycle is recorded in the log. |
 | **Reactor** | The runtime that evaluates rules and executes runs across workspaces, in any number of processes. |
 
-Supporting types: `Condition` (the stages of a rule's `when`), `Scope`, `Schedule`, `Actor`, and `Reaction` (the dependencies an action receives: the workspace, the firing, the run and the application's own deps).
+Supporting types: `Condition` (the stages of a rule's `when`), `Scope`, `Schedule`, `Actor`, and `Reaction` (what an action receives: the workspace, the run, the rule, the matched envelopes and the application's own deps).
 
 ## Layers
 
@@ -80,8 +80,8 @@ Dependencies point one way. Each layer is usable without the ones above it, and 
 |---|---|---|
 | `reflexr.core` | pydantic | Events and envelopes, actors, conditions and their reducers, rules, evaluation, the run lifecycle and retry policy. Pure, synchronous, no I/O. |
 | `reflexr.telemetry` | core, opentelemetry-api | Attribute names, the metric registry and its cardinality policy, and the tracer and instruments. Never configures the SDK. |
-| `reflexr.workspace` | core, telemetry | `Workspaces`, `Workspace`, the storage protocol, in-memory storage, the `Reactor`, function actions, schedules and their runner. |
-| `reflexr.agent` | workspace, pydantic-ai, pydantic-graph | `Reaction`, agent actions with the `EventContext` capability, graph actions with checkpoints. |
+| `reflexr.workspace` | core, telemetry | `Workspaces`, `Workspace`, the storage protocol, in-memory storage, the `Reactor`, the action port and `Reaction`, schedules and their runner. |
+| `reflexr.agent` | workspace, pydantic-ai, pydantic-graph | Agent actions with the `EventContext` capability, and graph actions with checkpoints: adapters of the action port. |
 | `reflexr.sql` (extra) | workspace, SQLAlchemy 2 async, Alembic | Durable storage on PostgreSQL and SQLite, and its migrations. |
 | `reflexr.fastapi` (extra) | workspace, FastAPI | HTTP ingest, REST reads and administration, and the WebSocket stream protocol. |
 | `reflexr.mcp` (extra) | workspace, mcp | Publishing, reading and administration as MCP tools. |
@@ -272,18 +272,18 @@ Where a rule starts ([ADR-0026](adr/0026-the-reactors-evaluation.md)):
 - A rule whose **definition changed** starts afresh at the head, with a new generation and `rule_reset` in the log.
 - **Replaying** (`workspace.replay_rule(rule, from_seq=, mode=)`) resets a rule to evaluate again. `"rebuild"` recomputes its state up to the head without firing, then carries on; `"refire"` fires again for the past, as new runs with new ids.
 
-**Acting** is at least once. Executors claim runnable runs under leases that they renew while working, so a crashed executor's run is picked up again when its lease lapses. With the default `ordering="scope"`, runs of one rule and scope execute in firing order: a run that fails and is waiting to retry holds back later runs of the same scope, and nothing else. A run that exhausts its retry policy is dead-lettered; later runs of its scope continue (`on_dead_letter="continue"`, the default) or wait for someone to retry or skip it (`"block"`).
+**Acting** is at least once ([ADR-0027](adr/0027-executing-runs.md)). Executors claim runnable runs under leases that they renew while working, so a crashed executor's run is picked up again when its lease lapses; the abandoned attempt counts as a failed one. An attempt's outcome is recorded only if the run is still at that attempt, so an executor that lost its lease cannot overwrite a newer attempt, and cancelling a running run stops its action. With the default `ordering="scope"`, runs of one rule and scope execute in firing order: a run that fails and is waiting to retry holds back later runs of the same scope, and nothing else. A run that exhausts its retry policy is dead-lettered; later runs of its scope continue (`on_dead_letter="continue"`, the default) or wait for someone to retry or skip it (`"block"`).
 
 The firing id doubles as the run id and the action's **idempotency key**, and events a run emits get ids derived from it, so a retried run does not publish duplicates.
 
 ## Actions
 
-An action is what a firing runs ([ADR-0008](adr/0008-actions-agents-graphs-and-functions.md)). Every kind receives the same `Reaction`: the workspace (bound to the run's actor), the firing and its matched events, the run id and attempt, and the application's deps.
+An action is what a firing runs ([ADR-0008](adr/0008-actions-agents-graphs-and-functions.md)). Every kind receives the same `Reaction`: the workspace (bound to the run's actor), the run and its matched events, the attempt, and the application's deps.
 
 ```python
 # A function
 async def page(reaction: Reaction[AppDeps]) -> None:
-    await reaction.deps.pager.notify(reaction.firing.scope, reaction.run_id)
+    await reaction.deps.pager.notify(reaction.scope, reaction.run_id)
 
 
 # A pydantic-ai agent: plain Agent, reflexr's capability adds the firing and event tools
@@ -303,7 +303,15 @@ runbook = GraphAction(runbook_graph, name="runbook", state=RunbookState, inputs=
 - **Graphs** are pydantic-graph graphs built with `GraphBuilder`. reflexr drives them step by step and saves the graph state and pending tasks to the run after every step. A retry, or another executor after a crash, resumes from the last completed step instead of starting over ([ADR-0009](adr/0009-graph-checkpoints.md)).
 - **Functions** are `async def` over a `Reaction`.
 
-Rules refer to actions by name (`{"action": "triage"}`), because functions and agents are not data. `run(triage)` takes the action's name. The application gives the reactor its actions, and `Rule.check` confirms at startup that every rule's action, event types, fields and predicates exist.
+A `Reaction` carries the workspace (acting as the run's `AgentActor`, so what it publishes records the run as its cause and joins the run's chain), the run (its scope, matched `seq`s, attempt and chain), the rule, the matched envelopes, and the application's `deps`. `reaction.emit(event)` publishes with an id derived from the run, so a retried attempt does not emit twice. An action returns the run's output (JSON, or a Pydantic model), or raises to fail the attempt; a rule's `timeout` bounds it.
+
+Rules refer to actions by name (`{"action": "triage"}`), because functions and agents are not data. `run(triage)` takes the action's name. `Workspaces` checks rules' event types, fields and predicates when it is built, and the reactor checks their actions:
+
+```python
+workspaces = Workspaces(storage, events=[ServiceError, Deploy], rules=[error_spike])
+reactor = Reactor(workspaces, actions={"triage": triage, "page": page}, deps=AppDeps(...))
+await reactor.serve()  # or, in tests and scripts: await reactor.settle()
+```
 
 ## Feedback
 
@@ -369,7 +377,7 @@ await workspace.skip_run(run_id, reason="duplicate incident")
 - **Operations** (`retry_run`, `skip_run`, `cancel_run`, `replay_rule`) apply core's transitions in one transaction and append the resulting event, attributed to the handle's actor.
 - **Reads**: `read`, `subscribe`, `head_seq`, `run`, `runs` (newest first), `dead_letters`, `rule_progress`.
 
-Every write is a span (`reflexr.publish {type}`, a producer span; `reflexr.feedback {type}`; `reflexr.skip_run` and so on) attributed to the tenant, workspace and actor and placed in its chain's session. The W3C trace context of the publishing span is stored on the envelope, so the runs it causes can link back to it. Each evaluation pass is a `reflexr.evaluate` span listing the rules that evaluated and the firings made, and the `rule_fired` facts carry its trace context. Metrics come from the registry in `reflexr.telemetry.metrics`: `reflexr.events.published`, `reflexr.feedback`, `reflexr.runs`, `reflexr.firings`, `reflexr.rule.errors`, `reflexr.evaluation.lag` and `reflexr.evaluation.duration` so far.
+Every write is a span (`reflexr.publish {type}`, a producer span; `reflexr.feedback {type}`; `reflexr.skip_run` and so on) attributed to the tenant, workspace and actor and placed in its chain's session. The W3C trace context of the publishing span is stored on the envelope, so the runs it causes can link back to it. Each evaluation pass is a `reflexr.evaluate` span listing the rules that evaluated and the firings made, and the `rule_fired` facts carry its trace context. Each run attempt is an `invoke_workflow {rule}` span in the run's session, linked to the spans that published the envelopes it matched, and the run records each attempt's trace id. Metrics come from the registry in `reflexr.telemetry.metrics`: `reflexr.events.published`, `reflexr.feedback`, `reflexr.runs`, `reflexr.firings`, `reflexr.rule.errors`, `reflexr.evaluation.lag`, `reflexr.evaluation.duration`, `reflexr.run.attempts`, `reflexr.run.duration` and `reflexr.dead_letters` so far.
 
 ## Storage protocol
 
@@ -455,6 +463,7 @@ Coverage is 100% of lines and branches, and pyright runs in strict mode with no 
 | [0024](adr/0024-causal-chains-and-operator-actions.md) | Which chain a firing joins, and operator actions in the log |
 | [0025](adr/0025-ports-and-adapters.md) | Ports and adapters |
 | [0026](adr/0026-the-reactors-evaluation.md) | The reactor's evaluation: rules on workspaces, the depth of reflexr's facts, and rebuilds |
+| [0027](adr/0027-executing-runs.md) | Executing runs |
 
 ## Open questions
 

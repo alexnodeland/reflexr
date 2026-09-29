@@ -30,5 +30,6 @@ Each record captures one decision: the context that forced it, the options consi
 | [0024](0024-causal-chains-and-operator-actions.md) | Which chain a firing joins, and operator actions in the log | Accepted |
 | [0025](0025-ports-and-adapters.md) | Ports and adapters | Accepted |
 | [0026](0026-the-reactors-evaluation.md) | The reactor's evaluation: rules on workspaces, the depth of reflexr's facts, and rebuilds | Accepted |
+| [0027](0027-executing-runs.md) | Executing runs | Accepted |
 
 To add a record, copy [`template.md`](template.md) to the next number and add a row above.

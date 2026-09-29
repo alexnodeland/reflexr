@@ -1,17 +1,24 @@
-"""The reactor: the runtime that evaluates rules over workspaces' logs.
+"""The reactor: the runtime that evaluates rules and executes their runs.
 
 Deciding is exact (ADR-0005). One reactor at a time holds a workspace's evaluation lease, and
 for each rule it reads the envelopes after the rule's cursor, lets core decide, and saves the
 new state, the cursor, the firings' runs and reflexr's facts in one transaction. A crash before
 the commit means the same envelopes are evaluated again against the same state.
+
+Acting is at least once: see :mod:`reflexr.workspace.executor`.
 """
 
+import asyncio
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import timedelta
 from time import perf_counter
+from typing import Any, Never, overload
 
 from reflexr.core import (
     Evaluation,
     Fact,
+    InvalidRule,
     Rule,
     SystemActor,
     begin,
@@ -32,6 +39,8 @@ from reflexr.telemetry.metrics import (
     RUNS,
 )
 from reflexr.telemetry.telemetry import Attributes
+from reflexr.workspace.actions import Action
+from reflexr.workspace.executor import Executor
 from reflexr.workspace.storage import Entry, Transaction, WorkspaceRef
 from reflexr.workspace.workspace import Workspaces
 
@@ -42,38 +51,135 @@ REACTOR = SystemActor(name="reactor")
 """The actor of the facts the reactor records."""
 
 
-class Reactor:
-    """Evaluates every rule of a set of :class:`Workspaces`, in any number of processes.
+@dataclass(frozen=True)
+class Settled:
+    """What :meth:`Reactor.settle` did."""
+
+    firings: int = 0
+    """How many times rules fired."""
+
+    attempts: int = 0
+    """How many run attempts finished."""
+
+
+class Reactor[D]:
+    """Evaluates the rules of a set of :class:`Workspaces` and executes their runs.
+
+    Any number of reactors, in any number of processes, can share the work: leases give each
+    workspace one evaluator and each run one executor at a time.
 
     Args:
         workspaces: The workspaces, with their storage and rules.
+        actions: What rules run, by the name they refer to them by. Every rule's action must
+            be here.
+        deps: The application's dependencies, handed to every action in its
+            :class:`~reflexr.workspace.Reaction`.
         holder: This reactor's name in leases. Defaults to a new random id; give each process
             its own.
         batch_size: How many envelopes one transaction evaluates for one rule. The transaction
             holds the workspace's lock, so this bounds how long publishing can wait.
         lease_ttl: How long a lease lasts unless renewed. A reactor that dies holding one
-            releases it when it lapses.
+            releases it when it lapses, and its runs are attempted again.
+        concurrency: How many runs this reactor executes at once.
+
+    Raises:
+        InvalidRule: If a rule's action is not among ``actions``.
     """
+
+    @overload
+    def __init__(
+        self: "Reactor[None]",
+        workspaces: Workspaces,
+        *,
+        actions: Mapping[str, Action[None]] = ...,
+        holder: str | None = None,
+        batch_size: int = 500,
+        lease_ttl: timedelta = ...,
+        concurrency: int = 10,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        workspaces: Workspaces,
+        *,
+        actions: Mapping[str, Action[D]],
+        deps: D,
+        holder: str | None = None,
+        batch_size: int = 500,
+        lease_ttl: timedelta = ...,
+        concurrency: int = 10,
+    ) -> None: ...
 
     def __init__(
         self,
         workspaces: Workspaces,
         *,
+        actions: Mapping[str, Action[Any]] | None = None,
+        deps: Any = None,
         holder: str | None = None,
         batch_size: int = 500,
         lease_ttl: timedelta = timedelta(seconds=30),
+        concurrency: int = 10,
     ) -> None:
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1")
+        if concurrency < 1:
+            raise ValueError("concurrency must be at least 1")
+        chosen = actions or {}
+        for rule in workspaces.rules.values():
+            if rule.then.action not in chosen:
+                raise InvalidRule(rule.name, [f"no action {rule.then.action!r}"])
         self._workspaces = workspaces
         self._holder = holder or new_id("reactor")
         self._batch_size = batch_size
         self._lease_ttl = lease_ttl
+        self._executor: Executor[D] = Executor(
+            workspaces,
+            actions=chosen,
+            deps=deps,
+            holder=self._holder,
+            lease_ttl=lease_ttl,
+            concurrency=concurrency,
+        )
 
     @property
     def holder(self) -> str:
         """This reactor's name in leases."""
         return self._holder
+
+    async def execute(self, *, limit: int = 100) -> int:
+        """Attempt the runs that are due, up to ``limit`` of them.
+
+        Returns:
+            How many attempts finished, whether they succeeded or failed.
+        """
+        return await self._executor.execute(limit=limit)
+
+    async def settle(self, *, max_rounds: int = 100) -> Settled:
+        """Evaluate and execute until nothing more happens now.
+
+        Useful in tests and scripts. Runs waiting to retry later are left waiting.
+
+        Raises:
+            RuntimeError: If work is still happening after ``max_rounds`` rounds, as when
+                rules keep triggering each other within the depth limit.
+        """
+        firings = attempts = 0
+        for _ in range(max_rounds):
+            fired = await self.evaluate()
+            attempted = await self.execute()
+            firings, attempts = firings + fired, attempts + attempted
+            if not fired and not attempted:
+                return Settled(firings=firings, attempts=attempts)
+        raise RuntimeError(f"still busy after {max_rounds} rounds")
+
+    async def serve(self, *, poll_interval: timedelta = timedelta(seconds=1)) -> Never:
+        """Evaluate and execute until cancelled, checking for work every ``poll_interval``."""
+        while True:
+            await self.evaluate()
+            await self.execute()
+            await asyncio.sleep(poll_interval.total_seconds())
 
     async def evaluate(self, workspace: WorkspaceRef | None = None) -> int:
         """Evaluate every rule over new envelopes until each is caught up with the log.

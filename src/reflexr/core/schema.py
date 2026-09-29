@@ -6,6 +6,7 @@ validate them against it.
 """
 
 import json
+import sys
 from typing import Any
 
 from reflexr.core.rules import Rule
@@ -25,7 +26,7 @@ def rules_schema() -> dict[str, Any]:
 
 def main() -> None:
     """Print the rule schema as indented JSON."""
-    print(json.dumps(rules_schema(), indent=2, sort_keys=True))  # noqa: T201
+    sys.stdout.write(json.dumps(rules_schema(), indent=2, sort_keys=True) + "\n")
 
 
 if __name__ == "__main__":
