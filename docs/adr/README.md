@@ -21,5 +21,11 @@ Each record captures one decision: the context that forced it, the options consi
 | [0015](0015-reference-implementation-oncall.md) | Reference implementation: incident response | Accepted |
 | [0016](0016-tenants-and-workspaces-like-artifactr.md) | Tenants and workspaces, like artifactr | Accepted |
 | [0017](0017-the-cores-evaluation-contract.md) | The core's evaluation contract | Accepted |
+| [0018](0018-opentelemetry-observability-with-langfuse.md) | OpenTelemetry-native observability, with Langfuse primary | Accepted |
+| [0019](0019-typed-feedback-as-events.md) | Typed feedback as events, mirrored to Langfuse | Accepted |
+| [0020](0020-evalr-shared-eval-kit.md) | evalr, a shared eval kit | Accepted |
+| [0021](0021-contributor-compose-and-dev-containers.md) | Contributor Compose and dev containers here, infrastructure in stackr | Accepted |
+| [0022](0022-litellm-proxy-first.md) | LiteLLM, proxy first, for routing and guardrails | Accepted |
+| [0023](0023-libraries-and-the-stackr-template.md) | Libraries, and stackr as the infrastructure template | Accepted |
 
 To add a record, copy [`template.md`](template.md) to the next number and add a row above.
