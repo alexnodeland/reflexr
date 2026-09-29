@@ -43,6 +43,7 @@ from reflexr.core.state import (
     EachState,
     Evaluation,
     EvaluationError,
+    Fact,
     Firing,
     Match,
     PatternState,
@@ -68,12 +69,26 @@ def begin(rule: Rule, *, head_seq: int) -> RuleProgress:
 
 
 def reset(
-    rule: Rule, progress: RuleProgress, *, from_seq: int, replayed: bool = False
+    rule: Rule,
+    progress: RuleProgress,
+    *,
+    from_seq: int,
+    replayed: bool = False,
+    silent_through: int = 0,
 ) -> tuple[RuleProgress, RuleReset]:
     """Reset a rule's state to evaluate again from ``from_seq`` onwards.
 
     The host deletes the rule's scope states along with saving the new progress. Resetting is
     how a changed definition takes effect, and how a rule is replayed.
+
+    Args:
+        rule: The rule, as it is now.
+        progress: Its current progress.
+        from_seq: Evaluate again from the envelope after this ``seq``.
+        replayed: Whether an operator asked for the reset, rather than a changed definition.
+        silent_through: Rebuild state without recording firings or errors up to this
+            ``seq``, typically the head of the log, so a replay recomputes state without
+            acting on the past again.
     """
     generation = progress.generation + 1
     event = RuleReset(
@@ -81,8 +96,15 @@ def reset(
         generation=generation,
         reason="replayed" if replayed else "changed",
         from_seq=from_seq,
+        silent_through=silent_through,
     )
-    return RuleProgress(cursor=from_seq, generation=generation, definition=rule.definition()), event
+    restarted = RuleProgress(
+        cursor=from_seq,
+        generation=generation,
+        definition=rule.definition(),
+        silent_through=silent_through,
+    )
+    return restarted, event
 
 
 def needs(
@@ -122,6 +144,7 @@ def evaluate(
     envelopes: Sequence[Envelope],
     *,
     predicates: Predicates = NO_PREDICATES,
+    max_depth: int | None = None,
 ) -> Evaluation:
     """Fold ``envelopes`` into a rule's state and decide its firings.
 
@@ -131,6 +154,9 @@ def evaluate(
         states: The state of the scopes :func:`needs` returned that exist.
         envelopes: New envelopes, in ``seq`` order, after ``progress.cursor``.
         predicates: The registered predicates.
+        max_depth: The deepest causal chain a firing may extend. A firing whose facts would
+            be deeper is refused and recorded as an evaluation error, so rules that trigger
+            each other stop. ``None`` sets no limit.
 
     Raises:
         ValueError: If the progress belongs to another definition, or the envelopes are out of
@@ -139,7 +165,7 @@ def evaluate(
     """
     if progress.definition != rule.definition():
         raise ValueError(f"rule {rule.name!r} changed; reset it before evaluating")
-    run = _Run(rule, progress, states, predicates)
+    run = _Run(rule, progress, states, predicates, max_depth)
     for envelope in envelopes:
         run.step(envelope)
     return run.result()
@@ -173,8 +199,10 @@ class _Run:
         progress: RuleProgress,
         states: Mapping[ScopeKey, ScopeState],
         predicates: Predicates,
+        max_depth: int | None,
     ) -> None:
         self.rule = rule
+        self.max_depth = max_depth
         self.condition: Condition = rule.when
         self.progress = progress
         self.predicates = predicates
@@ -184,7 +212,7 @@ class _Run:
         self.cursor = progress.cursor
         self.firings: list[Firing] = []
         self.errors: list[EvaluationError] = []
-        self.events: list[RuleFired | RuleErrored] = []
+        self.facts: list[Fact] = []
 
     def step(self, envelope: Envelope) -> None:
         if envelope.seq <= self.cursor:
@@ -250,6 +278,14 @@ class _Run:
     def _fire(
         self, key: ScopeKey, state: ScopeState, matched: tuple[Match, ...], envelope: Envelope
     ) -> ScopeState:
+        depth = max(m.depth for m in matched)
+        if self.max_depth is not None and depth + 1 > self.max_depth:
+            limit = self.max_depth
+            self._error(
+                envelope,
+                f"the firing would be at causation depth {depth + 1}, beyond the limit of {limit}",
+            )
+            return state
         throttle = self.condition.throttle
         if throttle is not None:
             recent = tuple(
@@ -262,6 +298,8 @@ class _Run:
             state = state.model_copy(
                 update={"throttle": ThrottleState(fired=(*recent, envelope.ts))}
             )
+        if self._silent(envelope):
+            return state  # a rebuild: the state advances as it did, and nothing is recorded
         fid = firing_id(self.rule.name, self.progress.generation, key, envelope.seq)
         firing = Firing(
             id=fid,
@@ -271,24 +309,39 @@ class _Run:
             seq=envelope.seq,
             at=envelope.ts,
             matched=tuple(m.seq for m in matched),
-            depth=max(m.depth for m in matched),
+            depth=depth,
             correlation_id=max(matched, key=lambda m: m.seq).correlation_id,
         )
         self.firings.append(firing)
-        self.events.append(
-            RuleFired(
-                rule=self.rule.name,
-                scope=state.scope,
-                scope_key=key,
-                firing_id=fid,
-                matched=firing.matched,
-            )
+        fired = RuleFired(
+            rule=self.rule.name,
+            scope=state.scope,
+            scope_key=key,
+            firing_id=fid,
+            matched=firing.matched,
+        )
+        self.facts.append(
+            Fact(event=fired, correlation_id=firing.correlation_id, causation=firing.causation)
         )
         return state
 
+    def _silent(self, envelope: Envelope) -> bool:
+        return envelope.seq <= self.progress.silent_through
+
     def _error(self, envelope: Envelope, message: str) -> None:
+        if self._silent(envelope):
+            return
         self.errors.append(EvaluationError(rule=self.rule.name, seq=envelope.seq, error=message))
-        self.events.append(RuleErrored(rule=self.rule.name, seq=envelope.seq, error=message))
+        if isinstance(envelope.event, RuleErrored):
+            return  # dead-lettered, but not a new fact: errors cannot feed on each other
+        errored = RuleErrored(rule=self.rule.name, seq=envelope.seq, error=message)
+        self.facts.append(
+            Fact(
+                event=errored,
+                correlation_id=envelope.correlation_id,
+                causation=envelope.causation,
+            )
+        )
 
     def _save(self, key: ScopeKey, state: ScopeState) -> None:
         self.states[key] = state
@@ -302,7 +355,7 @@ class _Run:
             states=self.changed,
             firings=tuple(self.firings),
             errors=tuple(self.errors),
-            events=tuple(self.events),
+            facts=tuple(self.facts),
         )
 
 

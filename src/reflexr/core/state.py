@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue
 
-from reflexr.core.events import RuleErrored, RuleFired
+from reflexr.core.events import Causation, RuleErrored, RuleFired
 from reflexr.core.ids import FiringId, RuleName, ScopeKey
 
 
@@ -98,6 +98,10 @@ class RuleProgress(_State):
     deadlines: dict[ScopeKey, AwareDatetime] = {}
     """When each waiting scope's ``absence`` window ends."""
 
+    silent_through: int = Field(default=0, ge=0)
+    """Envelopes up to this ``seq`` advance the rule's state without recording firings or
+    errors: a rebuild after a replay."""
+
 
 class Firing(_State):
     """A rule's condition held for one scope; its run is created with the same id."""
@@ -121,6 +125,14 @@ class Firing(_State):
     correlation_id: str
     """The causal chain the firing joins: that of the latest envelope it matched."""
 
+    @property
+    def causation(self) -> Causation:
+        """The causation of reflexr's facts about this firing.
+
+        It is one step deeper than the envelopes the firing matched.
+        """
+        return Causation(firing_id=self.id, run_id=self.id, depth=self.depth + 1)
+
 
 class EvaluationError(_State):
     """A rule could not evaluate one envelope."""
@@ -128,6 +140,14 @@ class EvaluationError(_State):
     rule: RuleName
     seq: int
     error: str
+
+
+class Fact(_State):
+    """An event evaluation decided to append, with the causal chain and depth it belongs to."""
+
+    event: RuleFired | RuleErrored
+    correlation_id: str
+    causation: Causation | None = None
 
 
 class Evaluation(_State):
@@ -139,5 +159,5 @@ class Evaluation(_State):
 
     firings: tuple[Firing, ...] = ()
     errors: tuple[EvaluationError, ...] = ()
-    events: tuple[RuleFired | RuleErrored, ...] = ()
+    facts: tuple[Fact, ...] = ()
     """The facts to append to the log, in the order they happened."""

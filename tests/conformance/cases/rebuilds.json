@@ -1,0 +1,185 @@
+{
+  "description": "Rebuilds: after a replay, envelopes up to silent_through advance state without recording anything.",
+  "cases": [
+    {
+      "name": "a rebuild counts silently, then fires on new envelopes",
+      "progress": {
+        "silent_through": 2
+      },
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          },
+          "pattern": {
+            "kind": "count",
+            "at_least": 2,
+            "within": "PT60S"
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 2,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 3,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 4,
+          "at": 4,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 4,
+            "matched": [
+              3,
+              4
+            ]
+          }
+        ],
+        "errors": [],
+        "facts": [
+          {
+            "type": "rule_fired",
+            "chain": "evt_4",
+            "depth": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "a rebuild does not record errors again",
+      "progress": {
+        "silent_through": 1
+      },
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error",
+              "heartbeat"
+            ]
+          }
+        },
+        "scope": {
+          "fields": [
+            "region"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "heartbeat",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "heartbeat",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [],
+        "errors": [
+          {
+            "seq": 2,
+            "contains": "lacks the scope fields"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a rebuild restores throttles as they were",
+      "progress": {
+        "silent_through": 1
+      },
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          },
+          "throttle": {
+            "at_most": 1,
+            "per": "PT60S"
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 10,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 70,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 3,
+            "matched": [
+              3
+            ]
+          }
+        ],
+        "errors": []
+      }
+    }
+  ]
+}

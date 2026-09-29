@@ -32,6 +32,10 @@ RUN_ID = "reflexr.run.id"
 RUN_STATUS = "reflexr.run.status"
 ATTEMPT = "reflexr.attempt"
 SCHEDULE = "reflexr.schedule"
+EVALUATED_RULES = "reflexr.evaluation.rules"
+"""The rules that evaluated new envelopes in an evaluation pass."""
+
+FIRING_COUNT = "reflexr.evaluation.firings"
 
 # ─── feedback ────────────────────────────────────────────────────────────────
 

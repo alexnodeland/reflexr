@@ -18,6 +18,7 @@ from reflexr.telemetry.telemetry import (
     Telemetry,
     actor_attributes,
     chain_attributes,
+    current_traceparent,
     workspace_attributes,
 )
 
@@ -32,5 +33,6 @@ __all__ = [
     "actor_attributes",
     "attributes",
     "chain_attributes",
+    "current_traceparent",
     "workspace_attributes",
 ]

@@ -31,6 +31,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, JsonValue
 
 from reflexr.core.errors import InvalidState
 from reflexr.core.events import (
+    Causation,
     RunCancelled,
     RunDeadLettered,
     RunProgressed,
@@ -83,6 +84,14 @@ class Run(BaseModel):
     output: JsonValue = None
     trace_ids: tuple[str, ...] = ()
     """The trace id of each attempt, so feedback on the run can be attached to its traces."""
+
+    @property
+    def causation(self) -> Causation:
+        """The causation of the events the run emits, and of reflexr's facts about it.
+
+        It is one step deeper than the envelopes that made the rule fire.
+        """
+        return Causation(firing_id=self.id, run_id=self.id, depth=self.depth + 1)
 
 
 def create_run(firing: Firing, *, now: AwareDatetime) -> Run:

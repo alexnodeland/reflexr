@@ -5,7 +5,7 @@ events, giving feedback, and operating runs. Each write is attributed to the han
 each is traced (ADR-0018).
 """
 
-from collections.abc import AsyncGenerator, Callable, Iterable, Sequence
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,7 +13,6 @@ from typing import Literal
 
 from opentelemetry.metrics import MeterProvider
 from opentelemetry.trace import Span, SpanKind, TracerProvider
-from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from reflexr.core import (
     SYSTEM_EVENTS,
@@ -28,6 +27,8 @@ from reflexr.core import (
     FeedbackGiven,
     FeedbackTarget,
     NotFound,
+    Predicates,
+    Rule,
     RuleName,
     RuleProgress,
     Run,
@@ -42,8 +43,11 @@ from reflexr.core import (
     UnknownEvent,
     ValidationFailed,
     WorkspaceId,
+    begin,
     cancel,
+    event_types,
     new_event_id,
+    reset,
     retry,
     skip,
     type_of,
@@ -55,6 +59,7 @@ from reflexr.telemetry import (
     Telemetry,
     actor_attributes,
     chain_attributes,
+    current_traceparent,
     workspace_attributes,
 )
 from reflexr.telemetry import attributes as a
@@ -62,8 +67,6 @@ from reflexr.telemetry.metrics import EVENTS_PUBLISHED, FEEDBACK, RUNS
 from reflexr.telemetry.telemetry import Attributes
 from reflexr.workspace.memory import Clock, utc_now
 from reflexr.workspace.storage import Entry, Storage, Transaction, WorkspaceRef
-
-_W3C = TraceContextTextMapPropagator()
 
 type _Transition = Callable[[Run, datetime], tuple[Run, RunRequeued | RunSkipped | RunCancelled]]
 
@@ -80,19 +83,26 @@ class Published:
 
 
 class Workspaces:
-    """Opens scoped :class:`Workspace` handles over one storage.
+    """Opens scoped :class:`Workspace` handles over one storage, and holds the rules.
 
     Args:
         storage: Where workspaces are kept.
         events: The event types clients may publish. Others are rejected even if they are
             registered, so clients cannot publish arbitrary types. ``None`` accepts every
             registered type. reflexr's own events can never be published.
+        rules: The rules every workspace evaluates. Each is checked against the event types
+            and predicates when the workspaces are created, so a mistake fails at startup.
+        predicates: The Python predicates rules refer to, by name. They must be pure.
         clock: Returns the current time for run transitions. Defaults to the system clock.
-        max_depth: The deepest causal chain an event may extend: an event emitted by a run at
-            this depth is rejected, so workflows that trigger themselves stop.
+        max_depth: The deepest causal chain an event may extend: a run's events beyond it are
+            rejected and firings beyond it refused, so workflows that trigger themselves stop.
         tracer_provider: Where spans go. Defaults to OpenTelemetry's global provider.
         meter_provider: Where metrics go. Defaults to OpenTelemetry's global provider.
         metrics_detail: Which of tenant and workspace become metric attributes.
+
+    Raises:
+        InvalidRule: If a rule refers to an event type, field or predicate that does not exist.
+        ValueError: If two rules have the same name.
     """
 
     def __init__(
@@ -100,15 +110,27 @@ class Workspaces:
         storage: Storage,
         *,
         events: Iterable[type[Event]] | None = None,
+        rules: Iterable[Rule] = (),
+        predicates: Predicates | None = None,
         clock: Clock = utc_now,
         max_depth: int = 8,
         tracer_provider: TracerProvider | None = None,
         meter_provider: MeterProvider | None = None,
         metrics_detail: MetricsDetail = "workspace",
     ) -> None:
+        accepted = None if events is None else {t.event_type: t for t in events}
+        chosen = dict(predicates or {})
+        named: dict[RuleName, Rule] = {}
+        for rule in rules:
+            if rule.name in named:
+                raise ValueError(f"two rules are named {rule.name!r}")
+            rule.check(events=accepted or event_types(), predicates=chosen)
+            named[rule.name] = rule
         self._context = _Context(
             storage=storage,
-            types=None if events is None else frozenset(t.event_type for t in events),
+            types=None if accepted is None else frozenset(accepted),
+            rules=named,
+            predicates=chosen,
             clock=clock,
             max_depth=max_depth,
             telemetry=Telemetry(
@@ -117,6 +139,36 @@ class Workspaces:
                 metrics_detail=metrics_detail,
             ),
         )
+
+    @property
+    def storage(self) -> Storage:
+        """Where the workspaces are kept."""
+        return self._context.storage
+
+    @property
+    def rules(self) -> Mapping[RuleName, Rule]:
+        """The rules every workspace evaluates, by name."""
+        return self._context.rules
+
+    @property
+    def predicates(self) -> Predicates:
+        """The predicates rules refer to, by name."""
+        return self._context.predicates
+
+    @property
+    def clock(self) -> Clock:
+        """Returns the current time."""
+        return self._context.clock
+
+    @property
+    def max_depth(self) -> int:
+        """The deepest causal chain an event may extend."""
+        return self._context.max_depth
+
+    @property
+    def telemetry(self) -> Telemetry:
+        """The tracer and instruments reflexr records with."""
+        return self._context.telemetry
 
     async def open(
         self, tenant_id: TenantId, workspace_id: WorkspaceId, *, actor: Actor
@@ -133,6 +185,8 @@ class Workspaces:
 class _Context:
     storage: Storage
     types: frozenset[str] | None
+    rules: Mapping[RuleName, Rule]
+    predicates: Predicates
     clock: Clock
     max_depth: int
     telemetry: Telemetry
@@ -239,10 +293,11 @@ class Workspace:
             raise ValueError(f"{len(events)} events but {len(chosen)} ids")
         for event in events:
             self._check_publishable(event)
+        self._check_depth()
         name = f"reflexr.publish {type_of(events[0])}" if len(events) == 1 else "reflexr.publish"
         with self._span(name, SpanKind.PRODUCER) as span:
             span.set_attribute(a.EVENT_COUNT, len(events))
-            traceparent = _traceparent()
+            traceparent = current_traceparent()
             async with self._context.storage.transaction(self._ref) as transaction:
                 chain = await self._chain(transaction, correlation_id)
                 results = [
@@ -286,6 +341,7 @@ class Workspace:
             raise ValidationFailed(
                 f"{feedback.feedback_type} feedback cannot be given on a {kind}", []
             )
+        self._check_depth()
         event = FeedbackGiven(
             feedback_type=feedback.feedback_type,
             target=on,
@@ -293,10 +349,12 @@ class Workspace:
         )
         with self._span(f"reflexr.feedback {feedback.feedback_type}") as span:
             span.set_attributes({a.FEEDBACK_TYPE: feedback.feedback_type, a.FEEDBACK_TARGET: kind})
-            traceparent = _traceparent()
+            traceparent = current_traceparent()
             async with self._context.storage.transaction(self._ref) as transaction:
                 chain = await self._target_chain(transaction, on)
-                envelope = await self._append(transaction, event, None, chain, traceparent)
+                envelope = await self._append(
+                    transaction, event, None, chain, traceparent, self.causation
+                )
             span.set_attributes({a.EVENT_ID: envelope.id, **chain_attributes(chain)})
         self._record(
             FEEDBACK,
@@ -341,6 +399,54 @@ class Workspace:
         return await self._operate(
             run_id, "cancel", lambda run, now: cancel(run, now=now, reason=reason)
         )
+
+    async def replay_rule(
+        self,
+        rule: RuleName,
+        *,
+        from_seq: int = 0,
+        mode: Literal["rebuild", "refire"] = "rebuild",
+    ) -> RuleProgress:
+        """Reset a rule to evaluate the log again from after ``from_seq``.
+
+        Args:
+            rule: The rule's name.
+            from_seq: Where to start again; 0 is the beginning of the log.
+            mode: ``"rebuild"`` recomputes the rule's state up to the head of the log without
+                firing, then carries on as normal. ``"refire"`` fires again for everything it
+                finds, creating new runs with new ids.
+
+        Returns:
+            The rule's new progress. The reactor does the evaluating.
+
+        Raises:
+            NotFound: If there is no such rule.
+            ValidationFailed: If ``from_seq`` is not between 0 and the head of the log.
+        """
+        definition = self._context.rules.get(rule)
+        if definition is None:
+            raise NotFound("rule", rule)
+        with self._span("reflexr.replay_rule") as span:
+            span.set_attribute(a.RULE, rule)
+            traceparent = current_traceparent()
+            async with self._context.storage.transaction(self._ref) as transaction:
+                head = await transaction.head_seq()
+                if not 0 <= from_seq <= head:
+                    raise ValidationFailed(
+                        f"from_seq must be between 0 and the head of the log, {head}", []
+                    )
+                progress = await transaction.progress(rule) or begin(definition, head_seq=head)
+                restarted, event = reset(
+                    definition,
+                    progress,
+                    from_seq=from_seq,
+                    replayed=True,
+                    silent_through=head if mode == "rebuild" else 0,
+                )
+                await transaction.clear_states(rule)
+                await transaction.save_progress(rule, restarted)
+                await self._append(transaction, event, None, None, traceparent, None)
+        return restarted
 
     # ─── reads ────────────────────────────────────────────────────────────────
 
@@ -431,7 +537,15 @@ class Workspace:
             existing = await transaction.envelope(event_id)
             if existing is not None:
                 return Published(existing, duplicate=True)
-        return Published(await self._append(transaction, event, event_id, chain, traceparent))
+        appended = await self._append(
+            transaction, event, event_id, chain, traceparent, self.causation
+        )
+        return Published(appended)
+
+    def _check_depth(self) -> None:
+        causation = self.causation
+        if causation is not None and causation.depth > self._context.max_depth:
+            raise DepthExceeded(causation.depth, self._context.max_depth)
 
     async def _append(
         self,
@@ -440,10 +554,13 @@ class Workspace:
         event_id: EventId | None,
         chain: str | None,
         traceparent: str | None,
+        causation: Causation | None,
     ) -> Envelope:
-        causation = self.causation
-        if causation is not None and causation.depth > self._context.max_depth:
-            raise DepthExceeded(causation.depth, self._context.max_depth)
+        if await transaction.head_seq() == 0:
+            # A new workspace: every rule meets it now, so each starts at its first event,
+            # whatever its ``start``. A rule added later starts where the log is then.
+            for rule in self._context.rules.values():
+                await transaction.save_progress(rule.name, begin(rule, head_seq=0))
         entry = Entry(
             id=event_id or new_event_id(),
             actor=self._actor,
@@ -463,14 +580,16 @@ class Workspace:
     ) -> Run:
         with self._span(f"reflexr.{action}_run") as span:
             span.set_attribute(a.RUN_ID, run_id)
-            traceparent = _traceparent()
+            traceparent = current_traceparent()
             async with self._context.storage.transaction(self._ref) as transaction:
                 run = await transaction.run(run_id)
                 if run is None:
                     raise NotFound("run", run_id)
                 updated, event = transition(run, self._context.clock())
                 await transaction.save_runs([updated])
-                await self._append(transaction, event, None, run.correlation_id, traceparent)
+                await self._append(
+                    transaction, event, None, run.correlation_id, traceparent, run.causation
+                )
             span.set_attributes({a.RULE: run.rule, **chain_attributes(run.correlation_id)})
         self._record(
             RUNS, {a.RULE: run.rule, a.RUN_STATUS: updated.status, a.ACTOR_KIND: self._actor.kind}
@@ -495,10 +614,3 @@ class Workspace:
             workspace_id=self.workspace_id,
             attributes=attributes,
         )
-
-
-def _traceparent() -> str | None:
-    """Return the W3C trace context of the current span, if there is one."""
-    carrier: dict[str, str] = {}
-    _W3C.inject(carrier)
-    return carrier.get("traceparent")

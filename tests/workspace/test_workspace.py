@@ -152,6 +152,10 @@ async def test_causal_chains_have_a_depth_limit(workspace: Workspace) -> None:
     with pytest.raises(DepthExceeded) as raised:
         await at(4).publish(Deploy(service="auth"))
     assert raised.value.payload()["limit"] == 3
+    with pytest.raises(DepthExceeded):
+        await at(4).give_feedback(
+            Resolved(outcome="resolved"), on=ChainTarget(correlation_id=root.id)
+        )
 
 
 # ─── feedback ────────────────────────────────────────────────────────────────
@@ -217,6 +221,7 @@ async def test_operators_can_skip_cancel_and_retry_runs(
     envelopes = await workspace.read()
     assert [e.actor for e in envelopes] == [UserActor(id="ada")] * 3
     assert {e.correlation_id for e in envelopes} == {"evt_1"}
+    assert {e.depth for e in envelopes} == {1}  # facts about a run are one step deeper
 
 
 async def test_run_operations_check_the_run(workspace: Workspace, storage: Storage) -> None:

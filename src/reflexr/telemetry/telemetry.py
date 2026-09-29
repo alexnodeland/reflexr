@@ -10,6 +10,7 @@ from importlib.metadata import version
 from opentelemetry import metrics, trace
 from opentelemetry.metrics import Meter, MeterProvider
 from opentelemetry.trace import Tracer, TracerProvider
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.util.types import AttributeValue
 
 from reflexr.core import Actor, TenantId, UserActor, WorkspaceId
@@ -22,6 +23,8 @@ SCOPE_NAME = "reflexr"
 type Attributes = Mapping[str, AttributeValue]
 
 type _Recorder = Callable[[float, Attributes], None]
+
+_W3C = TraceContextTextMapPropagator()
 
 
 class Telemetry:
@@ -89,6 +92,13 @@ def actor_attributes(actor: Actor) -> dict[str, str]:
 def chain_attributes(correlation_id: str) -> dict[str, str]:
     """Return the span attributes that put a span in its causal chain's session."""
     return {a.SESSION_ID: correlation_id, a.CONVERSATION_ID: correlation_id}
+
+
+def current_traceparent() -> str | None:
+    """Return the W3C trace context of the current span, if there is one."""
+    carrier: dict[str, str] = {}
+    _W3C.inject(carrier)
+    return carrier.get("traceparent")
 
 
 def _recorder(meter: Meter, metric: Metric) -> _Recorder:

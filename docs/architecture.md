@@ -6,7 +6,7 @@
 |---|---|
 | `reflexr.core` | Implemented |
 | `reflexr.telemetry` | Implemented: spans, attributes and the metric registry |
-| `reflexr.workspace` | In progress (phase 2): storage protocol, in-memory storage and workspace handles implemented; the `Reactor` and schedules planned |
+| `reflexr.workspace` | In progress (phase 2): storage protocol, in-memory storage, workspace handles and the `Reactor`'s evaluation implemented; execution and schedules planned |
 | `reflexr.agent` | Planned (phase 3) |
 | `reflexr.sql` | Planned (phase 4) |
 | `reflexr.fastapi`, `reflexr.mcp` | Planned (phase 5) |
@@ -263,7 +263,14 @@ sequenceDiagram
 
 **Deciding** is exact. One evaluator holds each workspace's lease at a time and evaluates every rule in one pass over new envelopes. For each rule it loads the state of the scopes involved, calls `core.evaluate`, and saves the new state, the advanced cursor, the `RuleFired` envelopes and the pending runs in a single transaction. A crash before the commit means the same envelopes are evaluated again against the same state, so each envelope affects each rule exactly once. An evaluation error (a predicate that raises, a missing scope field) is recorded as `RuleErrored` and dead-lettered for that rule alone; the rule moves on.
 
-Each rule has its **own cursor**. A rule added later, or reset for replay, catches up on its own without holding back the others.
+Each rule has its **own cursor**. A rule added later, or reset for replay, catches up on its own without holding back the others. The reactor evaluates a workspace in passes until every rule is caught up, since one rule's facts can be what another watches, renewing its lease between batches and stopping if it loses it. `batch_size` bounds each transaction, which holds the workspace's lock.
+
+Where a rule starts ([ADR-0026](adr/0026-the-reactors-evaluation.md)):
+
+- A **new workspace** meets every registered rule at its first event.
+- A rule **added later** starts at the head of the log (`start="now"`, the default) or at its beginning (`start="beginning"`).
+- A rule whose **definition changed** starts afresh at the head, with a new generation and `rule_reset` in the log.
+- **Replaying** (`workspace.replay_rule(rule, from_seq=, mode=)`) resets a rule to evaluate again. `"rebuild"` recomputes its state up to the head without firing, then carries on; `"refire"` fires again for the past, as new runs with new ids.
 
 **Acting** is at least once. Executors claim runnable runs under leases that they renew while working, so a crashed executor's run is picked up again when its lease lapses. With the default `ordering="scope"`, runs of one rule and scope execute in firing order: a run that fails and is waiting to retry holds back later runs of the same scope, and nothing else. A run that exhausts its retry policy is dead-lettered; later runs of its scope continue (`on_dead_letter="continue"`, the default) or wait for someone to retry or skip it (`"block"`).
 
@@ -316,7 +323,7 @@ Feedback is recorded as a `feedback_given` event (the type, the target and the v
 LLM workflows triggered by events can loop and can spend ([ADR-0010](adr/0010-loop-and-spend-safety.md)):
 
 - **No self-reaction.** A rule never sees reflexr's facts about itself (its own firings, errors and runs), though they still move its clock, so it cannot fire on its own activity.
-- **Causation depth.** An event emitted by a run carries the depth of its causal chain. Publishing beyond the workspace's limit (8 by default) is rejected, so a rule whose action triggers itself stops instead of running away.
+- **Causation depth.** An event emitted by a run carries the depth of its causal chain. Publishing beyond the workspace's limit (8 by default) is rejected, so a rule whose action triggers itself stops instead of running away. reflexr's facts about a firing or run are as deep as the run's events, and a firing whose facts would exceed the limit is refused and dead-lettered, so rules that trigger each other through `rule_fired` or `run_succeeded` stop too. Errors about other rules' errors are dead-lettered without becoming new facts ([ADR-0026](adr/0026-the-reactors-evaluation.md)).
 - **Throttles** on rules cap how often a rule can fire per scope.
 - **Emit allowlists** on the `EventContext` capability limit which event types an agent can publish.
 - **Concurrency limits** per reactor, per rule and per workspace bound how many runs execute at once. Agent actions accept pydantic-ai `UsageLimits`.
@@ -347,7 +354,7 @@ Authentication is the host's: each surface takes a resolver that returns the ten
 
 ## Workspace handles
 
-`Workspaces(storage, events=[...], clock=..., max_depth=8, tracer_provider=..., meter_provider=..., metrics_detail="workspace")` opens handles; each `Workspace` is bound to one tenant, workspace and actor.
+`Workspaces(storage, events=[...], rules=[...], predicates={...}, clock=..., max_depth=8, tracer_provider=..., meter_provider=..., metrics_detail="workspace")` holds the rules, checked at construction, and opens handles; each `Workspace` is bound to one tenant, workspace and actor. `Reactor(workspaces)` evaluates the rules.
 
 ```python
 workspace = await workspaces.open("acme", "prod", actor=UserActor(id="ada"))
@@ -359,10 +366,10 @@ await workspace.skip_run(run_id, reason="duplicate incident")
 - **Publishing** checks the event's type against the allowlist (`not_found` otherwise) and refuses reflexr's own events (`forbidden`). Publishing an id already in the log appends nothing and returns the logged envelope with `duplicate=True`. `publish_many` is atomic. An event starts a new causal chain unless it names one with `correlation_id=`, or the handle belongs to a run.
 - **Run handles.** `workspace.as_actor(AgentActor(...)).caused_by(causation, correlation_id=...)` gives a run a handle whose events record their causation and continue the run's chain; beyond `max_depth` they are rejected with `depth_exceeded`.
 - **Feedback** is validated against its type's targets and must find its target; it joins the target's chain.
-- **Operations** (`retry_run`, `skip_run`, `cancel_run`) apply core's transitions in one transaction and append the resulting event, attributed to the handle's actor.
+- **Operations** (`retry_run`, `skip_run`, `cancel_run`, `replay_rule`) apply core's transitions in one transaction and append the resulting event, attributed to the handle's actor.
 - **Reads**: `read`, `subscribe`, `head_seq`, `run`, `runs` (newest first), `dead_letters`, `rule_progress`.
 
-Every write is a span (`reflexr.publish {type}`, a producer span; `reflexr.feedback {type}`; `reflexr.skip_run` and so on) attributed to the tenant, workspace and actor and placed in its chain's session. The W3C trace context of the publishing span is stored on the envelope, so the runs it causes can link back to it. Metrics come from the registry in `reflexr.telemetry.metrics`: `reflexr.events.published`, `reflexr.feedback` and `reflexr.runs` so far.
+Every write is a span (`reflexr.publish {type}`, a producer span; `reflexr.feedback {type}`; `reflexr.skip_run` and so on) attributed to the tenant, workspace and actor and placed in its chain's session. The W3C trace context of the publishing span is stored on the envelope, so the runs it causes can link back to it. Each evaluation pass is a `reflexr.evaluate` span listing the rules that evaluated and the firings made, and the `rule_fired` facts carry its trace context. Metrics come from the registry in `reflexr.telemetry.metrics`: `reflexr.events.published`, `reflexr.feedback`, `reflexr.runs`, `reflexr.firings`, `reflexr.rule.errors`, `reflexr.evaluation.lag` and `reflexr.evaluation.duration` so far.
 
 ## Storage protocol
 
@@ -447,6 +454,7 @@ Coverage is 100% of lines and branches, and pyright runs in strict mode with no 
 | [0023](adr/0023-libraries-and-the-stackr-template.md) | Libraries, and stackr as the infrastructure template |
 | [0024](adr/0024-causal-chains-and-operator-actions.md) | Which chain a firing joins, and operator actions in the log |
 | [0025](adr/0025-ports-and-adapters.md) | Ports and adapters |
+| [0026](adr/0026-the-reactors-evaluation.md) | The reactor's evaluation: rules on workspaces, the depth of reflexr's facts, and rebuilds |
 
 ## Open questions
 

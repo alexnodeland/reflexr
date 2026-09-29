@@ -1,8 +1,9 @@
 """Fixtures for the workspace behaviour suite, which every storage must pass."""
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Protocol
 
 import pytest
 from opentelemetry.sdk.metrics import MeterProvider
@@ -12,7 +13,8 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 import tests.event_types  # noqa: F401  (registers the test event types)
-from reflexr import UserActor
+from reflexr import Rule, UserActor
+from reflexr.core import Predicates
 from reflexr.workspace import InMemoryStorage, Storage, Workspace, Workspaces
 from tests.event_types import Deploy, Flag, Heartbeat, ServiceError
 
@@ -79,16 +81,34 @@ def storage(request: pytest.FixtureRequest, clock: FakeClock) -> Storage:
     return InMemoryStorage(clock=clock)
 
 
+class Build(Protocol):
+    def __call__(
+        self, rules: Iterable[Rule] = (), predicates: Predicates | None = None
+    ) -> Workspaces: ...
+
+
 @pytest.fixture
-def workspaces(storage: Storage, clock: FakeClock, telemetry: Telemetry) -> Workspaces:
-    return Workspaces(
-        storage,
-        events=[ServiceError, Deploy, Heartbeat, Flag],
-        clock=clock,
-        max_depth=3,
-        tracer_provider=telemetry.tracer_provider,
-        meter_provider=telemetry.meter_provider,
-    )
+def build(storage: Storage, clock: FakeClock, telemetry: Telemetry) -> Build:
+    """Build workspaces over the test storage, with rules and predicates."""
+
+    def build(rules: Iterable[Rule] = (), predicates: Predicates | None = None) -> Workspaces:
+        return Workspaces(
+            storage,
+            events=[ServiceError, Deploy, Heartbeat, Flag],
+            rules=rules,
+            predicates=predicates,
+            clock=clock,
+            max_depth=3,
+            tracer_provider=telemetry.tracer_provider,
+            meter_provider=telemetry.meter_provider,
+        )
+
+    return build
+
+
+@pytest.fixture
+def workspaces(build: Build) -> Workspaces:
+    return build()
 
 
 @pytest.fixture
