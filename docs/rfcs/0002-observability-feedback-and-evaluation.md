@@ -124,4 +124,4 @@ These match artifactr's RFC-0002 exactly, except that reflexr's session is the c
 - [x] B3: `[langfuse]` extra ([ADR-0029](../adr/0029-metric-detail-through-sdk-views.md))
 - [ ] B4: dev environment and dashboards, with the reference implementation (phase 6)
 - [x] B5: `[evals]` extra over evalr: feedback sources, evaluators as rules, experiment tasks and the end-to-end measures
-- [ ] B6: `[litellm]` extra
+- [x] B6: `[litellm]` extra (typed run failures in [ADR-0036](../adr/0036-typed-run-failures.md); the gateway in [ADR-0022](../adr/0022-litellm-proxy-first.md))

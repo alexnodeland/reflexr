@@ -50,6 +50,10 @@ LAYERS: dict[str, tuple[set[str], set[str]]] = {
         },
         {"langfuse", "opentelemetry"},
     ),
+    "litellm": (
+        {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.litellm"},
+        {"pydantic_ai", "opentelemetry", "httpx2"},
+    ),
     "agent": (
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.agent"},
         {"pydantic", "pydantic_core", "opentelemetry", "pydantic_ai", "pydantic_graph"},
