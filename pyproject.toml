@@ -29,6 +29,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+sql = ["sqlalchemy[asyncio]>=2.1", "alembic>=1.20"]
+sqlite = ["reflexr[sql]", "aiosqlite>=0.22"]
+postgres = ["reflexr[sql]", "asyncpg>=0.31"]
 fastapi = ["fastapi>=0.141"]
 mcp = ["mcp>=2.2"]
 evals = ["evalr>=0.1.0.dev0"]
@@ -45,6 +48,8 @@ test = [
     "pytest-asyncio>=1.4",
     "pytest-cov>=7.1",
     "hypothesis>=6.168",
+    "aiosqlite>=0.22",
+    "asyncpg>=0.31",
     "opentelemetry-sdk>=1.45",
     "httpx>=0.28",
     "fastapi>=0.141",
@@ -119,6 +124,9 @@ addopts = ["--strict-markers", "--strict-config", "-ra"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["error"]
+markers = [
+    "postgres: needs a PostgreSQL database (set REFLEXR_TEST_POSTGRES_URL)",
+]
 
 [tool.coverage.run]
 branch = true

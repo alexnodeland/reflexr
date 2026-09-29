@@ -22,6 +22,7 @@ Run `make` on its own to list every command:
 | `make typecheck` | Type-check with pyright (strict for `src/`) |
 | `make test` | Run the tests with the 100% branch-coverage gate |
 | `make check` | Everything CI runs |
+| `make pg-up`, `make test-pg`, `make pg-down` | Start PostgreSQL in Docker, run the tests on it as well as SQLite, and stop it |
 | `make schema` | Regenerate `schemas/reflexr.rules.v1.json` from the rule models (a test fails if it drifts) |
 | `make changelog` | Regenerate `CHANGELOG.md` from commit history |
 

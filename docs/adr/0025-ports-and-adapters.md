@@ -69,5 +69,5 @@ Constructor arguments and protocols give the benefits of Option C without the de
 
 1. [x] The storage port, `InMemoryStorage`, and the behaviour suite as its contract (phase 2b).
 2. [ ] The action port with function, agent and graph adapters (phases 2c and 3).
-3. [ ] `SqlStorage` passing the same suite (phase 4).
+3. [x] `SqlStorage` passing the same suite (phase 4, [ADR-0030](0030-sql-storage.md)).
 4. [ ] The `[otel]`, `[langfuse]`, `[litellm]` and `[evals]` adapters (RFC-0002).

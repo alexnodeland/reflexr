@@ -32,5 +32,6 @@ Each record captures one decision: the context that forced it, the options consi
 | [0026](0026-the-reactors-evaluation.md) | The reactor's evaluation: rules on workspaces, the depth of reflexr's facts, and rebuilds | Accepted |
 | [0027](0027-executing-runs.md) | Executing runs | Accepted |
 | [0028](0028-schedules-and-cronsim.md) | Schedules, with cronsim for cron expressions | Accepted |
+| [0030](0030-sql-storage.md) | SQL storage with one dialect-neutral implementation | Accepted |
 
 To add a record, copy [`template.md`](template.md) to the next number and add a row above.

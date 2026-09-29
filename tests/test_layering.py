@@ -40,6 +40,10 @@ LAYERS: dict[str, tuple[set[str], set[str]]] = {
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.agent"},
         {"pydantic", "pydantic_core", "opentelemetry", "pydantic_ai", "pydantic_graph"},
     ),
+    "sql": (
+        {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.sql"},
+        {"pydantic", "sqlalchemy", "alembic"},
+    ),
 }
 
 
