@@ -38,5 +38,6 @@ Each record captures one decision: the context that forced it, the options consi
 | [0032](0032-documentation-site.md) | The documentation site, and a brand shared by the family | Accepted |
 | [0033](0033-publishing-the-documentation-site.md) | Publishing the documentation site from main | Accepted |
 | [0036](0036-typed-run-failures.md) | Typed run failures | Accepted |
+| [0037](0037-joining-stackrs-network.md) | Joining stackr's network when it runs | Accepted |
 
 To add a record, copy [`template.md`](template.md) to the next number and add a row above.

@@ -83,6 +83,8 @@ To use another provider, set `ONCALL_MODEL` to any [pydantic-ai model name](http
 
 [stackr](https://github.com/alexnodeland/stackr) runs a Collector, Langfuse and the proxy.
 
+In Docker, the repository's Compose file runs oncall on PostgreSQL: `make app-up` builds and starts it, passing `ONCALL_MODEL`, the providers' keys and the `ONCALL_LITELLM_*` settings through from your environment. While stackr's stack runs, the `compose.stackr.yaml` overlay puts oncall on stackr's network, reporting to its Collector ([Contributing](project/contributing.md#the-contributor-stack-and-the-dev-container)).
+
 The same server speaks the other surfaces too: REST under `/v1` (the demo trusts an `x-user` header, as in `curl -H 'x-user: alice' localhost:8000/v1/workspaces/prod/runs`), and MCP at `http://127.0.0.1:8000/mcp/` for external agents. Opening an incident by hand over REST runs the runbook as well.
 
 !!! warning "Demo authentication"

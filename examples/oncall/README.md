@@ -142,6 +142,23 @@ With `ONCALL_LITELLM_URL` set, the triage agent calls that LiteLLM proxy instead
 key `ONCALL_LITELLM_KEY`, and every request carries the tenant, the causal chain and the trace.
 [stackr](https://github.com/alexnodeland/stackr) runs a Collector, Langfuse and the proxy.
 
+### In Docker
+
+The repository's Compose file runs oncall on PostgreSQL, from `examples/oncall/Dockerfile`. From
+the repository root:
+
+```sh
+make app-up     # docker compose --profile app up -d --build --wait
+```
+
+It passes `ONCALL_MODEL`, the providers' keys and the `ONCALL_LITELLM_*` settings through from
+your environment. While [stackr](https://github.com/alexnodeland/stackr)'s stack runs, add the
+overlay to send its telemetry to stackr's Collector:
+
+```sh
+docker compose -f compose.yaml -f compose.stackr.yaml --profile app up -d --build
+```
+
 ### Client commands
 
 | Command | Does |

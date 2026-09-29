@@ -1,14 +1,20 @@
 {
   "name": "reflexr",
-  "image": "mcr.microsoft.com/devcontainers/base:jammy",
+  // Built on the contributor Compose file (ADR-0021): PostgreSQL runs beside the dev container,
+  // and when stackr's stack is running, the dev container joins its network (ADR-0037).
+  "dockerComposeFile": ["../compose.yaml", "compose.yaml", "stackr.generated.yaml"],
+  "service": "dev",
+  "runServices": ["postgres", "dev"],
+  "workspaceFolder": "/workspaces/reflexr",
+  "initializeCommand": "bash .devcontainer/initialize.sh",
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "features": {
     "github-cli": "latest",
     "ghcr.io/va-h/devcontainers-features/uv:1": {},
     "ghcr.io/devcontainers/features/node:1": {}
   },
-  // Use 'forwardPorts' to make a list of ports inside the container available locally.
-  "forwardPorts": [],
+  // oncall, when you run it in the container.
+  "forwardPorts": [8000],
   // Configure tool-specific properties.
   "customizations": {
     "vscode": {

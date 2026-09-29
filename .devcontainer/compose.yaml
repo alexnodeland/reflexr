@@ -1,0 +1,15 @@
+# The dev container, as a service beside the contributor stack in ../compose.yaml (ADR-0021).
+# Paths are relative to the repository root, the directory of the first Compose file.
+
+services:
+  dev:
+    image: mcr.microsoft.com/devcontainers/base:jammy
+    command: sleep infinity
+    volumes:
+      - .:/workspaces/reflexr:cached
+    environment:
+      # The PostgreSQL tests run against the stack's database (make test).
+      REFLEXR_TEST_POSTGRES_URL: postgresql+asyncpg://postgres:reflexr@postgres:5432/postgres
+    depends_on:
+      postgres:
+        condition: service_healthy

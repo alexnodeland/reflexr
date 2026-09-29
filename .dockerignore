@@ -1,0 +1,13 @@
+# What docker builds from the repository root leave out.
+.git
+.claude
+.venv
+**/__pycache__
+.pytest_cache
+.ruff_cache
+.coverage
+coverage.xml
+htmlcov
+site
+.cache
+dist

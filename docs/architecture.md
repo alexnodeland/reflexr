@@ -477,6 +477,8 @@ Python 3.12+. Runtime: `pydantic` (core); `opentelemetry-api` (telemetry and wor
 
 Coverage is 100% of lines and branches, and pyright runs in strict mode with no suppressions ([ADR-0013](adr/0013-quality-gates.md)).
 
+The contributor stack is `compose.yaml`: PostgreSQL for the tests, and oncall under the `app` profile. The dev container is built on it and joins stackr's network when stackr's stack runs ([ADR-0021](adr/0021-contributor-compose-and-dev-containers.md), [ADR-0037](adr/0037-joining-stackrs-network.md)). CI validates the Compose files without starting containers.
+
 ## Decisions
 
 | ADR | Decision |
@@ -515,6 +517,7 @@ Coverage is 100% of lines and branches, and pyright runs in strict mode with no 
 | [0032](adr/0032-documentation-site.md) | The documentation site, and a brand shared by the family |
 | [0033](adr/0033-publishing-the-documentation-site.md) | Publishing the documentation site from main |
 | [0036](adr/0036-typed-run-failures.md) | Typed run failures |
+| [0037](adr/0037-joining-stackrs-network.md) | Joining stackr's network when it runs |
 
 ## Open questions
 

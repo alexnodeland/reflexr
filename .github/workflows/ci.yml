@@ -68,6 +68,26 @@ jobs:
       - run: uv sync --locked --all-extras --all-groups --all-packages
       - run: uv run pytest --cov --cov-report=term-missing
 
+  compose:
+    name: Compose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Validates the Compose files without starting containers (ADR-0021, ADR-0037).
+      - name: The contributor stack
+        run: |
+          docker compose config -q
+          docker compose --profile app config -q
+          docker compose -f compose.yaml -f compose.stackr.yaml --profile app config -q
+      - name: The dev container, without and with stackr's network
+        run: |
+          files="-f compose.yaml -f .devcontainer/compose.yaml -f .devcontainer/stackr.generated.yaml"
+          bash .devcontainer/initialize.sh
+          docker compose $files config -q
+          docker network create stackr
+          bash .devcontainer/initialize.sh
+          docker compose $files config -q
+
   docs:
     name: Docs
     runs-on: ubuntu-latest
