@@ -928,7 +928,7 @@
         "trace_ids": {
           "default": [],
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/TraceId"
           },
           "title": "Trace Ids",
           "type": "array"
@@ -1098,6 +1098,9 @@
       },
       "title": "SystemActor",
       "type": "object"
+    },
+    "TraceId": {
+      "type": "string"
     },
     "UserActor": {
       "description": "A person, identified by the host application's user id.",

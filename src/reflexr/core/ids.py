@@ -32,6 +32,9 @@ type FiringId = str
 type RunId = str
 """Identifies a run: the execution of one firing's action."""
 
+type TraceId = str
+"""A W3C trace id, as 32 lowercase hex digits: the trace of one run attempt."""
+
 
 def new_id(prefix: str) -> str:
     """Return a new random identifier with the given prefix.
