@@ -16,6 +16,9 @@ Build real-time AI agents that react to events, maintain state, and scale horizo
 
 </div>
 
+> [!IMPORTANT]
+> **Reflex is being rebuilt as `reflexr`**, a library for reactive agent workflows and a sibling of [artifactr](https://github.com/alexnodeland/artifactr). The design is in [`docs/architecture.md`](docs/architecture.md), the plan in [RFC-0001](docs/rfcs/0001-v0.1-implementation-plan.md), and the decisions in [`docs/adr/`](docs/adr/README.md). The rest of this README describes the template being replaced; work in progress from before the rebuild is on the `archive/pre-rebuild` branch.
+
 ---
 
 ## ⚡ Why Reflex?
