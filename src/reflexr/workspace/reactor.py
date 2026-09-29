@@ -11,7 +11,7 @@ Acting is at least once: see :mod:`reflexr.workspace.executor`.
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from time import perf_counter
 from typing import Any, Never, overload
 
@@ -21,6 +21,7 @@ from reflexr.core import (
     InvalidRule,
     Rule,
     SystemActor,
+    Tick,
     begin,
     create_run,
     evaluate,
@@ -37,12 +38,14 @@ from reflexr.telemetry.metrics import (
     FIRINGS,
     RULE_ERRORS,
     RUNS,
+    SCHEDULE_TICKS,
 )
 from reflexr.telemetry.telemetry import Attributes
 from reflexr.workspace.actions import Action
 from reflexr.workspace.executor import Executor
+from reflexr.workspace.schedules import SCHEDULER, Schedule, tick_id
 from reflexr.workspace.storage import Entry, Transaction, WorkspaceRef
-from reflexr.workspace.workspace import Workspaces
+from reflexr.workspace.workspace import Workspaces, meet_rules
 
 EVALUATION_LEASE = "evaluate"
 """The lease key a reactor holds on a workspace while it evaluates it."""
@@ -54,6 +57,9 @@ REACTOR = SystemActor(name="reactor")
 @dataclass(frozen=True)
 class Settled:
     """What :meth:`Reactor.settle` did."""
+
+    ticks: int = 0
+    """How many ticks schedules published."""
 
     firings: int = 0
     """How many times rules fired."""
@@ -165,21 +171,86 @@ class Reactor[D]:
             RuntimeError: If work is still happening after ``max_rounds`` rounds, as when
                 rules keep triggering each other within the depth limit.
         """
-        firings = attempts = 0
+        ticks = firings = attempts = 0
         for _ in range(max_rounds):
+            ticked = await self.tick()
             fired = await self.evaluate()
             attempted = await self.execute()
-            firings, attempts = firings + fired, attempts + attempted
-            if not fired and not attempted:
-                return Settled(firings=firings, attempts=attempts)
+            ticks, firings, attempts = ticks + ticked, firings + fired, attempts + attempted
+            if not ticked and not fired and not attempted:
+                return Settled(ticks=ticks, firings=firings, attempts=attempts)
         raise RuntimeError(f"still busy after {max_rounds} rounds")
 
     async def serve(self, *, poll_interval: timedelta = timedelta(seconds=1)) -> Never:
         """Evaluate and execute until cancelled, checking for work every ``poll_interval``."""
         while True:
+            await self.tick()
             await self.evaluate()
             await self.execute()
             await asyncio.sleep(poll_interval.total_seconds())
+
+    async def tick(self) -> int:
+        """Publish the ticks that are due, for every schedule and the workspaces it targets.
+
+        A schedule's first check in a workspace starts its timetable there; its first tick
+        comes at its next time after that.
+
+        Returns:
+            How many ticks were published.
+        """
+        storage = self._workspaces.storage
+        now = self._workspaces.clock()
+        known = await storage.workspaces()
+        published = 0
+        for schedule in self._workspaces.schedules.values():
+            refs = (
+                known
+                if schedule.workspaces == "all"
+                else [WorkspaceRef(tenant, workspace) for tenant, workspace in schedule.workspaces]
+            )
+            for ref in refs:
+                published += await self._tick(ref, schedule, now)
+        return published
+
+    async def _tick(self, ref: WorkspaceRef, schedule: Schedule, now: datetime) -> int:
+        last = (await self._workspaces.storage.schedules(ref)).get(schedule.name)
+        if last is not None and not schedule.due(last, now):
+            return 0  # the common case, checked without a transaction or a span
+        telemetry = self._workspaces.telemetry
+        with telemetry.tracer.start_as_current_span(
+            f"reflexr.schedule {schedule.name}",
+            attributes={
+                **workspace_attributes(ref.tenant_id, ref.workspace_id),
+                a.SCHEDULE: schedule.name,
+            },
+        ) as span:
+            async with self._workspaces.storage.transaction(ref) as transaction:
+                last = await transaction.schedule(schedule.name)
+                due = [] if last is None else schedule.due(last, now)
+                entries = [
+                    Entry(
+                        id=tick_id(schedule.name, at),
+                        actor=SCHEDULER,
+                        event=Tick(schedule=schedule.name, at=at),
+                        traceparent=current_traceparent(),
+                    )
+                    for at in due
+                    if await transaction.envelope(tick_id(schedule.name, at)) is None
+                ]
+                if entries:
+                    await meet_rules(transaction, self._workspaces.rules.values())
+                    await transaction.append(entries)
+                await transaction.save_schedule(schedule.name, due[-1] if due else now)
+            span.set_attribute(a.EVENT_COUNT, len(entries))
+        if entries:
+            telemetry.record(
+                SCHEDULE_TICKS,
+                len(entries),
+                tenant_id=ref.tenant_id,
+                workspace_id=ref.workspace_id,
+                attributes={a.SCHEDULE: schedule.name},
+            )
+        return len(entries)
 
     async def evaluate(self, workspace: WorkspaceRef | None = None) -> int:
         """Evaluate every rule over new envelopes until each is caught up with the log.

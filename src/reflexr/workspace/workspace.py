@@ -66,6 +66,7 @@ from reflexr.telemetry import attributes as a
 from reflexr.telemetry.metrics import EVENTS_PUBLISHED, FEEDBACK, RUNS
 from reflexr.telemetry.telemetry import Attributes
 from reflexr.workspace.memory import Clock, utc_now
+from reflexr.workspace.schedules import Schedule
 from reflexr.workspace.storage import Entry, Storage, Transaction, WorkspaceRef
 
 type _Transition = Callable[[Run, datetime], tuple[Run, RunRequeued | RunSkipped | RunCancelled]]
@@ -93,6 +94,7 @@ class Workspaces:
         rules: The rules every workspace evaluates. Each is checked against the event types
             and predicates when the workspaces are created, so a mistake fails at startup.
         predicates: The Python predicates rules refer to, by name. They must be pure.
+        schedules: The schedules that publish ticks into the workspaces.
         clock: Returns the current time for run transitions. Defaults to the system clock.
         max_depth: The deepest causal chain an event may extend: a run's events beyond it are
             rejected and firings beyond it refused, so workflows that trigger themselves stop.
@@ -102,7 +104,7 @@ class Workspaces:
 
     Raises:
         InvalidRule: If a rule refers to an event type, field or predicate that does not exist.
-        ValueError: If two rules have the same name.
+        ValueError: If two rules, or two schedules, have the same name.
     """
 
     def __init__(
@@ -112,6 +114,7 @@ class Workspaces:
         events: Iterable[type[Event]] | None = None,
         rules: Iterable[Rule] = (),
         predicates: Predicates | None = None,
+        schedules: Iterable[Schedule] = (),
         clock: Clock = utc_now,
         max_depth: int = 8,
         tracer_provider: TracerProvider | None = None,
@@ -126,11 +129,17 @@ class Workspaces:
                 raise ValueError(f"two rules are named {rule.name!r}")
             rule.check(events=accepted or event_types(), predicates=chosen)
             named[rule.name] = rule
+        timetables: dict[str, Schedule] = {}
+        for schedule in schedules:
+            if schedule.name in timetables:
+                raise ValueError(f"two schedules are named {schedule.name!r}")
+            timetables[schedule.name] = schedule
         self._context = _Context(
             storage=storage,
             types=None if accepted is None else frozenset(accepted),
             rules=named,
             predicates=chosen,
+            schedules=timetables,
             clock=clock,
             max_depth=max_depth,
             telemetry=Telemetry(
@@ -149,6 +158,11 @@ class Workspaces:
     def rules(self) -> Mapping[RuleName, Rule]:
         """The rules every workspace evaluates, by name."""
         return self._context.rules
+
+    @property
+    def schedules(self) -> Mapping[str, Schedule]:
+        """The schedules that publish ticks, by name."""
+        return self._context.schedules
 
     @property
     def predicates(self) -> Predicates:
@@ -187,6 +201,7 @@ class _Context:
     types: frozenset[str] | None
     rules: Mapping[RuleName, Rule]
     predicates: Predicates
+    schedules: Mapping[str, Schedule]
     clock: Clock
     max_depth: int
     telemetry: Telemetry
@@ -556,11 +571,7 @@ class Workspace:
         traceparent: str | None,
         causation: Causation | None,
     ) -> Envelope:
-        if await transaction.head_seq() == 0:
-            # A new workspace: every rule meets it now, so each starts at its first event,
-            # whatever its ``start``. A rule added later starts where the log is then.
-            for rule in self._context.rules.values():
-                await transaction.save_progress(rule.name, begin(rule, head_seq=0))
+        await meet_rules(transaction, self._context.rules.values())
         entry = Entry(
             id=event_id or new_event_id(),
             actor=self._actor,
@@ -614,3 +625,14 @@ class Workspace:
             workspace_id=self.workspace_id,
             attributes=attributes,
         )
+
+
+async def meet_rules(transaction: Transaction, rules: Iterable[Rule]) -> None:
+    """Start every rule at a new workspace's first event, before it is appended.
+
+    In a new workspace every rule starts at the beginning, whatever its ``start``; a rule added
+    later starts where the log is then.
+    """
+    if await transaction.head_seq() == 0:
+        for rule in rules:
+            await transaction.save_progress(rule.name, begin(rule, head_seq=0))

@@ -131,6 +131,14 @@ class Transaction(Protocol):
         """Record envelopes a rule could not evaluate."""
         ...
 
+    async def schedule(self, name: str) -> datetime | None:
+        """Return the time of a schedule's last tick in this workspace, or None."""
+        ...
+
+    async def save_schedule(self, name: str, at: datetime) -> None:
+        """Save the time of a schedule's last tick."""
+        ...
+
 
 class Storage(Protocol):
     """Persistence for workspaces. Every method except discovery is scoped to one workspace."""
@@ -177,6 +185,10 @@ class Storage(Protocol):
 
     async def progress(self, workspace: WorkspaceRef) -> dict[RuleName, RuleProgress]:
         """Return every rule's progress in a workspace."""
+        ...
+
+    async def schedules(self, workspace: WorkspaceRef) -> dict[str, datetime]:
+        """Return the time of each schedule's last tick in a workspace."""
         ...
 
     async def workspaces(self) -> list[WorkspaceRef]:

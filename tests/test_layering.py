@@ -18,7 +18,7 @@ LAYERS: dict[str, tuple[set[str], set[str]]] = {
     "telemetry": ({"reflexr.core", "reflexr.telemetry"}, {"opentelemetry"}),
     "workspace": (
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace"},
-        {"pydantic", "opentelemetry"},
+        {"pydantic", "opentelemetry", "cronsim"},
     ),
 }
 
