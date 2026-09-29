@@ -5,6 +5,7 @@ events, giving feedback, and operating runs. Each write is attributed to the han
 each is traced (ADR-0018).
 """
 
+from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ from typing import Literal
 
 from opentelemetry.metrics import MeterProvider
 from opentelemetry.trace import Span, SpanKind, TracerProvider
-from pydantic import JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 from reflexr.core import (
     SYSTEM_EVENTS,
@@ -90,6 +91,33 @@ class Published:
 
     duplicate: bool = False
     """Whether the id was already in the log, so nothing was appended."""
+
+
+class RuleStatus(BaseModel):
+    """A rule's progress in a workspace."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    rule: RuleName
+    enabled: bool
+    """Whether the reactor evaluates the rule. A disabled rule's cursor holds."""
+
+    cursor: int
+    lag: int
+    """How many envelopes the rule is behind the head of the log."""
+
+    generation: int
+    dead_letters: int
+
+
+class ScheduleStatus(BaseModel):
+    """When a schedule last ticked in a workspace, and when it ticks next."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schedule: str
+    last_tick: datetime | None
+    next_tick: datetime | None
 
 
 class Workspaces:
@@ -566,6 +594,49 @@ class Workspace:
     async def rule_progress(self) -> dict[RuleName, RuleProgress]:
         """Return each rule's progress: its cursor, generation and pending deadlines."""
         return await self._context.storage.progress(self._ref)
+
+    async def rule_statuses(self) -> list[RuleStatus]:
+        """Return each registered rule's status: enabled, cursor, lag, generation, dead letters.
+
+        Every surface reports this, so they agree. A rule that has not evaluated the workspace
+        yet is at cursor 0, and the progress of a rule no longer registered is left out.
+        """
+        head = await self.head_seq()
+        progress = await self.rule_progress()
+        letters = Counter(letter.rule for letter in await self.dead_letters())
+        statuses: list[RuleStatus] = []
+        for name, rule in self._context.rules.items():
+            cursor, generation = (
+                (progress[name].cursor, progress[name].generation) if name in progress else (0, 0)
+            )
+            statuses.append(
+                RuleStatus(
+                    rule=name,
+                    enabled=rule.enabled,
+                    cursor=cursor,
+                    lag=head - cursor,
+                    generation=generation,
+                    dead_letters=letters[name],
+                )
+            )
+        return statuses
+
+    async def schedule_statuses(self) -> list[ScheduleStatus]:
+        """Return when each schedule that targets this workspace last ticked and ticks next.
+
+        Every surface reports this, so they agree. A schedule that has not checked the
+        workspace yet has neither.
+        """
+        ticks = await self.schedule_ticks()
+        return [
+            ScheduleStatus(
+                schedule=name,
+                last_tick=ticks.get(name),
+                next_tick=next(schedule.after(ticks[name])) if name in ticks else None,
+            )
+            for name, schedule in self._context.schedules.items()
+            if schedule.targets(self.tenant_id, self.workspace_id)
+        ]
 
     # ─── internals ────────────────────────────────────────────────────────────
 

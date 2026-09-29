@@ -219,6 +219,18 @@ async def test_the_rule_and_schedule_status_bodies_keep_their_json() -> None:
     assert fresh == [{"schedule": "heartbeat-check", "last_tick": None, "next_tick": None}]
 
 
+def test_the_status_bodies_are_the_workspaces_own() -> None:
+    assert reflexr.fastapi.RuleStatus is reflexr.workspace.RuleStatus
+    assert reflexr.fastapi.ScheduleStatus is reflexr.workspace.ScheduleStatus
+    assert {"RuleStatus", "ScheduleStatus"} <= set(reflexr.fastapi.__all__)
+    application, _, _ = build()
+    schemas = application.openapi()["components"]["schemas"]
+    assert [schemas[name]["additionalProperties"] for name in ("RuleStatus", "ScheduleStatus")] == [
+        False,
+        False,
+    ]
+
+
 async def test_requests_are_authenticated_and_authorized(app: App) -> None:
     assert reflexr.fastapi.Authorize is reflexr.workspace.Authorize  # every surface's hook
     client, _, _ = app

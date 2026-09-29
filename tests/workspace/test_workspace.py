@@ -11,12 +11,14 @@ from reflexr.core import (
     Causation,
     ChainTarget,
     DepthExceeded,
+    EvaluationError,
     FeedbackGiven,
     FiringTarget,
     Forbidden,
     InvalidState,
     NotFound,
     RuleFired,
+    RuleProgress,
     RunCancelled,
     RunRequeued,
     RunSkipped,
@@ -29,9 +31,16 @@ from reflexr.core import (
     start,
 )
 from reflexr.telemetry import attributes as a
-from reflexr.workspace import InMemoryStorage, Storage, Workspace, WorkspaceRef, Workspaces
+from reflexr.workspace import (
+    InMemoryStorage,
+    RuleStatus,
+    Storage,
+    Workspace,
+    WorkspaceRef,
+    Workspaces,
+)
 from tests.event_types import Deploy, ServiceError
-from tests.workspace.conftest import START, FakeClock, Telemetry
+from tests.workspace.conftest import START, Build, FakeClock, Telemetry
 from tests.workspace.helpers import fired
 
 ACME = WorkspaceRef("acme", "prod")
@@ -276,6 +285,31 @@ async def test_reads_cover_runs_progress_and_dead_letters(
     assert await workspace.dead_letters() == []
     assert await workspace.rule_progress() == {}
     assert retry(dead, now=START)[0].status == "pending"
+
+
+async def test_the_rule_statuses_list_every_registered_rule(build: Build, storage: Storage) -> None:
+    triage = Rule(name="triage", when=on(ServiceError), then=run("page"))
+    paused = Rule(name="paused", when=on(Deploy), then=run("page"), enabled=False)
+    workspace = await build([triage, paused]).open("acme", "prod", actor=UserActor(id="ada"))
+    for _ in range(3):
+        await workspace.publish(Deploy(service="auth"))
+    async with storage.transaction(ACME) as transaction:
+        await transaction.save_progress("triage", RuleProgress(cursor=2, generation=1))
+        await transaction.save_progress("retired", RuleProgress(cursor=3))  # no longer registered
+        await transaction.dead_letter(
+            [
+                EvaluationError(rule="triage", seq=1, error="x"),
+                EvaluationError(rule="triage", seq=2, error="y"),
+                EvaluationError(rule="retired", seq=3, error="z"),
+            ]
+        )
+    added = Rule(name="added", when=on(Deploy), then=run("page"))  # registered after the log began
+    later = await build([triage, paused, added]).open("acme", "prod", actor=UserActor(id="ada"))
+    assert await later.rule_statuses() == [
+        RuleStatus(rule="triage", enabled=True, cursor=2, lag=1, generation=1, dead_letters=2),
+        RuleStatus(rule="paused", enabled=False, cursor=0, lag=3, generation=0, dead_letters=0),
+        RuleStatus(rule="added", enabled=True, cursor=0, lag=3, generation=0, dead_letters=0),
+    ]
 
 
 async def test_subscribing_follows_the_log(workspace: Workspace) -> None:

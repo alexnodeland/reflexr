@@ -2,7 +2,6 @@
 
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket
@@ -29,7 +28,15 @@ from reflexr.core import (
 )
 from reflexr.fastapi.stream import Stream
 from reflexr.telemetry import actor_attributes, workspace_attributes
-from reflexr.workspace import Authorize, Schedule, Workspace, Workspaces, execute
+from reflexr.workspace import (
+    Authorize,
+    RuleStatus,
+    Schedule,
+    ScheduleStatus,
+    Workspace,
+    Workspaces,
+    execute,
+)
 
 ResolveActor = Callable[[HTTPConnection], Awaitable[tuple[TenantId, Actor]]]
 """Authenticates a request or connection: returns its tenant and actor, or raises Unauthorized."""
@@ -65,29 +72,6 @@ class PublishBatch(_Body):
 
     events: list[PublishItem]
     correlation_id: str | None = None
-
-
-class RuleStatus(_Body):
-    """A rule's progress in a workspace."""
-
-    rule: RuleName
-    enabled: bool
-    """Whether the reactor evaluates the rule. A disabled rule's cursor holds."""
-
-    cursor: int
-    lag: int
-    """How many envelopes the rule is behind the head of the log."""
-
-    generation: int
-    dead_letters: int
-
-
-class ScheduleStatus(_Body):
-    """When a schedule last ticked in a workspace, and when it ticks next."""
-
-    schedule: str
-    last_tick: datetime | None
-    next_tick: datetime | None
 
 
 def reflexr_router(
@@ -202,25 +186,7 @@ def reflexr_router(
     @router.get("/workspaces/{workspace_id}/rules")
     async def list_rule_status(workspace: Workspace = current_workspace) -> list[RuleStatus]:
         """Return whether each rule is enabled, and its cursor, lag, generation and dead letters."""
-        head = await workspace.head_seq()
-        progress = await workspace.rule_progress()
-        letters = await workspace.dead_letters()
-        statuses: list[RuleStatus] = []
-        for name, rule in workspaces.rules.items():
-            cursor, generation = (
-                (progress[name].cursor, progress[name].generation) if name in progress else (0, 0)
-            )
-            statuses.append(
-                RuleStatus(
-                    rule=name,
-                    enabled=rule.enabled,
-                    cursor=cursor,
-                    lag=head - cursor,
-                    generation=generation,
-                    dead_letters=sum(1 for letter in letters if letter.rule == name),
-                )
-            )
-        return statuses
+        return await workspace.rule_statuses()
 
     @router.get("/workspaces/{workspace_id}/runs")
     async def list_runs(
@@ -264,16 +230,7 @@ def reflexr_router(
         workspace: Workspace = current_workspace,
     ) -> list[ScheduleStatus]:
         """Return when each schedule targeting this workspace last ticked and ticks next."""
-        ticks = await workspace.schedule_ticks()
-        return [
-            ScheduleStatus(
-                schedule=name,
-                last_tick=ticks.get(name),
-                next_tick=next(schedule.after(ticks[name])) if name in ticks else None,
-            )
-            for name, schedule in workspaces.schedules.items()
-            if schedule.targets(workspace.tenant_id, workspace.workspace_id)
-        ]
+        return await workspace.schedule_statuses()
 
     @router.websocket("/workspaces/{workspace_id}/stream")
     async def stream(websocket: WebSocket, workspace_id: WorkspaceId) -> None:
