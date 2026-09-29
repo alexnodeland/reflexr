@@ -1,30 +1,16 @@
-"""Traces in Langfuse: a span filter that keeps whole traces, and a run's trace attributes."""
+"""Traces in Langfuse: span filters that keep whole traces, or none, and a run's attributes."""
 
 import contextlib
-from collections.abc import AsyncGenerator
-from typing import Any, Final
+from collections.abc import AsyncGenerator, Callable
+from typing import Any
 
 from langfuse import propagate_attributes
 from langfuse.span_filter import is_default_export_span
 from opentelemetry.sdk.trace import ReadableSpan
 
 from reflexr.core import UserActor
-from reflexr.telemetry import SCOPE
+from reflexr.telemetry import is_trace_scope
 from reflexr.workspace import Reaction
-
-KEPT_SCOPES: Final = frozenset(
-    {
-        SCOPE,
-        "pydantic-graph",
-        "mcp-python-sdk",
-        "opentelemetry.instrumentation.fastapi",
-        "opentelemetry.instrumentation.asgi",
-        "opentelemetry.instrumentation.sqlalchemy",
-        "opentelemetry.instrumentation.asyncpg",
-        "opentelemetry.instrumentation.httpx",
-    }
-)
-"""Instrumentation scopes whose spans Langfuse keeps, besides its default LLM spans."""
 
 MAX_ATTRIBUTE = 200
 """The longest trace attribute value Langfuse accepts."""
@@ -33,13 +19,37 @@ MAX_ATTRIBUTE = 200
 def should_export_span(span: ReadableSpan) -> bool:
     """Return whether Langfuse should export a span: pass it as ``should_export_span``.
 
-    Langfuse's default keeps only LLM spans. This keeps those, and reflexr's, pydantic-graph's,
-    the MCP SDK's and the FastAPI, SQLAlchemy, asyncpg and httpx instrumentations', so a run's
-    trace is whole: its steps, database queries and HTTP calls around the model calls.
+    Langfuse's default keeps only LLM spans. This keeps those, and the spans of every scope in
+    ``reflexr.telemetry.TRACE_SCOPES`` (reflexr's, pydantic-graph's, the MCP SDK's and the
+    FastAPI, SQLAlchemy, asyncpg and httpx instrumentations'), so a run's trace is whole: its
+    steps, database queries and HTTP calls around the model calls.
     """
     scope = span.instrumentation_scope.name if span.instrumentation_scope else ""
-    kept = any(scope == name or scope.startswith(f"{name}.") for name in KEPT_SCOPES)
-    return kept or is_default_export_span(span)
+    return is_trace_scope(scope) or is_default_export_span(span)
+
+
+def span_filter(*keeps: Callable[[ReadableSpan], bool]) -> Callable[[ReadableSpan], bool]:
+    """Return a span filter that keeps Langfuse's LLM spans and every span one of ``keeps`` keeps.
+
+    ``configure_telemetry(langfuse="traces")`` builds its filter this way, from the libraries'
+    contributions (ADR-0040), so an application of several libraries keeps each one's spans.
+    """
+
+    def keep(span: ReadableSpan) -> bool:
+        return is_default_export_span(span) or any(kept(span) for kept in keeps)
+
+    return keep
+
+
+def no_spans(span: ReadableSpan) -> bool:
+    """Keep no spans: the filter for a client that only sets trace attributes and sends scores.
+
+    ``configure_telemetry(langfuse="scores")`` uses it when a Collector sends Langfuse every
+    trace already, so no span arrives twice. The client's span processor still sets each
+    run's session, user and tags on the spans, which reach Langfuse through the Collector.
+    """
+    del span
+    return False
 
 
 def run_attributes(reaction: Reaction[Any]) -> dict[str, Any]:

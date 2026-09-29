@@ -390,3 +390,19 @@ async def test_leases_are_exclusive_until_they_lapse(storage: Storage, clock: Fa
     await storage.release_lease(ACME, "evaluate", "b")
     await storage.release_lease(ACME, "missing", "b")
     assert await storage.acquire_lease(ACME, "evaluate", "a", ttl)
+
+
+async def test_cursors_only_move_forward(storage: Storage) -> None:
+    assert await storage.cursor(ACME, "mirror") == 0
+    await storage.save_cursor(ACME, "mirror", 5)
+    await storage.save_cursor(ACME, "mirror", 3)
+    assert await storage.cursor(ACME, "mirror") == 5, "a lagging consumer cannot move it back"
+    await storage.save_cursor(ACME, "mirror", 8)
+    assert await storage.cursor(ACME, "mirror") == 8
+    assert await storage.cursor(ACME, "another") == 0
+    assert await storage.cursor(OTHER, "mirror") == 0, "per workspace"
+
+
+async def test_concurrent_saves_of_a_cursor_leave_the_furthest(storage: Storage) -> None:
+    await asyncio.gather(*(storage.save_cursor(ACME, "mirror", seq) for seq in (3, 4, 1, 2)))
+    assert await storage.cursor(ACME, "mirror") == 4

@@ -48,6 +48,7 @@ from reflexr.telemetry import (
     chain_attributes,
     current_traceparent,
     parse_traceparent,
+    untraced,
     workspace_attributes,
 )
 from reflexr.telemetry import attributes as a
@@ -148,9 +149,10 @@ class Executor[D]:
         With a ``stop``, attempts still waiting for a place do not start once it is asked for.
         """
         rules = self._workspaces.rules.values()
-        due = await self._workspaces.storage.due_runs(
-            now=self._workspaces.clock(), limit=limit, policy=RunPolicy.of(rules)
-        )
+        with untraced():  # polling: the attempts it finds are traced, each as its own trace
+            due = await self._workspaces.storage.due_runs(
+                now=self._workspaces.clock(), limit=limit, policy=RunPolicy.of(rules)
+            )
         gate = asyncio.Semaphore(self._concurrency)
 
         async def attempt(ref: WorkspaceRef, run: Run) -> _Attempt:
@@ -170,15 +172,17 @@ class Executor[D]:
             return "declined"  # its runs wait until it is enabled again
         storage = self._workspaces.storage
         key = run_lease(run.id)
-        if not await storage.acquire_lease(ref, key, self._holder, self._lease_ttl):
-            return "contended"
+        with untraced():
+            if not await storage.acquire_lease(ref, key, self._holder, self._lease_ttl):
+                return "contended"
         try:
             if rule is None:
                 await self._cancel_orphan(ref, run)
                 return "declined"
             return "finished" if await self._attempt_leased(ref, run, rule, stop) else "declined"
         finally:
-            await storage.release_lease(ref, key, self._holder)
+            with untraced():
+                await storage.release_lease(ref, key, self._holder)
 
     async def _attempt_leased(
         self, ref: WorkspaceRef, due: Run, rule: Rule, stop: Stopping | None
@@ -344,15 +348,16 @@ class Executor[D]:
         The action is stopped if the run was cancelled or the lease was lost.
         """
         storage = self._workspaces.storage
-        while True:
-            await asyncio.sleep(self._lease_ttl.total_seconds() / 3)
-            kept = await storage.acquire_lease(
-                ref, run_lease(run.id), self._holder, self._lease_ttl
-            )
-            current = await storage.run(ref, run.id)
-            if not kept or current is None or current.status != "running":
-                await transactions.cancel(task)
-                return
+        with untraced():  # bookkeeping, not part of the attempt's trace
+            while True:
+                await asyncio.sleep(self._lease_ttl.total_seconds() / 3)
+                kept = await storage.acquire_lease(
+                    ref, run_lease(run.id), self._holder, self._lease_ttl
+                )
+                current = await storage.run(ref, run.id)
+                if not kept or current is None or current.status != "running":
+                    await transactions.cancel(task)
+                    return
 
     async def _complete(
         self, ref: WorkspaceRef, run: Run, rule: Rule, outcome: _Outcome

@@ -46,6 +46,7 @@ class _Data:
     dead_letters: list[EvaluationError] = field(default_factory=list[EvaluationError])
     schedules: dict[str, datetime] = field(default_factory=dict[str, datetime])
     leases: dict[str, tuple[str, datetime]] = field(default_factory=dict[str, tuple[str, datetime]])
+    cursors: dict[str, int] = field(default_factory=dict[str, int])
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     appended: asyncio.Condition = field(default_factory=asyncio.Condition)
 
@@ -326,3 +327,12 @@ class InMemoryStorage:
         leases = self._data(workspace).leases
         if key in leases and leases[key][0] == holder:
             del leases[key]
+
+    async def cursor(self, workspace: WorkspaceRef, name: str) -> int:
+        """Return how far a named consumer of the log has got: the ``seq`` saved, or 0."""
+        return self._data(workspace).cursors.get(name, 0)
+
+    async def save_cursor(self, workspace: WorkspaceRef, name: str, seq: int) -> None:
+        """Save how far a named consumer of the log has got; a cursor only moves forward."""
+        cursors = self._data(workspace).cursors
+        cursors[name] = max(cursors.get(name, 0), seq)

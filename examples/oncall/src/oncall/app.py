@@ -7,7 +7,9 @@ Workspaces are kept in memory, or in the database at ``ONCALL_DATABASE_URL`` (fo
 ``sqlite+aiosqlite:///oncall.db``), which is migrated to reflexr's schema at startup.
 
 With ``OTEL_EXPORTER_OTLP_ENDPOINT`` set, oncall reports its traces, metrics and logs there;
-with ``LANGFUSE_PUBLIC_KEY`` too, it files each run in Langfuse. stackr's stack provides both.
+with ``LANGFUSE_PUBLIC_KEY`` too, it files each run in Langfuse. stackr's stack provides both,
+and its Collector sends Langfuse every trace, so with ``ONCALL_LANGFUSE=scores`` oncall sends
+Langfuse only each run's session, user and tags.
 
 Authentication here is a demo: the user is whatever the ``x-user`` header (or ``user`` query
 parameter) says, and every user shares one tenant. Real applications resolve actors from their
@@ -38,7 +40,7 @@ from reflexr.core import TenantId
 from reflexr.fastapi import reflexr_router
 from reflexr.langfuse import langfuse_run
 from reflexr.mcp import ReflexrMcp
-from reflexr.otel import TelemetryHandle, configure_telemetry
+from reflexr.otel import LangfuseMode, TelemetryHandle, configure_telemetry
 from reflexr.sql import SqlStorage, create_sqlite_engine, migrate
 from reflexr.workspace import Clock, InMemoryStorage, Reactor, Storage, Workspaces, utc_now
 
@@ -206,15 +208,20 @@ def telemetry_from_environment() -> TelemetryHandle | None:
     """Set up OpenTelemetry, and Langfuse, as the environment asks.
 
     OpenTelemetry when ``OTEL_EXPORTER_OTLP_ENDPOINT`` is set, and Langfuse with it when
-    ``LANGFUSE_PUBLIC_KEY`` is set; otherwise, nothing.
+    ``LANGFUSE_PUBLIC_KEY`` is set; otherwise, nothing. oncall sends Langfuse its traces, or,
+    with ``ONCALL_LANGFUSE=scores``, only each run's session, user and tags, for a Collector
+    that sends Langfuse the traces already.
     """
     if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
         return None
+    langfuse: LangfuseMode | None = None
+    if os.environ.get("LANGFUSE_PUBLIC_KEY"):
+        langfuse = "scores" if os.environ.get("ONCALL_LANGFUSE") == "scores" else "traces"
     return configure_telemetry(
         service_name="oncall",
         service_version=version("oncall"),
         environment=os.environ.get("ONCALL_ENVIRONMENT", "development"),
-        langfuse=bool(os.environ.get("LANGFUSE_PUBLIC_KEY")),
+        langfuse=langfuse,
     )
 
 

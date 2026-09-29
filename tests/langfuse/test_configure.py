@@ -1,4 +1,4 @@
-"""configure_telemetry(langfuse=True): traces go to the Collector and to Langfuse."""
+"""configure_telemetry(langfuse="traces"): traces go to the Collector and to Langfuse."""
 
 import uuid
 
@@ -21,7 +21,7 @@ def test_langfuse_is_configured_on_the_same_tracer_provider() -> None:
         set_global=False,
         span_exporter=collector,
         metric_reader=InMemoryMetricReader(),
-        langfuse=True,
+        langfuse="traces",
         langfuse_options={
             "public_key": f"pk-lf-{uuid.uuid4()}",
             "secret_key": "sk-lf-test",

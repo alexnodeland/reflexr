@@ -79,6 +79,7 @@ To use another provider, set `ONCALL_MODEL` to any [pydantic-ai model name](http
 | `ONCALL_DATABASE_URL` | Keeps workspaces in SQLite or PostgreSQL instead of memory, migrating the database when the server starts | [Storage](guides/storage.md#sql-storage) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Reports traces, metrics and logs over OTLP, with each run attempt an `invoke_workflow {rule}` span | [Observability](guides/observability.md#configuring-opentelemetry) |
 | `LANGFUSE_PUBLIC_KEY`, with its secret key and host | Files each run in Langfuse, under its rule and in its causal chain's session | [Observability](guides/observability.md#langfuse) |
+| `ONCALL_LANGFUSE=scores` | Sends Langfuse the runs' sessions, users and tags but no spans, for a Collector that sends it the traces, as stackr's does | [Observability](guides/observability.md#langfuse) |
 | `ONCALL_LITELLM_URL` | Sends the triage agent's requests through a LiteLLM proxy, with the tenant, chain and trace on each | [The LLM gateway](guides/gateway.md) |
 
 [stackr](https://github.com/alexnodeland/stackr) runs a Collector, Langfuse and the proxy.

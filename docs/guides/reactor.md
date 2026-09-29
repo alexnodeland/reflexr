@@ -32,7 +32,7 @@ reactor = Reactor(workspaces, actions={"page": page}, deps=AppDeps(pager=pager))
 
 The reactor checks at construction that every rule's action is in `actions`, and raises `InvalidRule` if one is missing. Without `deps`, it is a `Reactor[None]`, and its actions receive a `Reaction[None]`.
 
-In a service, run `serve()` for as long as the process lives, for example as a task started in your application's lifespan ([Serving](serving.md#mounting-the-router)). It ticks schedules, evaluates and executes in a loop, sleeping `poll_interval` (one second by default) between rounds, until it is stopped. A round that fails, as when the database is briefly unreachable, is logged on the `reflexr.reactor` logger and the next round tries again; leases and transactions leave nothing half done ([ADR-0027](../adr/0027-executing-runs.md)).
+In a service, run `serve()` for as long as the process lives, for example as a task started in your application's lifespan ([Serving](serving.md#mounting-the-router)). It ticks schedules, evaluates and executes in a loop, sleeping `poll_interval` (one second by default) between rounds, until it is stopped. A round that fails, as when the database is briefly unreachable, is logged on the `reflexr.reactor` logger and the next round tries again; leases and transactions leave nothing half done ([ADR-0027](../adr/0027-executing-runs.md)). A round checks for work untraced, so an idle reactor sends no traces; each evaluation, tick and run attempt it finds is traced ([Observability](observability.md#polling)).
 
 To stop it, give it an `asyncio.Event` and set it:
 

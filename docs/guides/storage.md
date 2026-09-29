@@ -1,6 +1,6 @@
 # Storage
 
-A workspace keeps its log, each rule's progress and scope states, its runs, dead letters, schedule ticks and leases in a storage. One protocol, `Storage`, covers all of it, and `Workspaces` takes any implementation: storage is a port, and the implementations are its adapters ([ADR-0025](../adr/0025-ports-and-adapters.md)). Application code builds a storage and hands it to `Workspaces`; after that it goes through workspace handles and the reactor, which hold the tenant and workspace scope.
+A workspace keeps its log, each rule's progress and scope states, its runs, dead letters, schedule ticks, leases and its consumers' cursors in a storage. One protocol, `Storage`, covers all of it, and `Workspaces` takes any implementation: storage is a port, and the implementations are its adapters ([ADR-0025](../adr/0025-ports-and-adapters.md)). Application code builds a storage and hands it to `Workspaces`; after that it goes through workspace handles and the reactor, which hold the tenant and workspace scope.
 
 Two implementations ship:
 
@@ -23,7 +23,7 @@ workspaces = Workspaces(
 )
 ```
 
-It implements the whole protocol: transactions that roll back when their block raises, a live subscription to the log, and leases. It keeps nothing across restarts and cannot be shared between processes, so run one reactor with it.
+It implements the whole protocol: transactions that roll back when their block raises, a live subscription to the log, leases and cursors. It keeps nothing across restarts and cannot be shared between processes, so run one reactor with it.
 
 Its clock stamps envelopes and expires leases, and it is injectable, so tests control time. Give `Workspaces` the same clock, since it times runs:
 
@@ -88,7 +88,7 @@ The storage does not own the engine: dispose of it when the application stops, w
 ### How it behaves
 
 - **One transaction per workspace at a time, across processes.** A transaction creates its workspace's row if the workspace is new, then locks it (`SELECT ... FOR UPDATE`) before it reads anything, and holds the lock until it commits. The row holds the head of the log, so `seq` and `ts` are assigned under the lock without reading the log. This is what lets the reactor evaluate each envelope for each rule exactly once ([ADR-0005](../adr/0005-per-rule-cursors.md)). On SQLite, `BEGIN IMMEDIATE` takes the database's write lock instead.
-- **Subscriptions poll.** `subscribe` reads the log a page at a time. Once it has caught up, a commit made through the same `SqlStorage` wakes it at once, and a commit from another process is seen within `poll_interval` (half a second by default):
+- **Subscriptions poll.** `subscribe` reads the log a page at a time. Once it has caught up, a commit made through the same `SqlStorage` wakes it at once, and a commit from another process is seen within `poll_interval` (half a second by default). `Workspace.subscribe` reads untraced, so the polls make no traces even with the database instrumented ([Observability](observability.md#polling)):
 
     ```python
     from datetime import timedelta
@@ -100,6 +100,7 @@ The storage does not own the engine: dispose of it when the application stops, w
 - **Reads of the log filter in the database.** An event's type has a column of its own, indexed with its workspace and `seq`, so reading some types reads only their envelopes, and a read of the last so many reads the log backwards from the end.
 - **Timestamps in columns are UTC.** They are stored and read back in UTC, because SQLite compares timestamps as text. Timestamps inside the JSON round-trip exactly as given.
 - **Leases are rows,** taken with a conditional `UPDATE` or else an `INSERT`, and they expire by the storage's clock. `SqlStorage(engine, clock=...)` takes a clock, as `InMemoryStorage` does.
+- **Cursors are rows,** each locked while a save compares it, so the furthest save wins.
 
 Every table's name starts with `reflexr_`, and every primary key starts with the tenant and the workspace, so every row belongs to one tenant's workspace ([ADR-0016](../adr/0016-tenants-and-workspaces-like-artifactr.md)):
 
@@ -113,6 +114,7 @@ Every table's name starts with `reflexr_`, and every primary key starts with the
 | `reflexr_dead_letters` | Envelopes rules could not evaluate |
 | `reflexr_schedules` | Each schedule's last tick |
 | `reflexr_leases` | Evaluation and run leases |
+| `reflexr_cursors` | The cursors of the log's other consumers, such as feedback mirrors |
 
 ## Migrations
 
@@ -165,5 +167,6 @@ Everything is scoped to a `WorkspaceRef`, a tenant and a workspace: the unit of 
   - **`ordered`** rules, with `ordering="scope"`. A pending or retrying run of one is returned only if no earlier run of its scope, by `fired_seq` and then creation, holds the scope by being pending, retrying or running. So a scope's backlog takes one place in the limit however deep it is.
   - **`blocking`** rules, ordered ones with `on_dead_letter="block"`, whose dead-lettered runs hold their scope too.
 - **Leases are exclusive and expire.** `acquire_lease(ref, key, holder, ttl)` takes or renews a lease and returns whether the holder has it; `release_lease` gives it up. The reactor holds one per workspace while it evaluates and one per run while it executes, so several processes can share the work ([ADR-0027](../adr/0027-executing-runs.md)).
+- **Cursors only move forward.** `save_cursor(ref, name, seq)` records how far a named consumer of the log has got, and `cursor(ref, name)` reads it back, 0 if it has none. Saving a `seq` below the saved one leaves it, so a consumer that runs in several processes cannot move it back. A `FeedbackMirror` keeps one, as a rule keeps its progress, so a restarted mirror carries on where it was ([ADR-0040](../adr/0040-telemetry-that-composes-across-libraries.md)); `Workspace.cursor` and `Workspace.save_cursor` give an application's own consumers the same.
 
 The workspace behaviour suite states the rest precisely, including rollback, isolation between workspaces, subscriptions that never miss an envelope, and lease expiry. It lives in the repository's [`tests/workspace/`](https://github.com/alexnodeland/reflexr/tree/main/tests/workspace) rather than in the package: its `storage` fixture runs every test on in-memory storage, SQLite and PostgreSQL, so copy the suite and add your storage to that fixture.

@@ -1,7 +1,8 @@
 """Workspace handles: publishing, feedback, run operations and reads, with their telemetry."""
 
+from collections.abc import AsyncGenerator
 from datetime import timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from opentelemetry.trace import SpanKind
@@ -11,6 +12,7 @@ from reflexr.core import (
     Causation,
     ChainTarget,
     DepthExceeded,
+    Envelope,
     EvaluationError,
     FeedbackGiven,
     FiringTarget,
@@ -319,6 +321,29 @@ async def test_subscribing_follows_the_log(workspace: Workspace) -> None:
     await workspace.publish(Deploy(service="auth"))
     assert (await anext(stream)).seq == 2
     await stream.aclose()
+
+
+async def test_a_subscription_ends_when_its_storage_stream_ends(workspace: Workspace) -> None:
+    await workspace.publish(Deploy(service="auth"))
+    [stored] = await workspace.read()
+
+    class FiniteStorage:
+        async def subscribe(
+            self, workspace: WorkspaceRef, *, after_seq: int = 0
+        ) -> AsyncGenerator[Envelope]:
+            yield stored
+
+    finite = Workspaces(cast(Any, FiniteStorage()))
+    handle = await finite.open("acme", "prod", actor=UserActor(id="ada"))
+    assert [envelope.seq async for envelope in handle.subscribe()] == [1]
+
+
+async def test_a_handle_saves_its_workspaces_cursors(
+    workspace: Workspace, storage: Storage
+) -> None:
+    await workspace.save_cursor("mirror", 2)
+    assert await workspace.cursor("mirror") == 2
+    assert await storage.cursor(WorkspaceRef("acme", "prod"), "mirror") == 2
 
 
 async def test_reading_passes_the_window_filter_and_tail_to_storage(

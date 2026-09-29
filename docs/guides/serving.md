@@ -248,7 +248,7 @@ Every outgoing frame goes through one bounded outbox per connection. A client to
 
 Command deduplication is per process in v0.1: behind a load balancer, a retried command that reaches another process runs again. Publishing with an event id is idempotent everywhere, because the log itself remembers ids.
 
-Each WebSocket connection is a `reflexr.stream` span, and counted in the `reflexr.stream.connections` and `reflexr.stream.disconnects` metrics. When FastAPI is instrumented, as `configure_telemetry` does, each REST request's span is attributed to its tenant, workspace and actor too ([Observability](observability.md)).
+Each WebSocket connection is a `reflexr.stream` span, and counted in the `reflexr.stream.connections` and `reflexr.stream.disconnects` metrics. Its subscription reads the log untraced, so a connection that is only waiting makes no traces, however often SQL storage polls for it ([Observability](observability.md#polling)). When FastAPI is instrumented, as `configure_telemetry` does, each REST request's span is attributed to its tenant, workspace and actor too ([Observability](observability.md)).
 
 ## Logging and startup output
 

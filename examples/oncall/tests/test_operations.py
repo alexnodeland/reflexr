@@ -65,20 +65,24 @@ async def test_runs_requests_and_queries_are_traced(
 
 
 def test_telemetry_is_configured_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    for name in ("OTEL_EXPORTER_OTLP_ENDPOINT", "LANGFUSE_PUBLIC_KEY", "ONCALL_LANGFUSE"):
+        monkeypatch.delenv(name, raising=False)
     assert telemetry_from_environment() is None
-    configured: dict[str, Any] = {}
+    configured: list[dict[str, Any]] = []
     monkeypatch.setattr(
-        oncall.app, "configure_telemetry", lambda **options: configured.update(options)
+        oncall.app, "configure_telemetry", lambda **options: configured.append(options)
     )
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    telemetry_from_environment()
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-1")
     telemetry_from_environment()
-    assert configured == {
+    monkeypatch.setenv("ONCALL_LANGFUSE", "scores")
+    telemetry_from_environment()
+    assert [options.pop("langfuse") for options in configured] == [None, "traces", "scores"]
+    assert configured[0] == {
         "service_name": "oncall",
         "service_version": "0.1.0",
         "environment": "development",
-        "langfuse": True,
     }
 
 

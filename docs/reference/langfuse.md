@@ -14,7 +14,7 @@ The `langfuse` extra. See [Langfuse](../guides/observability.md#langfuse) and [S
 
 ::: reflexr.langfuse.should_export_span
 
-::: reflexr.langfuse.KEPT_SCOPES
+::: reflexr.langfuse.no_spans
 
 ## Runs
 
