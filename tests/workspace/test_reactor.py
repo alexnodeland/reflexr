@@ -1,5 +1,6 @@
 """The reactor's evaluation: rules over workspaces' logs, exactly once, with their facts."""
 
+import asyncio
 from datetime import timedelta
 
 import pytest
@@ -283,6 +284,25 @@ async def test_a_workspace_another_reactor_holds_is_skipped(build: Build, storag
     assert await reactor.evaluate(ACME) == 1
     assert reactor.holder == "mine"
     assert await storage.acquire_lease(ACME, EVALUATION_LEASE, "theirs", MINUTE)  # released
+
+
+async def test_settling_waits_for_a_workspace_another_reactor_evaluates(
+    build: Build, storage: Storage
+) -> None:
+    workspaces = build([deploys])
+    workspace = await open_(workspaces)
+    reactor = Reactor(workspaces, actions=ACTIONS, holder="mine")
+    await reactor.evaluate()
+    await workspace.publish(Deploy(service="auth"))
+    assert await storage.acquire_lease(ACME, EVALUATION_LEASE, "theirs", MINUTE)
+
+    async def let_go() -> None:  # as a reactor that finished just before the deploy would
+        await asyncio.sleep(0.02)
+        await storage.release_lease(ACME, EVALUATION_LEASE, "theirs")
+
+    letting_go = asyncio.create_task(let_go())
+    assert await reactor.settle() == Settled(firings=1, attempts=1)
+    await letting_go
 
 
 class LosesLease(InMemoryStorage):
