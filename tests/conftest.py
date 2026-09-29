@@ -1,6 +1,13 @@
+import importlib
+
 import pytest
 
 from tests.databases import POSTGRES_URL
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Register the test event types before any test module refers to them by name."""
+    importlib.import_module("tests.event_types")
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

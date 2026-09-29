@@ -4,7 +4,6 @@ from datetime import timedelta
 
 import pytest
 
-import tests.event_types  # noqa: F401  (registers the test event types)
 from reflexr.core import (
     Envelope,
     F,

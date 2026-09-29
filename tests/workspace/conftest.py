@@ -16,7 +16,6 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-import tests.event_types  # noqa: F401  (registers the test event types)
 from reflexr import Rule, UserActor
 from reflexr.core import Predicates
 from reflexr.sql import SqlStorage, create_schema

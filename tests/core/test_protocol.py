@@ -3,7 +3,6 @@
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-import tests.event_types  # noqa: F401  (registers the test event types)
 from reflexr.core import (
     PROTOCOL,
     ClientFrame,

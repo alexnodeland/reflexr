@@ -6,7 +6,6 @@ from typing import Any
 from fastapi import FastAPI
 from starlette.requests import HTTPConnection
 
-import tests.event_types  # noqa: F401  (registers the test event types)
 from reflexr import Actor, F, Feedback, Rule, UserActor, by, on, run
 from reflexr.core import TenantId, WorkspaceId
 from reflexr.fastapi import Unauthorized, reflexr_router

@@ -12,7 +12,6 @@ from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import UsageLimits
 
-import tests.event_types  # noqa: F401  (registers the test event types)
 from reflexr import AgentActor, Event, F, Rule, SourceActor, by, on, run
 from reflexr.agent import AgentAction, EventContext, firing_text
 from reflexr.telemetry import attributes as a

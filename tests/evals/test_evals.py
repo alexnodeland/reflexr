@@ -6,7 +6,6 @@ from evalr.core import FunctionEvaluator, HandOff
 from opentelemetry.sdk.trace import TracerProvider
 from pydantic import BaseModel
 
-import tests.event_types  # noqa: F401  (registers the test event types)
 from reflexr import EvaluatorActor, F, Feedback, Rule, SourceActor, UserActor, by, on, run
 from reflexr.core import ChainTarget, FeedbackGiven, FiringTarget, RunSucceeded, RunTarget
 from reflexr.evals import EvaluatorAction, FeedbackContext, LogFeedbackSource, run_record

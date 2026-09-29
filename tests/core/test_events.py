@@ -6,7 +6,6 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
-import tests.event_types  # noqa: F401  (registers the test event types)
 from reflexr.core import (
     AgentActor,
     Causation,

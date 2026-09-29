@@ -6,7 +6,6 @@ from typing import Any
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
-import tests.event_types  # noqa: F401  (registers the test event types)
 from reflexr.core import (
     Envelope,
     F,

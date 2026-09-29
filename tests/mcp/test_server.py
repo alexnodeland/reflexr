@@ -11,7 +11,6 @@ from mcp.server.mcpserver import Context
 from mcp.server.subscriptions import InMemorySubscriptionBus, ResourceUpdated, ServerEvent
 from mcp.types import TextContent, TextResourceContents
 
-import tests.event_types  # noqa: F401  (registers the test event types)
 from reflexr import F, Feedback, Rule, by, on, run
 from reflexr.core import ExternalAgentActor, TenantId
 from reflexr.mcp import ReflexrMcp, run_uri

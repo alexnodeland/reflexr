@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 
-import tests.event_types  # noqa: F401  (registers the test event types)
 from reflexr.core import (
     Causation,
     Envelope,
