@@ -8,13 +8,14 @@ ones, to see its spans and metrics.
 from reflexr.telemetry import attributes
 from reflexr.telemetry.metrics import (
     METRICS,
-    SCOPE_ATTRIBUTES,
+    SCOPE,
+    SCOPED,
     Instrument,
     Metric,
     MetricsDetail,
+    kept_attributes,
 )
 from reflexr.telemetry.telemetry import (
-    SCOPE_NAME,
     Telemetry,
     actor_attributes,
     chain_attributes,
@@ -25,8 +26,8 @@ from reflexr.telemetry.telemetry import (
 
 __all__ = [
     "METRICS",
-    "SCOPE_ATTRIBUTES",
-    "SCOPE_NAME",
+    "SCOPE",
+    "SCOPED",
     "Instrument",
     "Metric",
     "MetricsDetail",
@@ -35,6 +36,7 @@ __all__ = [
     "attributes",
     "chain_attributes",
     "current_traceparent",
+    "kept_attributes",
     "parse_traceparent",
     "workspace_attributes",
 ]

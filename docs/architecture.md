@@ -7,6 +7,8 @@
 | `reflexr.core` | Implemented |
 | `reflexr.telemetry` | Implemented: spans, attributes and the metric registry |
 | `reflexr.scores` | Implemented: feedback as scores, the log mirror, and the score ports |
+| `reflexr.otel` (extra) | Implemented: `configure_telemetry`, the SDK behind the API, with the metric views |
+| `reflexr.langfuse` (extra) | Implemented: whole traces, run attributes, and feedback as Langfuse scores |
 | `reflexr.evals` (extra) | Implemented: feedback as evalr examples, evaluators as rules, replay experiments and end-to-end measures |
 | `reflexr.workspace` | Implemented: storage protocol, in-memory storage, workspace handles, the `Reactor` (evaluation, execution and schedules) and function actions |
 | `reflexr.agent` | Implemented: agent actions with the `EventContext` capability, and checkpointed graph actions |
@@ -381,7 +383,7 @@ Authentication is the host's: each surface takes a resolver that returns the ten
 
 ## Workspace handles
 
-`Workspaces(storage, events=[...], rules=[...], predicates={...}, clock=..., max_depth=8, tracer_provider=..., meter_provider=..., metrics_detail="workspace")` holds the rules, checked at construction, and opens handles; each `Workspace` is bound to one tenant, workspace and actor. `Reactor(workspaces)` evaluates the rules.
+`Workspaces(storage, events=[...], rules=[...], predicates={...}, schedules=[...], clock=..., max_depth=8, tracer_provider=..., meter_provider=...)` holds the rules, checked at construction, and opens handles; each `Workspace` is bound to one tenant, workspace and actor. `Reactor(workspaces)` evaluates the rules.
 
 ```python
 workspace = await workspaces.open("acme", "prod", actor=UserActor(id="ada"))
@@ -396,7 +398,7 @@ await workspace.skip_run(run_id, reason="duplicate incident")
 - **Operations** (`retry_run`, `skip_run`, `cancel_run`, `replay_rule`) apply core's transitions in one transaction and append the resulting event, attributed to the handle's actor.
 - **Reads**: `read`, `subscribe`, `head_seq`, `run`, `runs` (newest first), `dead_letters`, `rule_progress`.
 
-Every write is a span (`reflexr.publish {type}`, a producer span; `reflexr.feedback {type}`; `reflexr.skip_run` and so on) attributed to the tenant, workspace and actor and placed in its chain's session. The W3C trace context of the publishing span is stored on the envelope, so the runs it causes can link back to it. Each evaluation pass is a `reflexr.evaluate` span listing the rules that evaluated and the firings made, and the `rule_fired` facts carry its trace context. Each run attempt is an `invoke_workflow {rule}` span in the run's session, linked to the spans that published the envelopes it matched, and the run records each attempt's trace id. Metrics come from the registry in `reflexr.telemetry.metrics`: `reflexr.events.published`, `reflexr.feedback`, `reflexr.runs`, `reflexr.firings`, `reflexr.rule.errors`, `reflexr.evaluation.lag`, `reflexr.evaluation.duration`, `reflexr.run.attempts`, `reflexr.run.duration` and `reflexr.dead_letters` so far.
+Every write is a span (`reflexr.publish {type}`, a producer span; `reflexr.feedback {type}`; `reflexr.skip_run` and so on) attributed to the tenant, workspace and actor and placed in its chain's session. The W3C trace context of the publishing span is stored on the envelope, so the runs it causes can link back to it. Each evaluation pass is a `reflexr.evaluate` span listing the rules that evaluated and the firings made, and the `rule_fired` facts carry its trace context. Each run attempt is an `invoke_workflow {rule}` span in the run's session, linked to the spans that published the envelopes it matched, and the run records each attempt's trace id. Metrics come from the registry in `reflexr.telemetry.metrics`, always with tenant and workspace; a deployment keeps less detail with SDK views, which `reflexr.otel.configure_telemetry(metrics_detail=...)` installs ([ADR-0029](adr/0029-metric-detail-through-sdk-views.md)). The `[otel]` extra sets up the SDK, OTLP export and the open instrumentations in one call, and the `[langfuse]` extra adds Langfuse on the same tracer provider, with `langfuse_run` as the reactor's `run_context` so each run is filed under its chain's session. The metrics are `reflexr.events.published`, `reflexr.feedback`, `reflexr.runs`, `reflexr.firings`, `reflexr.rule.errors`, `reflexr.evaluation.lag`, `reflexr.evaluation.duration`, `reflexr.run.attempts`, `reflexr.run.duration`, `reflexr.dead_letters`, `reflexr.schedule.ticks` and the WebSocket stream's `reflexr.stream.connections` and `reflexr.stream.disconnects`.
 
 ## Storage protocol
 

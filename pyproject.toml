@@ -35,6 +35,17 @@ postgres = ["reflexr[sql]", "asyncpg>=0.31"]
 fastapi = ["fastapi>=0.141"]
 mcp = ["mcp>=2.2"]
 evals = ["evalr>=0.1.0.dev0"]
+langfuse = ["langfuse>=4.15,<5"]
+otel = [
+    "opentelemetry-exporter-otlp-proto-http>=1.45",
+    "opentelemetry-instrumentation-asyncpg>=0.66b0",
+    "opentelemetry-instrumentation-fastapi>=0.66b0",
+    "opentelemetry-instrumentation-httpx>=0.66b0",
+    "opentelemetry-instrumentation-logging>=0.66b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.66b0",
+    "opentelemetry-processor-baggage>=0.66b0",
+    "opentelemetry-sdk>=1.45",
+]
 
 [project.urls]
 Homepage = "https://github.com/alexnodeland/reflexr"
@@ -97,9 +108,9 @@ ignore = [
 convention = "google"
 
 [tool.ruff.lint.isort]
-# reflexr.fastapi and reflexr.mcp share their names with the libraries they adapt; without
+# reflexr.fastapi, reflexr.mcp and reflexr.langfuse share their names with the libraries they adapt; without
 # this, isort's same-package detection files the libraries as first-party.
-known-third-party = ["fastapi", "mcp", "evalr"]
+known-third-party = ["fastapi", "mcp", "evalr", "langfuse"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D", "ARG"]
@@ -123,7 +134,11 @@ testpaths = ["tests"]
 addopts = ["--strict-markers", "--strict-config", "-ra"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # backoff, which Langfuse uses, calls asyncio.iscoroutinefunction, deprecated in Python 3.14.
+    "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:backoff._decorator",
+]
 markers = [
     "postgres: needs a PostgreSQL database (set REFLEXR_TEST_POSTGRES_URL)",
 ]

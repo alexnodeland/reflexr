@@ -58,7 +58,6 @@ from reflexr.core import (
 from reflexr.core.errors import DepthExceeded, Forbidden
 from reflexr.telemetry import (
     Metric,
-    MetricsDetail,
     Telemetry,
     actor_attributes,
     chain_attributes,
@@ -103,7 +102,6 @@ class Workspaces:
             rejected and firings beyond it refused, so workflows that trigger themselves stop.
         tracer_provider: Where spans go. Defaults to OpenTelemetry's global provider.
         meter_provider: Where metrics go. Defaults to OpenTelemetry's global provider.
-        metrics_detail: Which of tenant and workspace become metric attributes.
 
     Raises:
         InvalidRule: If a rule refers to an event type, field or predicate that does not exist.
@@ -122,7 +120,6 @@ class Workspaces:
         max_depth: int = 8,
         tracer_provider: TracerProvider | None = None,
         meter_provider: MeterProvider | None = None,
-        metrics_detail: MetricsDetail = "workspace",
     ) -> None:
         accepted = None if events is None else {t.event_type: t for t in events}
         chosen = dict(predicates or {})
@@ -145,11 +142,7 @@ class Workspaces:
             schedules=timetables,
             clock=clock,
             max_depth=max_depth,
-            telemetry=Telemetry(
-                tracer_provider=tracer_provider,
-                meter_provider=meter_provider,
-                metrics_detail=metrics_detail,
-            ),
+            telemetry=Telemetry(tracer_provider=tracer_provider, meter_provider=meter_provider),
         )
 
     @property

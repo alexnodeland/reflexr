@@ -15,10 +15,7 @@ from opentelemetry.util.types import AttributeValue
 
 from reflexr.core import Actor, TenantId, UserActor, WorkspaceId
 from reflexr.telemetry import attributes as a
-from reflexr.telemetry.metrics import METRICS, Metric, MetricsDetail
-
-SCOPE_NAME = "reflexr"
-"""The instrumentation scope of every span and metric reflexr records."""
+from reflexr.telemetry.metrics import METRICS, SCOPE, Metric
 
 type Attributes = Mapping[str, AttributeValue]
 
@@ -30,10 +27,12 @@ _W3C = TraceContextTextMapPropagator()
 class Telemetry:
     """reflexr's tracer, and an instrument for every metric in the registry.
 
+    Tenant and workspace are always recorded; a deployment that wants less detail says so to
+    the SDK, with ``reflexr.otel.metric_views``.
+
     Args:
         tracer_provider: Where spans go. Defaults to the global provider.
         meter_provider: Where metrics go. Defaults to the global provider.
-        metrics_detail: Which of tenant and workspace become metric attributes.
     """
 
     def __init__(
@@ -41,13 +40,11 @@ class Telemetry:
         *,
         tracer_provider: TracerProvider | None = None,
         meter_provider: MeterProvider | None = None,
-        metrics_detail: MetricsDetail = "workspace",
     ) -> None:
         release = version("reflexr")
-        self.tracer: Tracer = trace.get_tracer(SCOPE_NAME, release, tracer_provider)
-        meter = metrics.get_meter(SCOPE_NAME, release, meter_provider)
+        self.tracer: Tracer = trace.get_tracer(SCOPE, release, tracer_provider)
+        meter = metrics.get_meter(SCOPE, release, meter_provider)
         self._recorders = {name: _recorder(meter, metric) for name, metric in METRICS.items()}
-        self._detail: MetricsDetail = metrics_detail
 
     def record(
         self,
@@ -65,14 +62,10 @@ class Telemetry:
             ValueError: If an attribute is not one the metric declares.
         """
         recorder = self._recorders[metric.name]
-        given = dict(attributes or {})
+        given = {**(attributes or {}), a.TENANT_ID: tenant_id, a.WORKSPACE_ID: workspace_id}
         undeclared = given.keys() - METRICS[metric.name].attributes
         if undeclared:
             raise ValueError(f"{metric.name} does not declare {sorted(undeclared)}")
-        if self._detail != "none":
-            given[a.TENANT_ID] = tenant_id
-        if self._detail == "workspace":
-            given[a.WORKSPACE_ID] = workspace_id
         recorder(value, given)
 
 
@@ -112,7 +105,12 @@ def parse_traceparent(traceparent: str | None) -> SpanContext | None:
 def _recorder(meter: Meter, metric: Metric) -> _Recorder:
     name, unit, description = metric.name, metric.unit, metric.description
     if metric.instrument == "histogram":
-        return meter.create_histogram(name, unit=unit, description=description).record
+        return meter.create_histogram(
+            name,
+            unit=unit,
+            description=description,
+            explicit_bucket_boundaries_advisory=metric.buckets,
+        ).record
     if metric.instrument == "gauge":
         return meter.create_gauge(name, unit=unit, description=description).set
     if metric.instrument == "up_down_counter":
