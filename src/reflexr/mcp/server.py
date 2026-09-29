@@ -32,7 +32,7 @@ from reflexr.core import (
     load_event,
 )
 from reflexr.telemetry import actor_attributes, workspace_attributes
-from reflexr.workspace import Authorize, Workspace, Workspaces, execute
+from reflexr.workspace import Authorize, RuleStatus, Workspace, Workspaces, execute
 
 ResolveClient = Callable[[Context], Awaitable[tuple[TenantId, ExternalAgentActor]]]
 """Authenticates an MCP request: returns the client's tenant and actor."""
@@ -195,18 +195,10 @@ class ReflexrMcp:
 
         @server.tool()
         async def rule_status(workspace_id: str, ctx: Context) -> str:
-            """Show each rule's cursor, lag behind the log and generation, and if it is disabled."""
+            """Show every rule: enabled or not, its cursor, lag, generation and dead letters."""
             workspace = await self._workspace(ctx, workspace_id)
-            head = await workspace.head_seq()
-            progress = await workspace.rule_progress()
-            rules = self._workspaces.rules
-            disabled = {name for name, rule in rules.items() if not rule.enabled}
-            lines = [
-                f"- {name}: cursor {p.cursor}, {head - p.cursor} behind, generation {p.generation}"
-                + (", disabled" if name in disabled else "")
-                for name, p in progress.items()
-            ]
-            return "\n".join(lines) or "No rule has evaluated this workspace yet."
+            statuses = await workspace.rule_statuses()
+            return "\n".join(map(_rule_line, statuses)) or "No rules are registered."
 
         @server.tool()
         async def replay_rule(
@@ -298,6 +290,14 @@ class ReflexrMcp:
             except Rejection as rejection:
                 raise ResourceError(rejection.message) from rejection
             return run.model_dump_json()
+
+
+def _rule_line(status: RuleStatus) -> str:
+    letters = "1 dead letter" if status.dead_letters == 1 else f"{status.dead_letters} dead letters"
+    return (
+        f"- {status.rule}: {'enabled' if status.enabled else 'disabled'}, cursor {status.cursor}, "
+        f"{status.lag} behind, generation {status.generation}, {letters}"
+    )
 
 
 async def _tool[T](awaitable: Awaitable[T]) -> T:

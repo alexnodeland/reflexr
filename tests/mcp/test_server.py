@@ -12,9 +12,9 @@ from mcp.server.subscriptions import InMemorySubscriptionBus, ResourceUpdated, S
 from mcp.types import TextContent, TextResourceContents
 
 from reflexr import Actor, F, Feedback, Rule, by, on, run
-from reflexr.core import ExternalAgentActor, TenantId, WorkspaceId
+from reflexr.core import EvaluationError, ExternalAgentActor, TenantId, WorkspaceId
 from reflexr.mcp import ReflexrMcp, run_uri
-from reflexr.workspace import InMemoryStorage, Reaction, Reactor, Workspaces
+from reflexr.workspace import InMemoryStorage, Reaction, Reactor, WorkspaceRef, Workspaces
 from tests.event_types import Deploy, ServiceError
 
 CLAUDE = ExternalAgentActor(client_id="claude-code", name="Claude Code")
@@ -107,8 +107,10 @@ async def test_agents_publish_read_and_operate(server: Server, workspaces: Works
         [rule] = json.loads((await call(client, "list_rules"))[1])
         assert rule["name"] == "deploys"
         status = (await call(client, "rule_status", workspace_id="prod"))[1]
-        assert status.startswith("- deploys: cursor")
-        assert (await call(client, "rule_status", workspace_id="empty"))[1].startswith("No rule")
+        assert status == "- deploys: enabled, cursor 8, 0 behind, generation 0, 0 dead letters"
+        assert (await call(client, "rule_status", workspace_id="empty"))[1] == (
+            "- deploys: enabled, cursor 0, 0 behind, generation 0, 0 dead letters"
+        )
         failing, done = [
             json.loads(line)
             for line in (await call(client, "list_runs", workspace_id="prod"))[1].splitlines()
@@ -229,18 +231,31 @@ async def test_authorize_decides_which_workspaces_a_client_may_use(
     assert await secret.head_seq() == head  # nothing was written
 
 
-async def test_the_rule_status_says_which_rules_are_disabled() -> None:
-    off = deploys.model_copy(update={"enabled": False})
-    workspaces = Workspaces(InMemoryStorage(), events=[Deploy], rules=[off])
+async def test_the_rule_status_lists_every_registered_rule_as_rest_does() -> None:
+    storage = InMemoryStorage()
+    retired = Rule(name="retired", when=on(Deploy), then=run("note"))
+    before = Workspaces(storage, events=[Deploy], rules=[deploys, retired])
+    await (await before.open("acme", "prod", actor=CLAUDE)).publish(Deploy(service="auth"))
+    async with storage.transaction(WorkspaceRef("acme", "prod")) as transaction:
+        await transaction.dead_letter([EvaluationError(rule="deploys", seq=1, error="no")])
+    off = Rule(name="off", when=on(Deploy), then=run("note"), enabled=False)  # has never run
+    workspaces = Workspaces(storage, events=[Deploy], rules=[deploys, off])
     workspace = await workspaces.open("acme", "prod", actor=CLAUDE)
-    await workspace.publish(Deploy(service="auth"))
     mcp = ReflexrMcp(workspaces, resolve=Identity().resolve)
+    bare = ReflexrMcp(Workspaces(storage, events=[Deploy]), resolve=Identity().resolve)
     try:
-        async with Client(mcp.server) as client:
+        async with Client(mcp.server) as client, Client(bare.server) as unruled:
             _, status = await call(client, "rule_status", workspace_id="prod")
+            _, none = await call(unruled, "rule_status", workspace_id="prod")
     finally:
         await mcp.aclose()
-    assert status == "- deploys: cursor 0, 1 behind, generation 0, disabled"
+        await bare.aclose()
+    assert status == (
+        "- deploys: enabled, cursor 0, 1 behind, generation 0, 1 dead letter\n"
+        "- off: disabled, cursor 0, 1 behind, generation 0, 0 dead letters"
+    )
+    assert [s.rule for s in await workspace.rule_statuses()] == ["deploys", "off"]  # REST's list
+    assert none == "No rules are registered."
 
 
 async def test_the_http_app_and_lifespan(server: Server) -> None:
