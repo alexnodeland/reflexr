@@ -1,6 +1,7 @@
 """REST: publishing, commands, reads and administration, with auth and rejections."""
 
 from collections.abc import AsyncIterator
+from datetime import timedelta
 
 import httpx
 import pytest
@@ -8,8 +9,8 @@ from fastapi import FastAPI
 
 import reflexr.fastapi
 import reflexr.workspace
-from reflexr.workspace import Reactor, Workspaces
-from tests.fastapi.conftest import build, spike
+from reflexr.workspace import Reactor, Schedule, Workspaces
+from tests.fastapi.conftest import build, heartbeat, spike
 
 ERROR = {"type": "service.error", "service": "auth"}
 
@@ -185,3 +186,28 @@ async def test_only_recent_command_ids_are_remembered() -> None:
             return response.json()["outcome"]["seq"]
 
         assert [await send("c1"), await send("c2"), await send("c1")] == [1, 2, 3]
+
+
+async def test_a_tenant_sees_only_its_own_schedule_targets() -> None:
+    both = Schedule(
+        name="both",
+        every=timedelta(minutes=5),
+        workspaces=(("acme", "prod"), ("globex", "prod"), ("acme", "staging")),
+    )
+    theirs = Schedule(name="theirs", every=timedelta(minutes=5), workspaces=(("globex", "ops"),))
+    application, _, _ = build(schedules=[heartbeat, both, theirs])
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test/v1") as client:
+        acme = (await client.get("/schedules", headers={"x-tenant": "acme"})).json()
+        globex = (await client.get("/schedules", headers={"x-tenant": "globex"})).json()
+        refused = await client.get("/schedules", headers={"x-token": "bad"})
+    assert {s["name"]: s["workspaces"] for s in acme} == {
+        "heartbeat-check": "all",
+        "both": [["acme", "prod"], ["acme", "staging"]],
+    }
+    assert {s["name"]: s["workspaces"] for s in globex} == {
+        "heartbeat-check": "all",
+        "both": [["globex", "prod"]],
+        "theirs": [["globex", "ops"]],
+    }
+    assert refused.status_code == 401

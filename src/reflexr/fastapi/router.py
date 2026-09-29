@@ -245,10 +245,19 @@ def reflexr_router(
         """Return the envelopes rules could not evaluate, oldest first."""
         return await workspace.dead_letters(rule=rule)
 
-    @router.get("/schedules", dependencies=[signed_in])
-    async def list_schedules() -> list[Schedule]:
-        """Return the registered schedules."""
-        return list(workspaces.schedules.values())
+    @router.get("/schedules")
+    async def list_schedules(request: Request) -> list[Schedule]:
+        """Return the registered schedules that tick in the caller's tenant.
+
+        A schedule that targets particular workspaces lists only the tenant's own, so no
+        tenant sees another's ids; one that targets none of them is left out.
+        """
+        tenant_id, _ = await _authenticate(request)
+        return [
+            seen
+            for schedule in workspaces.schedules.values()
+            if (seen := _seen_by(schedule, tenant_id)) is not None
+        ]
 
     @router.get("/workspaces/{workspace_id}/schedules")
     async def list_schedule_status(
@@ -280,6 +289,14 @@ def reflexr_router(
         ).serve()
 
     return router
+
+
+def _seen_by(schedule: Schedule, tenant_id: TenantId) -> Schedule | None:
+    """The schedule as one tenant may see it: its targets narrowed to the tenant's workspaces."""
+    if schedule.workspaces == "all":
+        return schedule
+    own = tuple(target for target in schedule.workspaces if target[0] == tenant_id)
+    return schedule.model_copy(update={"workspaces": own}) if own else None
 
 
 async def _or_http[T](awaitable: Awaitable[T]) -> T:

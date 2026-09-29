@@ -43,13 +43,16 @@ async def authorize(tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor
 
 
 def build(
-    *, rules: Iterable[Rule] = (spike,), **options: Any
+    *,
+    rules: Iterable[Rule] = (spike,),
+    schedules: Iterable[Schedule] = (heartbeat,),
+    **options: Any,
 ) -> tuple[FastAPI, Workspaces, Reactor[None]]:
     workspaces = Workspaces(
         InMemoryStorage(),
         events=[ServiceError, Deploy, Heartbeat],
         rules=rules,
-        schedules=[heartbeat],
+        schedules=schedules,
     )
     app = FastAPI()
     router = reflexr_router(workspaces, resolve_actor=resolve_actor, authorize=authorize, **options)
