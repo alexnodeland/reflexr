@@ -19,6 +19,7 @@ from reflexr.core import (
     Envelope,
     Evaluation,
     Event,
+    Fact,
     Rule,
     RuleProgress,
     ScopeState,
@@ -27,6 +28,7 @@ from reflexr.core import (
     evaluate,
     load_event,
     needs,
+    type_of,
 )
 from tests.event_types import ServiceError
 
@@ -70,12 +72,16 @@ def envelope(item: dict[str, Any]) -> Envelope:
 def test_conformance(case: dict[str, Any]) -> None:
     rule = Rule.model_validate({"name": "rule", "then": {"action": "act"}, **case["rule"]})
     envelopes = [envelope(item) for item in case["envelopes"]]
-    progress = begin(rule, head_seq=0)
-    whole = _in_one_batch(rule, progress, envelopes)
-    firings, errors = _one_at_a_time(rule, progress, envelopes)
+    progress = begin(rule, head_seq=0).model_copy(update=case.get("progress", {}))
+    limit: int | None = case.get("max_depth")
+    whole = _in_one_batch(rule, progress, envelopes, limit)
+    firings, errors, facts = _one_at_a_time(rule, progress, envelopes, limit)
     assert [f.model_dump() for f in whole.firings] == firings, "batching changed the decisions"
     assert [e.model_dump() for e in whole.errors] == errors
+    assert [f.model_dump() for f in whole.facts] == facts
     expect = case["expect"]
+    if "facts" in expect:
+        assert [_fact(f) for f in whole.facts] == expect["facts"]
     assert len(whole.firings) == len(expect["firings"]), whole.firings
     for firing, expected in zip(whole.firings, expect["firings"], strict=True):
         assert (firing.seq, list(firing.matched)) == (expected["seq"], expected["matched"])
@@ -96,23 +102,35 @@ def _containing(errors: Any, expected: dict[str, Any]) -> str:
     return error
 
 
-def _in_one_batch(rule: Rule, progress: RuleProgress, envelopes: list[Envelope]) -> Evaluation:
+def _fact(fact: Fact) -> dict[str, Any]:
+    return {
+        "type": type_of(fact.event),
+        "chain": fact.correlation_id,
+        "depth": fact.causation.depth if fact.causation else 0,
+    }
+
+
+def _in_one_batch(
+    rule: Rule, progress: RuleProgress, envelopes: list[Envelope], limit: int | None
+) -> Evaluation:
     assert needs(rule, progress, envelopes, predicates=PREDICATES) is not None
-    return evaluate(rule, progress, {}, envelopes, predicates=PREDICATES)
+    return evaluate(rule, progress, {}, envelopes, predicates=PREDICATES, max_depth=limit)
 
 
 def _one_at_a_time(
-    rule: Rule, progress: RuleProgress, envelopes: list[Envelope]
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    rule: Rule, progress: RuleProgress, envelopes: list[Envelope], limit: int | None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     stored: dict[str, str] = {}
     firings: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    facts: list[dict[str, Any]] = []
     for item in envelopes:
         keys = needs(rule, progress, [item], predicates=PREDICATES)
         loaded = {k: ScopeState.model_validate_json(stored[k]) for k in keys if k in stored}
-        result = evaluate(rule, progress, loaded, [item], predicates=PREDICATES)
+        result = evaluate(rule, progress, loaded, [item], predicates=PREDICATES, max_depth=limit)
         stored.update({k: s.model_dump_json() for k, s in result.states.items()})
         progress = RuleProgress.model_validate_json(result.progress.model_dump_json())
         firings.extend(f.model_dump() for f in result.firings)
         errors.extend(e.model_dump() for e in result.errors)
-    return firings, errors
+        facts.extend(f.model_dump() for f in result.facts)
+    return firings, errors, facts

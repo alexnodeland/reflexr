@@ -19,7 +19,7 @@ A command is a JSON object with a `type`. Over REST and WebSocket it travels in 
 | `retry_run` | `run_id` | The run becomes runnable now, whatever its status except `succeeded` and `running`, and `run_requeued` is appended. |
 | `skip_run` | `run_id`, `reason?` | A pending, retrying or dead-lettered run is marked skipped, unblocking its scope. |
 | `cancel_run` | `run_id` | A running run is cancelled and recorded as cancelled. |
-| `replay_rule` | `rule`, `from_seq`, `mode` (`rebuild` or `refire`) | Resets the rule's cursor to `from_seq`. `rebuild` recomputes state and appends no `rule_fired` events and creates no runs; `refire` records the firings found and creates runs for them, with new ids. |
+| `replay_rule` | `rule`, `from_seq`, `mode` (`rebuild` or `refire`) | Resets the rule's cursor to `from_seq` and appends `rule_reset`. `rebuild` recomputes state up to the head of the log (`silent_through`) and appends no `rule_fired` or `rule_errored` events for it and creates no runs; `refire` records the firings found and creates runs for them, with new ids. `from_seq` beyond the head is `validation_failed`. |
 
 Rejections carry a stable `type` and a `message`: `not_found`, `invalid_state`, `validation_failed` (with Pydantic's `errors`), `forbidden`, `depth_exceeded` (a publish beyond the causation limit), and `unsupported_protocol`.
 
@@ -78,6 +78,7 @@ reflexr's own events, alongside the application's:
 |---|---|
 | `rule_fired` | `rule`, `scope`, `firing_id`, `matched` (the `seq`s of the matched envelopes) |
 | `rule_errored` | `rule`, `seq`, `error` |
+| `rule_reset` | `rule`, `generation`, `reason` (`changed` or `replayed`), `from_seq`, `silent_through` |
 | `run_started` | `run_id`, `rule`, `scope`, `attempt` |
 | `run_progressed` | `run_id`, `step` (a graph step completed and was checkpointed) |
 | `run_retrying` | `run_id`, `attempt`, `error`, `next_attempt_at` |
@@ -88,7 +89,7 @@ reflexr's own events, alongside the application's:
 | `feedback_given` | `feedback_type`, `target` (`{kind: run, run_id}`, `{kind: firing, firing_id}` or `{kind: chain, correlation_id}`), `value` |
 | `tick` | `schedule`, `at` |
 
-`actor.kind` is `user`, `agent` (`rule`, `run_id`, `name`), `external_agent` (`client_id`, `name?`), `system` (`name`), `source` (`name`) or `evaluator` (`name`, `version`). `causation` is `{firing_id, run_id, depth}` for an event a run emitted, and `null` otherwise.
+`actor.kind` is `user`, `agent` (`rule`, `run_id`, `name`), `external_agent` (`client_id`, `name?`), `system` (`name`), `source` (`name`) or `evaluator` (`name`, `version`). `causation` is `{firing_id, run_id, depth}` for an event a run emitted and for reflexr's facts about a firing or run (one step deeper than what fired), and `null` otherwise.
 
 ### Close codes
 

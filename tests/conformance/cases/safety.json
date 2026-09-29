@@ -1,0 +1,205 @@
+{
+  "description": "Safety: the depth of reflexr's facts, the depth limit, and errors that cannot feed on each other.",
+  "cases": [
+    {
+      "name": "facts about a firing are one step deeper than what it matched",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "depth": 2,
+          "chain": "c",
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ],
+            "depth": 2,
+            "chain": "c"
+          }
+        ],
+        "errors": [],
+        "facts": [
+          {
+            "type": "rule_fired",
+            "chain": "c",
+            "depth": 3
+          }
+        ]
+      }
+    },
+    {
+      "name": "a firing beyond the depth limit is refused and dead-lettered",
+      "max_depth": 3,
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "depth": 2,
+          "chain": "c",
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "depth": 3,
+          "chain": "c",
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          }
+        ],
+        "errors": [
+          {
+            "seq": 2,
+            "contains": "causation depth 4, beyond the limit of 3"
+          }
+        ],
+        "facts": [
+          {
+            "type": "rule_fired",
+            "chain": "c",
+            "depth": 3
+          },
+          {
+            "type": "rule_errored",
+            "chain": "c",
+            "depth": 3
+          }
+        ]
+      }
+    },
+    {
+      "name": "an error keeps the chain and depth of the envelope it is about",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error",
+              "heartbeat"
+            ]
+          }
+        },
+        "scope": {
+          "fields": [
+            "region"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "depth": 1,
+          "chain": "c",
+          "event": {
+            "type": "heartbeat",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [],
+        "errors": [
+          {
+            "seq": 1,
+            "contains": "lacks the scope fields"
+          }
+        ],
+        "facts": [
+          {
+            "type": "rule_errored",
+            "chain": "c",
+            "depth": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "an error about another rule's error is dead-lettered but not recorded",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "rule_errored"
+                ]
+              },
+              {
+                "kind": "predicate",
+                "name": "explodes"
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "rule_errored",
+            "rule": "other",
+            "seq": 1,
+            "error": "x"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [],
+        "errors": [
+          {
+            "seq": 1,
+            "contains": "ZeroDivisionError"
+          }
+        ],
+        "facts": []
+      }
+    }
+  ]
+}

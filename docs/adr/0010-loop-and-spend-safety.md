@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-09-28
 **Deciders:** Alex Nodeland
+**Amended by:** [ADR-0026](0026-the-reactors-evaluation.md): reflexr's facts about firings and runs are one step deeper than what fired, and firings beyond the limit are refused.
 
 ## Context
 
@@ -10,7 +11,7 @@ Rules that run LLM workflows, whose output can be new events that other rules wa
 
 ## Decision
 
-- **Causation depth.** Every event records the causal chain it belongs to (`correlation_id`) and, when a run emitted it, the chain's depth. Publishing beyond the stream's limit (8 by default) is rejected with `depth_exceeded`, which fails the run with a clear error.
+- **Causation depth.** Every event records the causal chain it belongs to (`correlation_id`) and, when a run emitted it, the chain's depth. Publishing beyond the stream's limit (8 by default) is rejected with `depth_exceeded`, which fails the run with a clear error. reflexr's facts about a firing or run are as deep as the run's events, and a firing beyond the limit is refused and dead-lettered ([ADR-0026](0026-the-reactors-evaluation.md)).
 - **Throttles** on rules cap firings per scope and period.
 - **Emit allowlists.** `EventContext(emit=[...])` limits the event types an agent can publish; the reactor enforces it.
 - **Concurrency limits** per reactor, rule and stream bound the runs executing at once.

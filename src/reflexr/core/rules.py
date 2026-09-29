@@ -156,7 +156,7 @@ class Rule(BaseModel):
         self,
         *,
         events: Mapping[str, type[Event]],
-        actions: Collection[str],
+        actions: Collection[str] | None = None,
         predicates: Collection[str] = (),
     ) -> None:
         """Confirm that everything the rule refers to exists.
@@ -164,7 +164,8 @@ class Rule(BaseModel):
         Args:
             events: The event types the rule may watch, by name. reflexr's own events are
                 always available.
-            actions: The names of the registered actions.
+            actions: The names of the registered actions, or None to leave the action for the
+                runtime to check.
             predicates: The names of the registered predicates.
 
         Raises:
@@ -179,7 +180,7 @@ class Rule(BaseModel):
         admitted = _admitted(self.when.filter, known)
         fields = [*self.scope.fields, *(self.when.dedupe.key if self.when.dedupe else ())]
         problems.extend(_missing_fields(fields, admitted))
-        if self.then.action not in actions:
+        if actions is not None and self.then.action not in actions:
             problems.append(f"no action {self.then.action!r}")
         if problems:
             raise InvalidRule(self.name, problems)

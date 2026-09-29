@@ -59,6 +59,9 @@ def test_reset_starts_a_new_generation() -> None:
     )
     assert (event.reason, event.generation, event.from_seq) == ("changed", 3, 3)
     assert reset(quiet(), progress, from_seq=0, replayed=True)[1].reason == "replayed"
+    rebuilt, rebuild = reset(quiet(), progress, from_seq=0, replayed=True, silent_through=9)
+    assert (rebuilt.silent_through, rebuild.silent_through) == (9, 9)
+    assert new.silent_through == event.silent_through == 0
 
 
 def test_a_changed_rule_must_be_reset_before_evaluating() -> None:

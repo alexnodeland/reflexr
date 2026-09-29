@@ -208,6 +208,8 @@ class RuleReset(Event, name="rule_reset"):
     generation: int
     reason: Literal["changed", "replayed"]
     from_seq: int
+    silent_through: int = 0
+    """Envelopes up to this ``seq`` rebuild the rule's state without recording firings."""
 
 
 class RunStarted(Event, name="run_started"):
