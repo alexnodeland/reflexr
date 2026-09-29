@@ -1,6 +1,6 @@
 # Stream protocol v1
 
-> **Status:** draft, part of [RFC-0001](rfcs/0001-v0.1-implementation-plan.md). Field names may change until phase 5 implements it; the structure is settled by [ADR-0016](adr/0016-tenants-and-workspaces-like-artifactr.md), [ADR-0005](adr/0005-per-rule-cursors.md) and [ADR-0011](adr/0011-surfaces.md). Its shape deliberately matches artifactr's thread protocol, so one client library can speak both.
+> **Status:** the frames and commands are implemented in `reflexr.core.protocol`, and their JSON Schema is generated into [`schemas/reflexr.v1.json`](../schemas/reflexr.v1.json); one handler, `reflexr.workspace.execute`, carries out every command. The REST, WebSocket and MCP surfaces are phase 5 of [RFC-0001](rfcs/0001-v0.1-implementation-plan.md). The structure is settled by [ADR-0016](adr/0016-tenants-and-workspaces-like-artifactr.md), [ADR-0005](adr/0005-per-rule-cursors.md) and [ADR-0011](adr/0011-surfaces.md). Its shape deliberately matches artifactr's thread protocol, so one client library can speak both.
 
 Clients publish events into a workspace, read its log with resume, and operate rules and runs. The same commands are available over REST, over a WebSocket, and as MCP tools, and every surface hands them to the same handler, so they behave identically.
 
@@ -14,12 +14,14 @@ A command is a JSON object with a `type`. Over REST and WebSocket it travels in 
 
 | Command | Fields | Outcome |
 |---|---|---|
-| `publish` | `event` (with its `type`), `id?`, `correlation_id?` | `{seq, id, duplicate}`. Publishing an `id` that is already in the workspace returns the existing `seq` with `duplicate: true`. `correlation_id` joins an existing causal chain. A type the server does not accept is `not_found`; reflexr's own event types are `forbidden`. |
-| `give_feedback` | `feedback_type`, `target`, `value` | `{seq, id}`. The value is validated against the feedback type, which must allow the target's kind; the target must exist. |
+| `publish` | `event` (with its `type`), `id?`, `correlation_id?` | `published`: `{seq, id, duplicate}`. Publishing an `id` that is already in the workspace returns the existing `seq` with `duplicate: true`. `correlation_id` joins an existing causal chain. A type the server does not accept is `not_found`; reflexr's own event types are `forbidden`. |
+| `give_feedback` | `feedback_type`, `target`, `value` | `recorded`: `{seq, id}`. The value is validated against the feedback type, which must allow the target's kind; the target must exist. |
 | `retry_run` | `run_id` | The run becomes runnable now, whatever its status except `succeeded` and `running`, and `run_requeued` is appended. |
 | `skip_run` | `run_id`, `reason?` | A pending, retrying or dead-lettered run is marked skipped, unblocking its scope. |
 | `cancel_run` | `run_id` | A running run is cancelled and recorded as cancelled. |
 | `replay_rule` | `rule`, `from_seq`, `mode` (`rebuild` or `refire`) | Resets the rule's cursor to `from_seq` and appends `rule_reset`. `rebuild` recomputes state up to the head of the log (`silent_through`) and appends no `rule_fired` or `rule_errored` events for it and creates no runs; `refire` records the firings found and creates runs for them, with new ids. `from_seq` beyond the head is `validation_failed`. |
+
+Run commands answer with `run`: the run as it now is; `replay_rule` answers with `rule`: `{rule, progress}`. Each outcome has a `type` naming which it is.
 
 Rejections carry a stable `type` and a `message`: `not_found`, `invalid_state`, `validation_failed` (with Pydantic's `errors`), `forbidden`, `depth_exceeded` (a publish beyond the causation limit), and `unsupported_protocol`.
 
