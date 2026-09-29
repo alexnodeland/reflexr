@@ -64,3 +64,13 @@ def firing_id(rule: RuleName, generation: int, scope: ScopeKey, seq: int) -> Fir
     """
     digest = hashlib.sha256(f"{rule}\x00{generation}\x00{scope}\x00{seq}".encode()).hexdigest()
     return f"fir_{digest[:16]}"
+
+
+def derived_event_id(run: RunId, index: int) -> EventId:
+    """Return the id of the ``index``-th event a run emits in an attempt.
+
+    Every attempt of a run derives the same ids in the same order, so a retried run that
+    emits again publishes duplicates, which the log ignores.
+    """
+    digest = hashlib.sha256(f"{run}\x00{index}".encode()).hexdigest()
+    return f"evt_{digest[:16]}"

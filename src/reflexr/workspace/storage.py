@@ -43,6 +43,11 @@ class WorkspaceRef:
     workspace_id: WorkspaceId
 
 
+def run_lease(run_id: RunId) -> str:
+    """Return the lease key an executor holds on a run while it runs it."""
+    return f"run:{run_id}"
+
+
 @dataclass(frozen=True)
 class Entry:
     """An event to append. Storage assigns its ``seq`` and ``ts``."""
@@ -179,7 +184,11 @@ class Storage(Protocol):
         ...
 
     async def due_runs(self, *, now: datetime, limit: int) -> list[tuple[WorkspaceRef, Run]]:
-        """Return pending and retrying runs due by ``now``, across workspaces, oldest first."""
+        """Return the runs to attempt now, across workspaces, oldest first.
+
+        These are pending and retrying runs due by ``now``, and running runs whose
+        :func:`run_lease` has lapsed, because their executor stopped.
+        """
         ...
 
     async def acquire_lease(

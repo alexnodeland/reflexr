@@ -9,7 +9,7 @@ from importlib.metadata import version
 
 from opentelemetry import metrics, trace
 from opentelemetry.metrics import Meter, MeterProvider
-from opentelemetry.trace import Tracer, TracerProvider
+from opentelemetry.trace import SpanContext, Tracer, TracerProvider, get_current_span
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.util.types import AttributeValue
 
@@ -99,6 +99,14 @@ def current_traceparent() -> str | None:
     carrier: dict[str, str] = {}
     _W3C.inject(carrier)
     return carrier.get("traceparent")
+
+
+def parse_traceparent(traceparent: str | None) -> SpanContext | None:
+    """Return the span context a W3C ``traceparent`` names, if it is valid."""
+    if traceparent is None:
+        return None
+    context = get_current_span(_W3C.extract({"traceparent": traceparent})).get_span_context()
+    return context if context.is_valid else None
 
 
 def _recorder(meter: Meter, metric: Metric) -> _Recorder:
