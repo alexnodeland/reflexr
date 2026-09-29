@@ -1,0 +1,563 @@
+{
+  "$defs": {
+    "AbsencePattern": {
+      "additionalProperties": false,
+      "description": "Fire once when nothing has passed the filter for ``within`` since the last envelope did.\n\nOnly scopes that have been seen can go quiet. Time passes with every envelope in the log,\nwhether or not it passes the filter.",
+      "properties": {
+        "kind": {
+          "const": "absence",
+          "default": "absence",
+          "title": "Kind",
+          "type": "string"
+        },
+        "within": {
+          "format": "duration",
+          "title": "Within",
+          "type": "string"
+        }
+      },
+      "required": [
+        "within"
+      ],
+      "title": "AbsencePattern",
+      "type": "object"
+    },
+    "ActionRef": {
+      "additionalProperties": false,
+      "description": "The action a rule runs, by name.",
+      "properties": {
+        "action": {
+          "minLength": 1,
+          "title": "Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "title": "ActionRef",
+      "type": "object"
+    },
+    "AllFilter": {
+      "additionalProperties": false,
+      "description": "Envelopes that match every filter in ``of``.",
+      "properties": {
+        "kind": {
+          "const": "all",
+          "default": "all",
+          "title": "Kind",
+          "type": "string"
+        },
+        "of": {
+          "items": {
+            "$ref": "#/$defs/Filter"
+          },
+          "minItems": 1,
+          "title": "Of",
+          "type": "array"
+        }
+      },
+      "required": [
+        "of"
+      ],
+      "title": "AllFilter",
+      "type": "object"
+    },
+    "AnyFilter": {
+      "additionalProperties": false,
+      "description": "Envelopes that match at least one filter in ``of``.",
+      "properties": {
+        "kind": {
+          "const": "any",
+          "default": "any",
+          "title": "Kind",
+          "type": "string"
+        },
+        "of": {
+          "items": {
+            "$ref": "#/$defs/Filter"
+          },
+          "minItems": 1,
+          "title": "Of",
+          "type": "array"
+        }
+      },
+      "required": [
+        "of"
+      ],
+      "title": "AnyFilter",
+      "type": "object"
+    },
+    "Condition": {
+      "additionalProperties": false,
+      "description": "A rule's ``when``: a filter, and optionally dedupe, a pattern and a throttle.",
+      "properties": {
+        "dedupe": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Dedupe"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "filter": {
+          "$ref": "#/$defs/Filter"
+        },
+        "pattern": {
+          "$ref": "#/$defs/Pattern",
+          "default": {
+            "kind": "each"
+          }
+        },
+        "throttle": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Throttle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "filter"
+      ],
+      "title": "Condition",
+      "type": "object"
+    },
+    "CountPattern": {
+      "additionalProperties": false,
+      "description": "Fire when ``at_least`` envelopes pass within ``within``. A firing consumes them.",
+      "properties": {
+        "at_least": {
+          "minimum": 1,
+          "title": "At Least",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "count",
+          "default": "count",
+          "title": "Kind",
+          "type": "string"
+        },
+        "within": {
+          "format": "duration",
+          "title": "Within",
+          "type": "string"
+        }
+      },
+      "required": [
+        "at_least",
+        "within"
+      ],
+      "title": "CountPattern",
+      "type": "object"
+    },
+    "Dedupe": {
+      "additionalProperties": false,
+      "description": "Drop an envelope whose ``key`` fields were already seen within ``within``.",
+      "properties": {
+        "key": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Key",
+          "type": "array"
+        },
+        "within": {
+          "format": "duration",
+          "title": "Within",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "within"
+      ],
+      "title": "Dedupe",
+      "type": "object"
+    },
+    "EachPattern": {
+      "additionalProperties": false,
+      "description": "Fire for every envelope that passes the filter.",
+      "properties": {
+        "kind": {
+          "const": "each",
+          "default": "each",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "EachPattern",
+      "type": "object"
+    },
+    "Filter": {
+      "discriminator": {
+        "mapping": {
+          "all": "#/$defs/AllFilter",
+          "any": "#/$defs/AnyFilter",
+          "not": "#/$defs/NotFilter",
+          "on": "#/$defs/OnFilter",
+          "predicate": "#/$defs/PredicateFilter",
+          "where": "#/$defs/WhereFilter"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/OnFilter"
+        },
+        {
+          "$ref": "#/$defs/WhereFilter"
+        },
+        {
+          "$ref": "#/$defs/AllFilter"
+        },
+        {
+          "$ref": "#/$defs/AnyFilter"
+        },
+        {
+          "$ref": "#/$defs/NotFilter"
+        },
+        {
+          "$ref": "#/$defs/PredicateFilter"
+        }
+      ]
+    },
+    "JsonValue": {},
+    "NotFilter": {
+      "additionalProperties": false,
+      "description": "Envelopes that do not match ``filter``.",
+      "properties": {
+        "filter": {
+          "$ref": "#/$defs/Filter"
+        },
+        "kind": {
+          "const": "not",
+          "default": "not",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "filter"
+      ],
+      "title": "NotFilter",
+      "type": "object"
+    },
+    "OnFilter": {
+      "additionalProperties": false,
+      "description": "Envelopes whose event is one of ``types``.",
+      "properties": {
+        "kind": {
+          "const": "on",
+          "default": "on",
+          "title": "Kind",
+          "type": "string"
+        },
+        "types": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Types",
+          "type": "array"
+        }
+      },
+      "required": [
+        "types"
+      ],
+      "title": "OnFilter",
+      "type": "object"
+    },
+    "Pattern": {
+      "discriminator": {
+        "mapping": {
+          "absence": "#/$defs/AbsencePattern",
+          "count": "#/$defs/CountPattern",
+          "each": "#/$defs/EachPattern",
+          "sequence": "#/$defs/SequencePattern"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/EachPattern"
+        },
+        {
+          "$ref": "#/$defs/CountPattern"
+        },
+        {
+          "$ref": "#/$defs/SequencePattern"
+        },
+        {
+          "$ref": "#/$defs/AbsencePattern"
+        }
+      ]
+    },
+    "PredicateFilter": {
+      "additionalProperties": false,
+      "description": "Envelopes whose event the registered Python predicate ``name`` accepts.\n\nAn escape hatch for what the other filters cannot express. Predicates must be pure.",
+      "properties": {
+        "kind": {
+          "const": "predicate",
+          "default": "predicate",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "PredicateFilter",
+      "type": "object"
+    },
+    "RetryPolicy": {
+      "additionalProperties": false,
+      "description": "How a failed run is retried: exponential backoff, up to ``max_attempts`` attempts.",
+      "properties": {
+        "backoff": {
+          "default": "PT1S",
+          "format": "duration",
+          "title": "Backoff",
+          "type": "string"
+        },
+        "max_attempts": {
+          "default": 5,
+          "minimum": 1,
+          "title": "Max Attempts",
+          "type": "integer"
+        },
+        "max_backoff": {
+          "default": "PT5M",
+          "format": "duration",
+          "title": "Max Backoff",
+          "type": "string"
+        },
+        "multiplier": {
+          "default": 2.0,
+          "minimum": 1.0,
+          "title": "Multiplier",
+          "type": "number"
+        }
+      },
+      "title": "RetryPolicy",
+      "type": "object"
+    },
+    "RuleName_a-z0-9___-_____": {
+      "maxLength": 100,
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "type": "string"
+    },
+    "Scope": {
+      "additionalProperties": false,
+      "description": "The event fields that partition a rule's state and ordering. None: the whole workspace.",
+      "properties": {
+        "fields": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Fields",
+          "type": "array"
+        }
+      },
+      "title": "Scope",
+      "type": "object"
+    },
+    "SequencePattern": {
+      "additionalProperties": false,
+      "description": "Fire when envelopes match ``steps`` in order, all within ``within`` of the first.\n\nAn envelope that matches the first step while a sequence is in progress (but not the step\nit is waiting for) starts the sequence again from it, so the latest start counts.",
+      "properties": {
+        "kind": {
+          "const": "sequence",
+          "default": "sequence",
+          "title": "Kind",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/Filter"
+          },
+          "minItems": 2,
+          "title": "Steps",
+          "type": "array"
+        },
+        "within": {
+          "format": "duration",
+          "title": "Within",
+          "type": "string"
+        }
+      },
+      "required": [
+        "steps",
+        "within"
+      ],
+      "title": "SequencePattern",
+      "type": "object"
+    },
+    "Throttle": {
+      "additionalProperties": false,
+      "description": "Allow at most ``at_most`` firings per scope in any period of ``per``.",
+      "properties": {
+        "at_most": {
+          "minimum": 1,
+          "title": "At Most",
+          "type": "integer"
+        },
+        "per": {
+          "format": "duration",
+          "title": "Per",
+          "type": "string"
+        }
+      },
+      "required": [
+        "at_most",
+        "per"
+      ],
+      "title": "Throttle",
+      "type": "object"
+    },
+    "WhereFilter": {
+      "additionalProperties": false,
+      "description": "Envelopes whose event field ``field`` compares with ``value`` by ``op``.\n\nA missing field matches nothing, except ``exists`` with ``value=False``.",
+      "properties": {
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+          "title": "Field",
+          "type": "string"
+        },
+        "kind": {
+          "const": "where",
+          "default": "where",
+          "title": "Kind",
+          "type": "string"
+        },
+        "op": {
+          "enum": [
+            "eq",
+            "ne",
+            "lt",
+            "le",
+            "gt",
+            "ge",
+            "in",
+            "contains",
+            "matches",
+            "exists"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null
+        }
+      },
+      "required": [
+        "field",
+        "op"
+      ],
+      "title": "WhereFilter",
+      "type": "object"
+    }
+  },
+  "$id": "https://github.com/alexnodeland/reflexr/schemas/reflexr.rules.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "When ``when`` holds for a scope, run ``then``.",
+  "properties": {
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "enabled": {
+      "default": true,
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "name": {
+      "$ref": "#/$defs/RuleName_a-z0-9___-_____"
+    },
+    "on_dead_letter": {
+      "default": "continue",
+      "enum": [
+        "continue",
+        "block"
+      ],
+      "title": "On Dead Letter",
+      "type": "string"
+    },
+    "ordering": {
+      "default": "scope",
+      "enum": [
+        "scope",
+        "none"
+      ],
+      "title": "Ordering",
+      "type": "string"
+    },
+    "retry": {
+      "$ref": "#/$defs/RetryPolicy",
+      "default": {
+        "backoff": "PT1S",
+        "max_attempts": 5,
+        "max_backoff": "PT5M",
+        "multiplier": 2.0
+      }
+    },
+    "scope": {
+      "$ref": "#/$defs/Scope",
+      "default": {
+        "fields": []
+      }
+    },
+    "start": {
+      "default": "now",
+      "enum": [
+        "now",
+        "beginning"
+      ],
+      "title": "Start",
+      "type": "string"
+    },
+    "then": {
+      "$ref": "#/$defs/ActionRef"
+    },
+    "timeout": {
+      "anyOf": [
+        {
+          "format": "duration",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timeout"
+    },
+    "when": {
+      "$ref": "#/$defs/Condition"
+    }
+  },
+  "required": [
+    "name",
+    "when",
+    "then"
+  ],
+  "title": "Rule",
+  "type": "object"
+}

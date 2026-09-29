@@ -1,0 +1,1311 @@
+{
+  "description": "Filters: which envelopes a rule considers.",
+  "cases": [
+    {
+      "name": "on fires for every envelope of its type",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "deploy.finished",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "event": {
+            "type": "service.error",
+            "service": "billing"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ],
+            "scope": {}
+          },
+          {
+            "seq": 3,
+            "matched": [
+              3
+            ],
+            "scope": {}
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "on accepts several types",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error",
+              "deploy.finished"
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "deploy.finished",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "event": {
+            "type": "heartbeat",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          },
+          {
+            "seq": 2,
+            "matched": [
+              2
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "ge and lt compare numbers",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "severity",
+                "op": "ge",
+                "value": 7
+              },
+              {
+                "kind": "where",
+                "field": "severity",
+                "op": "lt",
+                "value": 9
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 6
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 7
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 8
+          }
+        },
+        {
+          "seq": 4,
+          "at": 3,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 9
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 2,
+            "matched": [
+              2
+            ]
+          },
+          {
+            "seq": 3,
+            "matched": [
+              3
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "gt and le compare numbers",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "severity",
+                "op": "gt",
+                "value": 5
+              },
+              {
+                "kind": "where",
+                "field": "severity",
+                "op": "le",
+                "value": 6
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 5
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 6
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 7
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 2,
+            "matched": [
+              2
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "eq and ne compare values",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "service",
+                "op": "eq",
+                "value": "auth"
+              },
+              {
+                "kind": "where",
+                "field": "region",
+                "op": "ne",
+                "value": "us"
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "region": "eu"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "region": "us"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "event": {
+            "type": "service.error",
+            "service": "billing"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "ordering compares strings with strings",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "region",
+                "op": "lt",
+                "value": "fr"
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "region": "de"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "region": "eu"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "region": "us"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          },
+          {
+            "seq": 2,
+            "matched": [
+              2
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "ordering never compares a number with a string",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "any",
+                "of": [
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "gt",
+                    "value": "5"
+                  },
+                  {
+                    "kind": "where",
+                    "field": "region",
+                    "op": "gt",
+                    "value": 1
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 9
+          }
+        }
+      ],
+      "expect": {
+        "firings": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "booleans are not numbers",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "flag"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "on",
+                "op": "ge",
+                "value": 0
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "flag",
+            "on": true
+          }
+        }
+      ],
+      "expect": {
+        "firings": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "eq compares booleans",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "flag"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "on",
+                "op": "eq",
+                "value": true
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "flag",
+            "on": true
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "flag",
+            "on": false
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "in matches any listed value",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "service",
+                "op": "in",
+                "value": [
+                  "auth",
+                  "billing"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "search"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "event": {
+            "type": "service.error",
+            "service": "billing"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          },
+          {
+            "seq": 3,
+            "matched": [
+              3
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "contains searches lists",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "tags",
+                "op": "contains",
+                "value": "db"
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "tags": [
+              "db",
+              "api"
+            ]
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "tags": [
+              "api"
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "contains searches strings",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "message",
+                "op": "contains",
+                "value": "timeout"
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "message": "db timeout"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "message": "ok"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "contains ignores other values",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "severity",
+                "op": "contains",
+                "value": 5
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 5
+          }
+        }
+      ],
+      "expect": {
+        "firings": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "matches applies a regular expression",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "message",
+                "op": "matches",
+                "value": "^db(:|\\s)"
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "message": "db: slow"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "message": "a db: x"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "matches ignores values that are not strings",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "severity",
+                "op": "matches",
+                "value": "5"
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 5
+          }
+        }
+      ],
+      "expect": {
+        "firings": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "exists true tests presence",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "extra.code",
+                "op": "exists",
+                "value": true
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "extra": {
+              "code": 1
+            }
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "extra": {}
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "exists false tests absence",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "extra.code",
+                "op": "exists",
+                "value": false
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "extra": {
+              "code": 1
+            }
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "extra": {}
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 2,
+            "matched": [
+              2
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "a missing field matches no comparison",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "any",
+                "of": [
+                  {
+                    "kind": "where",
+                    "field": "extra.code",
+                    "op": "eq",
+                    "value": 1
+                  },
+                  {
+                    "kind": "where",
+                    "field": "extra.code",
+                    "op": "ne",
+                    "value": 1
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "extra": {}
+          }
+        }
+      ],
+      "expect": {
+        "firings": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "fields can be nested",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "labels.env",
+                "op": "eq",
+                "value": "staging"
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "labels": {
+              "env": "staging"
+            }
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "any and not combine filters",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "any",
+                "of": [
+                  {
+                    "kind": "where",
+                    "field": "service",
+                    "op": "eq",
+                    "value": "auth"
+                  },
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "ge",
+                    "value": 9
+                  }
+                ]
+              },
+              {
+                "kind": "not",
+                "filter": {
+                  "kind": "where",
+                  "field": "region",
+                  "op": "eq",
+                  "value": "us"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "billing",
+            "severity": 9
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "region": "us"
+          }
+        },
+        {
+          "seq": 4,
+          "at": 3,
+          "event": {
+            "type": "service.error",
+            "service": "billing"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          },
+          {
+            "seq": 2,
+            "matched": [
+              2
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "predicates are named Python functions",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "predicate",
+                "name": "even_severity"
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 2
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 3
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 4
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          },
+          {
+            "seq": 3,
+            "matched": [
+              3
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "a predicate that raises is an error for that envelope alone",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "service.error"
+                ]
+              },
+              {
+                "kind": "predicate",
+                "name": "explodes"
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [],
+        "errors": [
+          {
+            "seq": 1,
+            "contains": "ZeroDivisionError"
+          },
+          {
+            "seq": 2,
+            "contains": "ZeroDivisionError"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,315 @@
+{
+  "description": "reflexr's own events, unknown events, depth, and errors.",
+  "cases": [
+    {
+      "name": "a rule never sees reflexr's facts about itself",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "rule_fired"
+            ]
+          }
+        },
+        "name": "watch"
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "rule_fired",
+            "rule": "watch",
+            "scope": {},
+            "scope_key": "[]",
+            "firing_id": "fir_1",
+            "matched": [
+              1
+            ]
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "rule_fired",
+            "rule": "other",
+            "scope": {},
+            "scope_key": "[]",
+            "firing_id": "fir_1",
+            "matched": [
+              1
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 2,
+            "matched": [
+              2
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "rules can watch other rules' dead-lettered runs",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "run_dead_lettered"
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "run_dead_lettered",
+            "run_id": "fir_1",
+            "rule": "error-spike",
+            "attempts": 5,
+            "error": "boom"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "unknown event types are matched by name and data",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "all",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "legacy.alert"
+                ]
+              },
+              {
+                "kind": "where",
+                "field": "level",
+                "op": "ge",
+                "value": 3
+              }
+            ]
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "legacy.alert",
+            "level": 4
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "legacy.alert",
+            "level": 1
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "a firing's depth is the deepest matched envelope's",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          },
+          "pattern": {
+            "kind": "count",
+            "at_least": 2,
+            "within": "PT60S"
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          },
+          "depth": 2
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 2,
+            "matched": [
+              1,
+              2
+            ],
+            "depth": 2
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "a rule's own facts still move its time forward",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "heartbeat"
+            ]
+          },
+          "pattern": {
+            "kind": "absence",
+            "within": "PT300S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        },
+        "name": "watch"
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "heartbeat",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 300,
+          "event": {
+            "type": "rule_fired",
+            "rule": "watch",
+            "scope": {},
+            "scope_key": "[]",
+            "firing_id": "fir_1",
+            "matched": [
+              1
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 2,
+            "matched": [
+              1
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "a sequence step that raises is an error for that envelope alone",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error",
+              "deploy.finished"
+            ]
+          },
+          "pattern": {
+            "kind": "sequence",
+            "steps": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "predicate",
+                "name": "explodes"
+              }
+            ],
+            "within": "PT600S"
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "deploy.finished",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 10,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [],
+        "errors": [
+          {
+            "seq": 2,
+            "contains": "ZeroDivisionError"
+          }
+        ]
+      }
+    }
+  ]
+}

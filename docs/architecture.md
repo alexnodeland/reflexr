@@ -4,7 +4,7 @@
 
 | Package | Status |
 |---|---|
-| `reflexr.core` | Planned (phase 1) |
+| `reflexr.core` | Implemented |
 | `reflexr.workspace` | Planned (phase 2) |
 | `reflexr.agent` | Planned (phase 3) |
 | `reflexr.sql` | Planned (phase 4) |
@@ -75,8 +75,8 @@ Dependencies point one way. Each layer is usable without the ones above it, and 
 
 | Package | Depends on | Responsibility |
 |---|---|---|
-| `reflexr.core` | pydantic | Events and envelopes, actors, conditions and their reducers, rules, evaluation, retry policy, schedules. Pure, synchronous, no I/O. |
-| `reflexr.workspace` | core | `Workspaces`, `Workspace`, the storage protocol, in-memory storage, the `Reactor`, function actions, the schedule runner. |
+| `reflexr.core` | pydantic | Events and envelopes, actors, conditions and their reducers, rules, evaluation, the run lifecycle and retry policy. Pure, synchronous, no I/O. |
+| `reflexr.workspace` | core | `Workspaces`, `Workspace`, the storage protocol, in-memory storage, the `Reactor`, function actions, schedules and their runner. |
 | `reflexr.agent` | workspace, pydantic-ai, pydantic-graph | `Reaction`, agent actions with the `EventContext` capability, graph actions with checkpoints. |
 | `reflexr.sql` (extra) | workspace, SQLAlchemy 2 async, Alembic | Durable storage on PostgreSQL and SQLite, and its migrations. |
 | `reflexr.fastapi` (extra) | workspace, FastAPI | HTTP ingest, REST reads and administration, and the WebSocket stream protocol. |
@@ -84,19 +84,22 @@ Dependencies point one way. Each layer is usable without the ones above it, and 
 
 ### `reflexr.core`: sans-IO
 
-Core holds every decision as plain functions over immutable values ([ADR-0001](adr/0001-library-with-a-sans-io-core.md)). The host (the workspace layer, or any other) loads state, asks core to decide, and saves what core returns in its own transaction:
+Core holds every decision as plain functions over immutable values ([ADR-0001](adr/0001-library-with-a-sans-io-core.md), [ADR-0017](adr/0017-the-cores-evaluation-contract.md)). The host (the workspace layer, or any other) asks core what to load, loads it, lets core decide, and saves what core returns in one transaction:
 
 ```python
-states = load_states(rule, scopes_of(batch))  # the host's I/O
-evaluation = core.evaluate(rule, states, batch)  # new states, firings, errors
-save(evaluation, cursor=batch[-1].seq)  # one transaction: states, cursor, firings
+scopes = core.needs(rule, progress, batch, predicates=predicates)
+evaluation = core.evaluate(rule, progress, load(scopes), batch, predicates=predicates)
+save(evaluation)  # scope states, the new progress and cursor, and the firings' runs and events
 ```
 
-- `evaluate` folds envelopes into a rule's per-scope state and returns the new state, the firings, and any evaluation errors. It reads nothing but its arguments; time is the envelopes' `ts`.
-- `next_attempt` applies a retry policy: when a failed run should run again, or that it should be dead-lettered.
-- `due_ticks` decides which ticks of a schedule are due between two instants.
+- `needs` returns the scopes a batch reads: those of the envelopes that pass the rule's filter, and those whose `absence` deadline passes during the batch. Scopes the host has no state for are new.
+- `evaluate` folds the envelopes into the rule's per-scope state and returns an `Evaluation`: the changed scope states, the new `RuleProgress` (cursor, generation, definition hash, deadlines), the firings, the evaluation errors, and the `rule_fired` and `rule_errored` events to append, in order. It reads nothing but its arguments; time is the envelopes' `ts`.
+- `begin` gives a new rule its starting progress (the head of the log, or the beginning), and `reset` starts a new generation when a rule's definition changes or it is replayed.
+- The run lifecycle is pure too: `create_run`, `start`, `checkpoint`, `succeed`, `fail` (retry under the rule's `RetryPolicy`, or dead-letter), `cancel`, `skip`, `retry`, and `runnable`, which picks the runs of a scope that may start now.
 
-Because core is pure, its behaviour is pinned by a **conformance suite** of JSON fixtures: given a rule and a sequence of envelopes, expect these firings and this state, or this error. The fixtures are the language-neutral specification.
+Firing ids are derived from the rule, its generation, the scope and the `seq`, so evaluating the same log twice produces the same ids.
+
+Because core is pure, its behaviour is pinned by a **conformance suite** of JSON fixtures in `tests/conformance/cases/`: given a rule and a sequence of envelopes, expect these firings or these errors. Every case is also evaluated one envelope at a time with the state saved as JSON between batches, and property tests check that any batching of any log decides the same. The fixtures are the language-neutral specification.
 
 ## Events and envelopes
 
@@ -129,7 +132,7 @@ class Envelope(BaseModel):
 ```
 
 - **Publishing is idempotent** by event id within a workspace, so producers can retry, and a run that retries does not duplicate the events it emits.
-- **Application events form an open family**: any registered `Event` subclass. reflexr's own facts form a **closed** union, so pyright checks `match` blocks for exhaustiveness: `RuleFired`, `RuleErrored`, `RunStarted`, `RunProgressed`, `RunRetrying`, `RunSucceeded`, `RunDeadLettered`, `RunCancelled`, `RunSkipped`, and `Tick` from schedules. An event type from a newer version validates as `UnknownEvent` and round-trips unchanged.
+- **Application events form an open family**: any registered `Event` subclass. reflexr's own facts form a **closed** union, so pyright checks `match` blocks for exhaustiveness: `RuleFired`, `RuleErrored`, `RuleReset`, `RunStarted`, `RunProgressed`, `RunRetrying`, `RunSucceeded`, `RunDeadLettered`, `RunCancelled`, `RunSkipped`, and `Tick` from schedules. An event type from a newer version validates as `UnknownEvent` and round-trips unchanged.
 - **Actors** match artifactr's kinds: `UserActor`, `AgentActor` (an agent or graph run, by rule and run), `ExternalAgentActor` (an MCP client) and `SystemActor` (the reactor and schedules), plus `SourceActor` for systems that publish events, such as a monitoring service.
 - **Type allowlist.** `Workspaces(storage, events=[ServiceError, Deploy, Heartbeat])` rejects publishing any other type, even one registered elsewhere in the process.
 
@@ -140,15 +143,15 @@ A rule is a Pydantic model: what to watch, how to partition it, and what to run 
 ```python
 from datetime import timedelta
 
-from reflexr import F, Rule, on, run
+from reflexr import F, Rule, by, on, run
 
 error_spike = Rule(
     name="error-spike",
     when=on(ServiceError)
     .where(F.severity >= 7)
     .count(at_least=3, within=timedelta(minutes=1))
-    .throttle(at_most=1, per=timedelta(minutes=15)),
-    scope=F.service,
+    .at_most(1, per=timedelta(minutes=15)),
+    scope=by(F.service),
     then=run(triage),
 )
 ```
@@ -191,11 +194,17 @@ graph LR
 | **pattern** | `each` (the default: every event that gets through fires), `count(at_least, within)`, `sequence(steps, within)` (A then B), `absence(within)` (nothing matched for a while) | Per pattern |
 | **throttle** | At most N firings per period, a cooldown that bounds spend | Recent firings |
 
-Field references (`F.severity`, `F.labels.env`) are checked against the event types the filter admits when the rule is built, so a typo fails at startup rather than silently never matching. Operators are `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `in`, `contains`, `matches` and `exists`.
+Field references (`F.severity`, `F.labels.env`) are checked against the event types the filter admits when the condition is built, and again by `Rule.check` when rules are registered, so a typo fails at startup rather than silently never matching. Operators are `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `in`, `contains`, `matches` and `exists`. Ordering compares numbers with numbers and strings with strings, and a missing field matches nothing but `exists=False`. Equality is spelled `F.service.eq("auth")`, or `.where(service="auth")`, because `==` must return a bool.
+
+The builder names each stage: `.where(...)`, `.distinct(key, within=)` for dedupe, `.count(at_least=, within=)`, `.absent(within=)`, `sequence(step, step, within=)`, and `.at_most(n, per=)` for the throttle. Their semantics:
+
+- **count** fires when enough envelopes pass within the window, and the firing consumes them.
+- **sequence** fires when its steps match in order within the window of the first; a new first step while it waits restarts it, so the latest start counts.
+- **absence** fires once when a scope that has been seen goes quiet for the window, and rearms with the next matching envelope.
 
 ### Scopes
 
-`scope=F.service` gives a rule independent state and ordering per service: three errors from `auth` and two from `billing` are two counts, and a slow run for `auth` never delays `billing`. The default scope is the whole workspace. An envelope that passes a rule's filter but lacks its scope fields is an evaluation error for that rule.
+`scope=by(F.service)` gives a rule independent state and ordering per service: three errors from `auth` and two from `billing` are two counts, and a slow run for `auth` never delays `billing`. The default scope is the whole workspace. An envelope that passes a rule's filter but lacks its scope fields is an evaluation error for that rule.
 
 ### Time
 
@@ -265,12 +274,13 @@ runbook = GraphAction(runbook_graph, name="runbook", state=RunbookState, inputs=
 - **Graphs** are pydantic-graph graphs built with `GraphBuilder`. reflexr drives them step by step and saves the graph state and pending tasks to the run after every step. A retry, or another executor after a crash, resumes from the last completed step instead of starting over ([ADR-0009](adr/0009-graph-checkpoints.md)).
 - **Functions** are `async def` over a `Reaction`.
 
-Rules refer to actions by name (`{"action": "triage"}`), because functions and agents are not data. `run(triage)` names the action and lets the reactor register it; rules loaded from JSON resolve names against the actions the application registers.
+Rules refer to actions by name (`{"action": "triage"}`), because functions and agents are not data. `run(triage)` takes the action's name. The application gives the reactor its actions, and `Rule.check` confirms at startup that every rule's action, event types, fields and predicates exist.
 
 ## Safety
 
 LLM workflows triggered by events can loop and can spend ([ADR-0010](adr/0010-loop-and-spend-safety.md)):
 
+- **No self-reaction.** A rule never sees reflexr's facts about itself (its own firings, errors and runs), though they still move its clock, so it cannot fire on its own activity.
 - **Causation depth.** An event emitted by a run carries the depth of its causal chain. Publishing beyond the workspace's limit (8 by default) is rejected, so a rule whose action triggers itself stops instead of running away.
 - **Throttles** on rules cap how often a rule can fire per scope.
 - **Emit allowlists** on the `EventContext` capability limit which event types an agent can publish.
@@ -374,6 +384,7 @@ Coverage is 100% of lines and branches, and pyright runs in strict mode with no 
 | [0014](adr/0014-mit-license.md) | MIT license |
 | [0015](adr/0015-reference-implementation-oncall.md) | Reference implementation: incident response |
 | [0016](adr/0016-tenants-and-workspaces-like-artifactr.md) | Tenants and workspaces, like artifactr |
+| [0017](adr/0017-the-cores-evaluation-contract.md) | The core's evaluation contract |
 
 ## Open questions
 

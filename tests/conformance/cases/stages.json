@@ -1,0 +1,343 @@
+{
+  "description": "Dedupe and throttle: the stages around a rule's pattern.",
+  "cases": [
+    {
+      "name": "dedupe drops a repeated key within its window",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          },
+          "dedupe": {
+            "key": [
+              "fingerprint"
+            ],
+            "within": "PT60S"
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "fingerprint": "A"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 30,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "fingerprint": "A"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 31,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "fingerprint": "B"
+          }
+        },
+        {
+          "seq": 4,
+          "at": 61,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "fingerprint": "A"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          },
+          {
+            "seq": 3,
+            "matched": [
+              3
+            ]
+          },
+          {
+            "seq": 4,
+            "matched": [
+              4
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "dedupe applies before the pattern",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          },
+          "pattern": {
+            "kind": "count",
+            "at_least": 2,
+            "within": "PT60S"
+          },
+          "dedupe": {
+            "key": [
+              "fingerprint"
+            ],
+            "within": "PT60S"
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "fingerprint": "A"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "fingerprint": "A"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "fingerprint": "B"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 3,
+            "matched": [
+              1,
+              3
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "throttle allows at most so many firings per period",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          },
+          "throttle": {
+            "at_most": 1,
+            "per": "PT900S"
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 10,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 899,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 4,
+          "at": 900,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          },
+          {
+            "seq": 4,
+            "matched": [
+              4
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "throttle counts each scope separately",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          },
+          "throttle": {
+            "at_most": 1,
+            "per": "PT900S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "billing"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          },
+          {
+            "seq": 2,
+            "matched": [
+              2
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "throttle can allow several firings",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          },
+          "throttle": {
+            "at_most": 2,
+            "per": "PT900S"
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          },
+          {
+            "seq": 2,
+            "matched": [
+              2
+            ]
+          }
+        ],
+        "errors": []
+      }
+    }
+  ]
+}

@@ -43,4 +43,4 @@ Decorators are the quickest to write, but a rule that is only code cannot be lis
 
 ## Action items
 
-1. [ ] Implement the rule models, builder and schema generation (RFC-0001 phase 1).
+1. [x] Implement the rule models, builder and schema generation (RFC-0001 phase 1).
