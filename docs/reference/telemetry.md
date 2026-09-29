@@ -26,6 +26,16 @@ Tracing and metrics through the OpenTelemetry API. See [Observability](../guides
 
 ::: reflexr.telemetry.SCOPED
 
+## Traces
+
+Which spans are reflexr's, and polling that makes no traces. See [ADR-0040](../adr/0040-telemetry-that-composes-across-libraries.md).
+
+::: reflexr.telemetry.TRACE_SCOPES
+
+::: reflexr.telemetry.is_trace_scope
+
+::: reflexr.telemetry.untraced
+
 ## Attributes
 
 ::: reflexr.telemetry.attributes

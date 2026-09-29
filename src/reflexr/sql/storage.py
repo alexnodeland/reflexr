@@ -44,6 +44,7 @@ from reflexr.core import (
     ScopeState,
 )
 from reflexr.sql.tables import (
+    CursorRow,
     DeadLetterRow,
     EventRow,
     LeaseRow,
@@ -238,21 +239,27 @@ class _Transaction:
 
 async def _lock_workspace(session: AsyncSession, ref: WorkspaceRef) -> WorkspaceRow:
     """Lock the workspace's row, creating it first if the workspace is new."""
-    key = (ref.tenant_id, ref.workspace_id)
-    while (workspace := await session.get(WorkspaceRow, key, with_for_update=True)) is None:
-        # A concurrent transaction may create the row first. Then the insert fails, and the
+    new = WorkspaceRow(
+        tenant_id=ref.tenant_id,
+        workspace_id=ref.workspace_id,
+        head_seq=0,
+        head_ts=None,
+        last_position=0,
+    )
+    return await _locked(session, WorkspaceRow, (ref.tenant_id, ref.workspace_id), new)
+
+
+async def _locked[R: ScopedRow](
+    session: AsyncSession, model: type[R], key: tuple[str, ...], new: R
+) -> R:
+    """Lock a row (``SELECT ... FOR UPDATE``), inserting ``new`` first if it does not exist."""
+    while (row := await session.get(model, key, with_for_update=True)) is None:
+        # A concurrent transaction may insert the row first. Then this insert fails, and the
         # next lookup waits for that transaction to end and locks its row instead.
-        new = WorkspaceRow(
-            tenant_id=ref.tenant_id,
-            workspace_id=ref.workspace_id,
-            head_seq=0,
-            head_ts=None,
-            last_position=0,
-        )
         with contextlib.suppress(IntegrityError):
             async with session.begin_nested():
                 session.add(new)
-    return workspace
+    return row
 
 
 def _in_workspace(model: type[ScopedRow], ref: WorkspaceRef) -> tuple[ColumnElement[bool], ...]:
@@ -524,6 +531,28 @@ class SqlStorage:
             await connection.execute(
                 delete(LeaseRow).where(*_lease(workspace, key), LeaseRow.holder == holder)
             )
+
+    async def cursor(self, workspace: WorkspaceRef, name: str) -> int:
+        """Return how far a named consumer of the log has got: the ``seq`` saved, or 0."""
+        async with self._sessions() as session:
+            cursor = await session.get(
+                CursorRow, (workspace.tenant_id, workspace.workspace_id, name)
+            )
+        return 0 if cursor is None else cursor.seq
+
+    async def save_cursor(self, workspace: WorkspaceRef, name: str, seq: int) -> None:
+        """Save how far a named consumer of the log has got; a cursor only moves forward.
+
+        The cursor's row is locked while it is compared, so saves from several processes
+        leave the furthest.
+        """
+        key = (workspace.tenant_id, workspace.workspace_id, name)
+        new = CursorRow(
+            tenant_id=workspace.tenant_id, workspace_id=workspace.workspace_id, name=name, seq=seq
+        )
+        async with self._sessions() as session, session.begin():
+            cursor = await _locked(session, CursorRow, key, new)
+            cursor.seq = max(cursor.seq, seq)
 
     async def _all[R: ScopedRow](self, query: Select[R]) -> Sequence[R]:
         async with self._sessions() as session:

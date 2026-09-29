@@ -6,8 +6,8 @@ and the ports scores leave through: a :class:`ScoreSink` for scores and a
 the type is registered, and mirrors a workspace's feedback to a sink, following its log;
 ``reflexr.langfuse`` adapts Langfuse to the ports::
 
-    mirror = FeedbackMirror(workspace, sink)
-    task = asyncio.create_task(mirror.follow())
+    mirror = FeedbackMirror(workspace, sink, cursor="langfuse")
+    task = asyncio.create_task(mirror.follow())  # after the cursor it saves in the workspace
 
 It matches artifactr's ``artifactr.scores``, with runs, firings and causal chains as targets. It
 needs evalr, which the ``langfuse`` and ``evals`` extras install. ``Score``, ``ScoreConfig``,

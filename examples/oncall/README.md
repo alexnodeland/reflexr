@@ -134,8 +134,11 @@ With `OTEL_EXPORTER_OTLP_ENDPOINT` set, the server reports its traces, metrics a
 over OTLP (`reflexr.otel`): each run attempt is an `invoke_workflow {rule}` span, the triage
 agent's model and tool calls are inside it, and requests and database queries are traced too. With
 `LANGFUSE_PUBLIC_KEY` (and its secret key and host) set as well, each run is filed in Langfuse
-under its rule, in its causal chain's session (`reflexr.langfuse`). `ONCALL_ENVIRONMENT` names
-the deployment (`development` by default).
+under its rule, in its causal chain's session (`reflexr.langfuse`). Where a Collector sends
+Langfuse the traces already, as stackr's does, set `ONCALL_LANGFUSE=scores` so oncall sends
+Langfuse only each run's session, user and tags, not the spans a second time;
+`compose.stackr.yaml` sets it. `ONCALL_ENVIRONMENT` names the deployment (`development` by
+default).
 
 With `ONCALL_LITELLM_URL` set, the triage agent calls that LiteLLM proxy instead of a provider
 (`reflexr.litellm`): the model group `ONCALL_LITELLM_MODEL` (`claude-sonnet` by default), with the

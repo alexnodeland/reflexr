@@ -32,7 +32,7 @@ from reflexr.core import (
     new_id,
     reset,
 )
-from reflexr.telemetry import Metric, current_traceparent, workspace_attributes
+from reflexr.telemetry import Metric, current_traceparent, untraced, workspace_attributes
 from reflexr.telemetry import attributes as a
 from reflexr.telemetry.metrics import (
     EVALUATION_DURATION,
@@ -271,7 +271,8 @@ class Reactor[D]:
         """
         storage = self._workspaces.storage
         now = self._workspaces.clock()
-        known = await storage.workspaces()
+        with untraced():
+            known = await storage.workspaces()
         published = 0
         for schedule in self._workspaces.schedules.values():
             refs = (
@@ -284,7 +285,8 @@ class Reactor[D]:
         return published
 
     async def _tick(self, ref: WorkspaceRef, schedule: Schedule, now: datetime) -> int:
-        last = (await self._workspaces.storage.schedules(ref)).get(schedule.name)
+        with untraced():
+            last = (await self._workspaces.storage.schedules(ref)).get(schedule.name)
         if last is not None and not schedule.due(last, now):
             return 0  # the common case, checked without a transaction or a span
         telemetry = self._workspaces.telemetry
@@ -344,7 +346,8 @@ class Reactor[D]:
         Once ``stop`` is set, evaluation stops after its current batch.
         """
         storage = self._workspaces.storage
-        refs = [workspace] if workspace is not None else await storage.workspaces()
+        with untraced():
+            refs = [workspace] if workspace is not None else await storage.workspaces()
         fired, contended = 0, False
         for ref in refs:
             if stop is not None and stop.is_set():
@@ -359,13 +362,22 @@ class Reactor[D]:
     async def _evaluate_workspace(
         self, ref: WorkspaceRef, stop: asyncio.Event | None
     ) -> int | None:
-        """Evaluate a workspace's rules; return None if another reactor holds its lease."""
+        """Evaluate a workspace's rules; return None if another reactor holds its lease.
+
+        Checking for work is untraced, so a workspace with nothing new makes no trace; an
+        evaluation that finds work is traced as ``reflexr.evaluate`` (ADR-0040).
+        """
         storage = self._workspaces.storage
-        if not await storage.acquire_lease(ref, EVALUATION_LEASE, self._holder, self._lease_ttl):
-            return None
+        with untraced():
+            if not await storage.acquire_lease(
+                ref, EVALUATION_LEASE, self._holder, self._lease_ttl
+            ):
+                return None
         telemetry = self._workspaces.telemetry
         try:
-            await self._record_lag(ref)
+            with untraced():
+                if not await self._has_work(ref):
+                    return 0
             started = perf_counter()
             with telemetry.tracer.start_as_current_span(
                 "reflexr.evaluate",
@@ -380,7 +392,8 @@ class Reactor[D]:
                 workspace_id=ref.workspace_id,
             )
         finally:
-            await storage.release_lease(ref, EVALUATION_LEASE, self._holder)
+            with untraced():
+                await storage.release_lease(ref, EVALUATION_LEASE, self._holder)
         return fired
 
     async def _catch_up(
@@ -474,14 +487,22 @@ class Reactor[D]:
             ]
         )
 
-    async def _record_lag(self, ref: WorkspaceRef) -> None:
+    async def _has_work(self, ref: WorkspaceRef) -> bool:
+        """Record each enabled rule's lag, and return whether any has work to do.
+
+        These are the cases in which :meth:`_evaluate_batch` writes: a rule with no progress
+        yet begins, one whose definition changed is reset, and one whose cursor is behind the
+        head evaluates. Keep the two in step: in any other case a batch would find nothing.
+        """
         storage = self._workspaces.storage
         head = await storage.head_seq(ref)
         progress = await storage.progress(ref)
+        work = False
         for name, rule in self._workspaces.rules.items():
             if not rule.enabled:
                 continue  # behind by choice, so not a lag to alert on
-            cursor = progress[name].cursor if name in progress else 0
+            known = progress.get(name)
+            cursor = known.cursor if known else 0
             self._workspaces.telemetry.record(
                 EVALUATION_LAG,
                 head - cursor,
@@ -489,6 +510,8 @@ class Reactor[D]:
                 workspace_id=ref.workspace_id,
                 attributes={a.RULE: name},
             )
+            work = work or known is None or cursor < head or known.definition != rule.definition()
+        return work
 
     def _record_evaluation(self, ref: WorkspaceRef, rule: Rule, evaluation: Evaluation) -> None:
         def record(metric: Metric, count: int, attributes: Attributes) -> None:

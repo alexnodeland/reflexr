@@ -13,11 +13,14 @@ def langfuse_client(*, tracer_provider: TracerProvider | None = None, **options:
 
     It adds Langfuse's span processor to ``tracer_provider`` (the global one, if omitted) with
     :func:`should_export_span` as its filter. Keys and the base URL come from ``options`` or the
-    ``LANGFUSE_*`` environment variables.
+    ``LANGFUSE_*`` environment variables. When a Collector sends Langfuse the traces already,
+    pass ``should_export_span=no_spans``: the client then sets trace attributes and sends
+    scores, and exports no span a second time.
 
     Args:
         tracer_provider: The SDK tracer provider whose spans go to Langfuse.
-        **options: Passed to ``Langfuse(...)``, such as ``public_key`` or ``environment``.
+        **options: Passed to ``Langfuse(...)``, such as ``public_key``, ``environment`` or
+            ``should_export_span``.
     """
     options.setdefault("should_export_span", should_export_span)
     return Langfuse(tracer_provider=tracer_provider, **options)

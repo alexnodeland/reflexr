@@ -283,3 +283,15 @@ class Storage(Protocol):
     async def release_lease(self, workspace: WorkspaceRef, key: str, holder: str) -> None:
         """Release a lease if ``holder`` has it."""
         ...
+
+    async def cursor(self, workspace: WorkspaceRef, name: str) -> int:
+        """Return how far a named consumer of the log has got: the ``seq`` saved, or 0."""
+        ...
+
+    async def save_cursor(self, workspace: WorkspaceRef, name: str, seq: int) -> None:
+        """Save how far a named consumer of the log has got, such as a feedback mirror.
+
+        A cursor only moves forward: saving a ``seq`` below the saved one leaves it, so a
+        consumer running in several processes cannot move it back.
+        """
+        ...

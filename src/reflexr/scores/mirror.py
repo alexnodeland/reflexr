@@ -8,8 +8,9 @@ Each ``feedback_given`` becomes one score per scored field, attached to the trac
 
 Score ids are derived from the envelope's id and the field, so mirroring the same log again
 replaces scores instead of duplicating them: the mirror can always start over from the
-beginning. The scores are evalr's ``Score``, with no evaluator, and where the feedback came from
-in their ``source``.
+beginning. It need not, though: it saves a cursor in the workspace as it goes, and a restarted
+mirror carries on after it (ADR-0040). The scores are evalr's ``Score``, with no evaluator, and
+where the feedback came from in their ``source``.
 """
 
 import uuid
@@ -30,7 +31,7 @@ from reflexr.core import (
     feedback_types,
 )
 from reflexr.scores.mapping import score_configs, score_values
-from reflexr.telemetry import parse_traceparent
+from reflexr.telemetry import parse_traceparent, untraced
 from reflexr.workspace import Workspace
 
 _SCORE_IDS = uuid.UUID("5b8f2a1e-7c3d-4e9a-b6f0-2d1c8e4a7b93")
@@ -39,26 +40,57 @@ _SCORE_IDS = uuid.UUID("5b8f2a1e-7c3d-4e9a-b6f0-2d1c8e4a7b93")
 FIRING_SEARCH = 1000
 """How far after the envelope a rule fired at the mirror looks for its ``rule_fired``."""
 
+SAVE_EVERY = 500
+"""How many envelopes without feedback a mirror follows before it saves its cursor anyway, so a
+restarted mirror reads at most this many again."""
+
 
 class FeedbackMirror:
     """Records a workspace's feedback in a score sink.
 
     Args:
-        workspace: The workspace to follow; any actor's handle will do, since it only reads.
+        workspace: The workspace to follow; any actor's handle will do, since it only reads the
+            log and saves its cursor.
         sink: Where scores go.
+        cursor: The name of the cursor the mirror saves in the workspace, such as ``"langfuse"``,
+            so that it carries on where it was when it starts again. Give each mirror of a
+            workspace its own: two sharing a name would skip feedback after a restart. A new name
+            mirrors everything again, and keeps doing so across restarts. ``None`` keeps no
+            cursor: the mirror follows from the start every time.
     """
 
-    def __init__(self, workspace: Workspace, sink: ScoreSink) -> None:
+    def __init__(self, workspace: Workspace, sink: ScoreSink, *, cursor: str | None) -> None:
         self._workspace = workspace
         self._sink = sink
+        self._cursor = cursor
 
-    async def follow(self, *, after_seq: int = 0) -> None:
+    async def follow(self, *, after_seq: int | None = None) -> None:
         """Mirror feedback after ``after_seq``, then each new piece as it is given, until cancelled.
 
-        Run it as a task for as long as the workspace should be mirrored.
+        Run it as a task for as long as the workspace should be mirrored. By default it
+        carries on after its cursor, or starts at the beginning of the log if it has none.
+
+        Mirroring is at least once. The mirror saves its cursor once it has recorded a piece of
+        feedback's scores, and after every 500 other envelopes. A mirror stopped
+        between recording scores and saving records them again when it restarts, and the sink
+        replaces them, since their ids are the same. A cursor only moves forward, so following
+        from an earlier ``after_seq`` mirrors feedback again but leaves the cursor where it is
+        until the mirror passes it; a restart then carries on after the cursor.
+
+        The mirror's reads, scores and cursor are untraced, so an idle mirror, which polls its
+        workspace's log, makes no traces.
         """
-        async for envelope in self._workspace.subscribe(after_seq=after_seq):
-            await self.mirror(envelope)
+        name = self._cursor
+        with untraced():
+            start = after_seq
+            if start is None:
+                start = 0 if name is None else await self._workspace.cursor(name)
+            saved = start
+            async for envelope in self._workspace.subscribe(after_seq=start):
+                recorded = await self.mirror(envelope)
+                if name is not None and (recorded or envelope.seq - saved >= SAVE_EVERY):
+                    await self._workspace.save_cursor(name, envelope.seq)
+                    saved = envelope.seq
 
     async def mirror(self, envelope: Envelope) -> list[Score]:
         """Record the scores of one envelope, and return them; other events record nothing."""

@@ -9,25 +9,38 @@ reflexr's metric cardinality policy::
     telemetry.instrument_app(app)
     agent = Agent(..., capabilities=[EventContext(), telemetry.capability()])
 
+An application that runs artifactr too passes artifactr's contribution, and configures
+telemetry once for both (ADR-0040)::
+
+    telemetry = configure_telemetry(artifactr.otel.telemetry(), service_name="app")
+
 Nothing in reflexr requires it, and nothing inside reflexr imports it.
 """
 
 from reflexr.otel.configure import (
     BAGGAGE_KEYS,
     INSTRUMENTED,
+    Contribution,
     Instrumented,
+    LangfuseMode,
+    TelemetryContribution,
     TelemetryHandle,
     configure_telemetry,
     installed,
     metric_views,
+    telemetry,
 )
 
 __all__ = [
     "BAGGAGE_KEYS",
     "INSTRUMENTED",
+    "Contribution",
     "Instrumented",
+    "LangfuseMode",
+    "TelemetryContribution",
     "TelemetryHandle",
     "configure_telemetry",
     "installed",
     "metric_views",
+    "telemetry",
 ]

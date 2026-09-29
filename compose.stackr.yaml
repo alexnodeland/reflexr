@@ -4,8 +4,10 @@
 #   docker compose -f compose.yaml -f compose.stackr.yaml --profile app up -d
 #
 # LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY come from the host: the keys of a project in
-# stackr's Langfuse. To route the triage agent through stackr's LiteLLM proxy, set
-# ONCALL_LITELLM_URL=http://litellm:4000 and ONCALL_LITELLM_KEY to a tenant's key on the host.
+# stackr's Langfuse. stackr's Collector sends Langfuse every trace, so oncall sends Langfuse only
+# each run's session, user and tags (ONCALL_LANGFUSE=scores). To route the triage agent through
+# stackr's LiteLLM proxy, set ONCALL_LITELLM_URL=http://litellm:4000 and ONCALL_LITELLM_KEY to a
+# tenant's key on the host.
 
 services:
   oncall:
@@ -14,6 +16,7 @@ services:
       LANGFUSE_BASE_URL: http://langfuse-web:3000
       LANGFUSE_PUBLIC_KEY:
       LANGFUSE_SECRET_KEY:
+      ONCALL_LANGFUSE: scores
     networks:
       - default
       - stackr

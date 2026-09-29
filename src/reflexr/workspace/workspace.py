@@ -18,7 +18,13 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import AbstractContextManager, asynccontextmanager, contextmanager, nullcontext
+from contextlib import (
+    AbstractContextManager,
+    aclosing,
+    asynccontextmanager,
+    contextmanager,
+    nullcontext,
+)
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
 from datetime import datetime
@@ -75,6 +81,7 @@ from reflexr.telemetry import (
     actor_attributes,
     chain_attributes,
     current_traceparent,
+    untraced,
     workspace_attributes,
 )
 from reflexr.telemetry import attributes as a
@@ -642,9 +649,38 @@ class Workspace:
                 last=last,
             )
 
-    def subscribe(self, *, after_seq: int = 0) -> AsyncGenerator[Envelope]:
-        """Yield envelopes after ``after_seq``, then each new one as it is logged."""
-        return self._context.storage.subscribe(self._ref, after_seq=after_seq)
+    async def subscribe(self, *, after_seq: int = 0) -> AsyncGenerator[Envelope]:
+        """Yield envelopes after ``after_seq``, then each new one as it is logged.
+
+        Reading the log is untraced, so a subscription that polls storage makes no trace per
+        poll (ADR-0040); what the subscriber does with each envelope is traced as usual.
+        """
+        stream = self._context.storage.subscribe(self._ref, after_seq=after_seq)
+        async with aclosing(stream) as envelopes:
+            while True:
+                with untraced():
+                    envelope = await anext(envelopes, None)
+                if envelope is None:
+                    return
+                yield envelope
+
+    async def cursor(self, name: str) -> int:
+        """Return how far a named consumer of the log has got: the ``seq`` it saved, or 0.
+
+        A consumer, such as a feedback mirror, saves its cursor with :meth:`save_cursor` and
+        carries on after it when it starts again.
+        """
+        with self._using_storage():
+            return await self._context.storage.cursor(self._ref, name)
+
+    async def save_cursor(self, name: str, seq: int) -> None:
+        """Save how far a named consumer of the log has got: it is done with ``seq``.
+
+        A cursor only moves forward: saving a ``seq`` below the saved one leaves it, so a
+        consumer that runs in several processes, each at its own pace, cannot move it back.
+        """
+        with self._using_storage():
+            await self._context.storage.save_cursor(self._ref, name, seq)
 
     async def run(self, run_id: RunId) -> Run:
         """Return a run.

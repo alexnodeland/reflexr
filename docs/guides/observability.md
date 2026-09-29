@@ -35,7 +35,7 @@ It sets up:
 - OTLP over HTTP for traces, metrics and logs, to `otlp_endpoint` or wherever the `OTEL_EXPORTER_OTLP_*` environment variables point; `otlp_headers` adds a backend's credentials
 - views that apply reflexr's metric cardinality policy at `metrics_detail` (see [Metrics](#metrics))
 - a baggage span processor that copies a run attempt's session onto every span in it (see [Sessions and causal chains](#sessions-and-causal-chains))
-- the open instrumentations for FastAPI, SQLAlchemy, asyncpg, httpx and httpx2, for whichever of them is installed (`instrument=` chooses), with the stable HTTP semantic conventions
+- the open instrumentations reflexr advises, FastAPI, SQLAlchemy, httpx and httpx2, for whichever of them is installed, with the stable HTTP semantic conventions; `instrument=` names others, such as `asyncpg` for an application that queries with asyncpg directly (SQLAlchemy's spans already cover the queries reflexr makes through it)
 - pydantic-ai's instrumentation settings: `telemetry.capability()` is its `Instrumentation` capability for your agents, with prompts, completions and tool arguments left out unless `include_content=True`
 - an OTLP handler on the root logger, so `logging` records are exported with the trace and span they were logged in; `logs=False` leaves logging alone
 
@@ -50,9 +50,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
 ```
 
+### With artifactr, or other libraries
+
+An application that uses artifactr too configures telemetry once, with artifactr's contribution ([ADR-0040](../adr/0040-telemetry-that-composes-across-libraries.md)):
+
+```python
+import artifactr.otel
+from reflexr.otel import configure_telemetry
+
+telemetry = configure_telemetry(artifactr.otel.telemetry(), service_name="app")
+```
+
+`reflexr.otel.telemetry()` is reflexr's contribution, and `configure_telemetry` always adds it. Each contribution brings its library's metric views, a span filter for its traces, and the instrumentations it advises. `configure_telemetry` installs every library's views, instruments what any of them advises, and, with Langfuse, keeps a span that any of them keeps. artifactr's `configure_telemetry` takes reflexr's contribution the same way, so either library's will do. An application can contribute its own metric views too, with a `Contribution`.
+
 ### Configuring the SDK yourself
 
-`configure_telemetry` is a convenience: reflexr only ever records through the OpenTelemetry API, so any SDK configuration works. `Workspaces` records to the global providers, or to the ones you pass as `tracer_provider=` and `meter_provider=`, and everything built on it (the `Reactor`, `reflexr_router`) records through the same ones. To keep less metric detail, give your `MeterProvider` the views `metric_views(detail)` returns ([ADR-0029](../adr/0029-metric-detail-through-sdk-views.md)); to trace agents, add pydantic-ai's capability yourself, `Instrumentation(settings=InstrumentationSettings(tracer_provider=..., meter_provider=...))`.
+`configure_telemetry` is a convenience: reflexr only ever records through the OpenTelemetry API, so any SDK configuration works. `Workspaces` records to the global providers, or to the ones you pass as `tracer_provider=` and `meter_provider=`, and everything built on it (the `Reactor`, `reflexr_router`) records through the same ones. To keep less metric detail, give your `MeterProvider` every library's `metric_views(detail)` ([ADR-0029](../adr/0029-metric-detail-through-sdk-views.md)); to trace agents, add pydantic-ai's capability yourself, `Instrumentation(settings=InstrumentationSettings(tracer_provider=..., meter_provider=...))`. Keep a parent-based sampler, the SDK's default, so that polling stays untraced (see [Polling](#polling)).
 
 ## Spans
 
@@ -62,7 +75,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 | `reflexr.feedback {type}` | Feedback is given | `reflexr.feedback.type`, `reflexr.feedback.target`, `reflexr.event.id` |
 | `reflexr.retry_run`, `reflexr.skip_run`, `reflexr.cancel_run` | Someone operates a run | `reflexr.run.id`, `reflexr.rule` |
 | `reflexr.replay_rule` | A rule is replayed | `reflexr.rule` |
-| `reflexr.evaluate` | The reactor evaluates a workspace's new envelopes | `reflexr.evaluation.rules` (the rules that evaluated), `reflexr.evaluation.firings` |
+| `reflexr.evaluate` | The reactor evaluates a workspace's new envelopes; a check that finds none records nothing | `reflexr.evaluation.rules` (the rules that evaluated), `reflexr.evaluation.firings` |
 | `invoke_workflow {rule}` | A run attempt | `gen_ai.operation.name`, `gen_ai.workflow.name`, `reflexr.rule`, `reflexr.scope`, `reflexr.run.id`, `reflexr.attempt` |
 | `execute_step {node}` | A graph action runs a step | `reflexr.run.id` |
 | `reflexr.checkpoint_run` | A graph run saves its progress after a step | `reflexr.run.id`, `reflexr.attempt` |
@@ -78,13 +91,13 @@ Every span reflexr records says where and who: `reflexr.tenant.id` and `reflexr.
 An incident spreads over several traces, because publishing an event, deciding about it and acting on it happen at different times, often in different processes:
 
 - **Publishing** happens in the producer's trace: an HTTP request, a webhook handler or a script. The envelope stores the W3C trace context of its `reflexr.publish` span as `traceparent`.
-- **Each evaluation pass** is a `reflexr.evaluate` trace of its own, and the `rule_fired` facts it appends carry its `traceparent`, so feedback on a firing can find the evaluation that made it.
+- **Each evaluation** of new envelopes is a `reflexr.evaluate` trace of its own, and the `rule_fired` facts it appends carry its `traceparent`, so feedback on a firing can find the evaluation that made it.
 - **Each run attempt** is an `invoke_workflow {rule}` trace of its own, **linked** to the publishing spans of the envelopes that made the rule fire. Its trace id is added to the run's `trace_ids`, one per attempt, which is how feedback on a run finds its traces.
 
 ```mermaid
 graph LR
     publish["reflexr.publish service.error<br/>the producer's trace"]
-    evaluate["reflexr.evaluate<br/>a trace per pass"]
+    evaluate["reflexr.evaluate<br/>a trace per evaluation"]
     attempt["invoke_workflow error-spike<br/>a trace per attempt"]
     fired[("rule_fired<br/>traceparent")]
     run[("Run.trace_ids")]
@@ -106,6 +119,10 @@ invoke_workflow error-spike              the reactor, linked to the three servic
 
 The `EventContext` capability adds the tenant, workspace, rule, scope, run, attempt and session to pydantic-ai's `invoke_agent` span. A graph action's attempt holds an `execute_step {node}` span for each step instead, each followed by a `reflexr.checkpoint_run` span when its boundary is saved ([Graphs](actions.md#graphs)).
 
+### Polling
+
+The reactor polls storage every `poll_interval` for work: workspaces with new envelopes, due ticks and runs that can start. Subscriptions and the feedback mirror poll the log too. All of them poll untraced, inside `reflexr.telemetry.untraced()`, which makes every span started in it a child of a span that is never sampled. So the database instrumentation records no span for a poll, and an idle application exports none; the instrumentations' metrics, such as the connection pool's, are still recorded, and so is `reflexr.evaluation.lag`. What a poll finds is traced where it happens: an evaluation, a tick or a run attempt, each a trace of its own. Don't commit or publish inside `untraced()` yourself: its trace ids belong to the unsampled parent, so an envelope or a run would point at a trace that was never recorded. A sampler that ignores the parent, such as `always_on` or `traceidratio`, would trace each poll again.
+
 ## Metrics
 
 reflexr's metrics are declared in a registry, `reflexr.telemetry.METRICS`, with the attributes each may carry; recording any other attribute raises, so a metric cannot grow one by accident. Every metric also carries `reflexr.tenant.id` and `reflexr.workspace.id`.
@@ -126,7 +143,7 @@ reflexr's metrics are declared in a registry, `reflexr.telemetry.METRICS`, with 
 | `reflexr.stream.connections` | up-down counter | `{connection}` | |
 | `reflexr.stream.disconnects` | counter | `{connection}` | `reflexr.stream.close_code` |
 
-`reflexr.evaluation.lag` is how far each enabled rule was behind the head of the log when an evaluation began: the first thing to watch when rules fall behind. A [disabled](reactor.md#disabling-a-rule) rule is left out, since it is behind by choice. `reflexr.runs` counts runs reaching each status, and its `reflexr.actor.kind` tells the reactor's transitions from an operator's retries and skips. A run that is retrying or dead-lettered after an attempt that failed with a reason also carries `reflexr.run.reason`, so dashboards can break failures down by cause: `timeout` and `abandoned` from the reactor, `guardrail_blocked` from the [LLM gateway](gateway.md), or the code an action gives when it raises `RunFailure(message, reason=..., permanent=...)` ([ADR-0036](../adr/0036-typed-run-failures.md)). Reasons are stable codes, so they are safe as a metric attribute; the message is for people, and stays on the run and its facts. The histograms advise bucket boundaries suited to them: a millisecond to ten seconds for evaluation, and fifty milliseconds to ten minutes for run attempts. Each `Metric` also names its Prometheus series (`prometheus_name`), which is what dashboards are tested against.
+`reflexr.evaluation.lag` is how far each enabled rule was behind the head of the log each time the reactor checked the workspace: the first thing to watch when rules fall behind. `reflexr.evaluation.duration` times the evaluations that found new envelopes. A [disabled](reactor.md#disabling-a-rule) rule is left out, since it is behind by choice. `reflexr.runs` counts runs reaching each status, and its `reflexr.actor.kind` tells the reactor's transitions from an operator's retries and skips. A run that is retrying or dead-lettered after an attempt that failed with a reason also carries `reflexr.run.reason`, so dashboards can break failures down by cause: `timeout` and `abandoned` from the reactor, `guardrail_blocked` from the [LLM gateway](gateway.md), or the code an action gives when it raises `RunFailure(message, reason=..., permanent=...)` ([ADR-0036](../adr/0036-typed-run-failures.md)). Reasons are stable codes, so they are safe as a metric attribute; the message is for people, and stays on the run and its facts. The histograms advise bucket boundaries suited to them: a millisecond to ten seconds for evaluation, and fifty milliseconds to ten minutes for run attempts. Each `Metric` also names its Prometheus series (`prometheus_name`), which is what dashboards are tested against.
 
 Run, firing, event, chain and scope values are never metric attributes; they are in the traces. Rule names are, since code bounds them. Tenant and workspace are recorded on every metric, which suits most deployments. With many workspaces, keep less detail ([ADR-0029](../adr/0029-metric-detail-through-sdk-views.md)):
 
@@ -208,15 +225,17 @@ Langfuse is the primary backend for reflexr's traces and feedback ([ADR-0018](..
 from reflexr.langfuse import langfuse_run
 from reflexr.otel import configure_telemetry
 
-telemetry = configure_telemetry(service_name="oncall", langfuse=True)  # keys: LANGFUSE_* variables
+telemetry = configure_telemetry(service_name="oncall", langfuse="traces")  # keys: LANGFUSE_*
 reactor = Reactor(workspaces, actions=actions, deps=deps, run_context=langfuse_run)
 ```
 
-- **Whole traces.** Langfuse's default keeps only LLM spans. `should_export_span`, which `configure_telemetry(langfuse=True)` and `langfuse_client(...)` install, also keeps reflexr's spans, pydantic-graph's, the MCP SDK's and the FastAPI, SQLAlchemy, asyncpg and httpx instrumentations', so a run's trace in Langfuse shows its steps, queries and HTTP calls around the model calls.
+- **Whole traces.** Langfuse's default keeps only LLM spans. With `langfuse="traces"`, Langfuse also keeps every span a library's contribution keeps: for reflexr, the scopes in `reflexr.telemetry.TRACE_SCOPES`, which are reflexr's, pydantic-graph's, the MCP SDK's and the FastAPI, SQLAlchemy, asyncpg and httpx instrumentations'. So a run's trace in Langfuse shows its steps, queries and HTTP calls around the model calls. `langfuse_client(...)` installs the same filter for reflexr alone, `should_export_span`.
 - **Sessions, users and names.** `langfuse_run` sets each attempt's trace attributes on every span in it: the chain as the session, the person whose event made the rule fire as the user (when a person published it), the rule's name as the trace name, tags for the tenant, the workspace and the rule (`tenant:acme`, `workspace:prod`, `rule:error-spike`), and reflexr's ids (run, scope and attempt) as metadata. Values are made ASCII and cut to 200 characters, as Langfuse requires; `run_attributes(reaction)` returns them, should you want them elsewhere.
 - **Feedback as scores.** See [Scores](evaluation.md#scores).
 
 Configuring the SDK yourself, create the client with `langfuse_client(tracer_provider=...)`: it adds Langfuse's span processor, with the filter, to your provider. Keys and the base URL come from the `LANGFUSE_*` environment variables or from keyword arguments, which are passed to `Langfuse(...)`; with `configure_telemetry`, pass them as `langfuse_options`.
+
+When a Collector sends Langfuse the traces already, as stackr's does, send Langfuse no spans of your own, or each would arrive twice: `langfuse="scores"`. The client still sets each run's session, user and tags on its spans, which reach Langfuse through the Collector, and records scores. Configuring the SDK yourself, pass `langfuse_client(tracer_provider=..., should_export_span=no_spans)`.
 
 ## Attributing your own spans
 

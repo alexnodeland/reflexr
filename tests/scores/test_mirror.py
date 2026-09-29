@@ -1,6 +1,8 @@
 """The feedback mirror: which trace or session each piece of feedback is scored on."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import pytest
 from evalr.memory import InMemoryScoreSink
@@ -21,6 +23,8 @@ from reflexr.workspace import (
 from tests.event_types import Deploy
 from tests.scores.fakes import seeded
 from tests.scores.kinds import Accuracy, Helpfulness
+
+CURSOR = "langfuse"
 
 deploys = Rule(name="deploys", when=on(Deploy), then=run("note"))
 audit = Rule(name="audit", when=on(Deploy), then=run("note"))
@@ -43,7 +47,7 @@ async def fired(traced: bool) -> tuple[Workspace, str, str]:
 
 
 async def mirrored(workspace: Workspace, sink: InMemoryScoreSink) -> list[Score]:
-    mirror = FeedbackMirror(workspace, sink)
+    mirror = FeedbackMirror(workspace, sink, cursor=CURSOR)
     return [s for e in await workspace.read() for s in await mirror.mirror(e)]
 
 
@@ -110,13 +114,13 @@ async def test_mirroring_again_replaces_and_other_events_score_nothing() -> None
         [envelope] = await transaction.append(
             [Entry(id="f1", actor=SourceActor(name="x"), event=unregistered)]
         )
-    assert await FeedbackMirror(workspace, sink).scores(envelope) == []
+    assert await FeedbackMirror(workspace, sink, cursor=CURSOR).scores(envelope) == []
 
 
 async def test_following_mirrors_feedback_as_it_is_given() -> None:
     workspace, run_id, _ = await fired(traced=True)
     sink = InMemoryScoreSink()
-    following = asyncio.create_task(FeedbackMirror(workspace, sink).follow())
+    following = asyncio.create_task(FeedbackMirror(workspace, sink, cursor=CURSOR).follow())
     await workspace.give_feedback(Helpfulness(rating=1), on=RunTarget(run_id=run_id))
     for _ in range(100):
         if sink.scores:
@@ -126,6 +130,99 @@ async def test_following_mirrors_feedback_as_it_is_given() -> None:
     with pytest.raises(asyncio.CancelledError):
         await following
     assert [s.value for s in sink.scores.values()] == [1.0]
+
+
+async def following(
+    mirror: FeedbackMirror, done: Callable[[], Awaitable[bool]], **options: Any
+) -> None:
+    """Follow the log until ``done``, then stop, as a restarting application would."""
+    follower = asyncio.create_task(mirror.follow(**options))
+    for _ in range(200):
+        if await done():
+            break
+        await asyncio.sleep(0.01)
+    follower.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await follower
+    assert await done()
+
+
+async def rate(workspace: Workspace, run_id: str, stars: int) -> int:
+    await workspace.give_feedback(Helpfulness(rating=stars), on=RunTarget(run_id=run_id))
+    return await workspace.head_seq()
+
+
+async def test_a_restarted_mirror_carries_on_after_its_cursor() -> None:
+    workspace, run_id, _ = await fired(traced=False)
+    first = await rate(workspace, run_id, 4)
+    before = InMemoryScoreSink()
+
+    async def recorded_first() -> bool:
+        return await workspace.cursor(CURSOR) == first
+
+    await following(FeedbackMirror(workspace, before, cursor=CURSOR), recorded_first)
+    assert len(before.scores) == 1
+    second = await rate(workspace, run_id, 2)
+    after = InMemoryScoreSink()
+
+    async def recorded_second() -> bool:
+        return await workspace.cursor(CURSOR) == second
+
+    await following(FeedbackMirror(workspace, after, cursor=CURSOR), recorded_second)
+    assert [s.value for s in after.scores.values()] == [2.0], "the first is not sent again"
+
+
+async def test_the_cursor_is_saved_now_and_then_without_feedback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("reflexr.scores.mirror.SAVE_EVERY", 3)
+    workspaces = Workspaces(InMemoryStorage())
+    workspace = await workspaces.open("acme", "prod", actor=SourceActor(name="ci"))
+    for _ in range(7):
+        await workspace.publish(Deploy(service="auth"))
+
+    async def saved_twice() -> bool:
+        return await workspace.cursor(CURSOR) == 6
+
+    await following(FeedbackMirror(workspace, InMemoryScoreSink(), cursor=CURSOR), saved_twice)
+
+
+async def test_each_mirror_of_a_workspace_has_its_own_cursor() -> None:
+    workspace, run_id, _ = await fired(traced=False)
+    head = await rate(workspace, run_id, 4)
+
+    async def warehouse_is_done() -> bool:
+        return await workspace.cursor("warehouse") == head
+
+    mirror = FeedbackMirror(workspace, InMemoryScoreSink(), cursor="warehouse")
+    await following(mirror, warehouse_is_done)
+    assert await workspace.cursor(CURSOR) == 0
+
+
+async def test_a_mirror_without_a_cursor_starts_over() -> None:
+    workspace, run_id, _ = await fired(traced=False)
+    await rate(workspace, run_id, 4)
+    for _ in range(2):
+        sink = InMemoryScoreSink()
+
+        async def recorded(sink: InMemoryScoreSink = sink) -> bool:
+            return bool(sink.scores)
+
+        await following(FeedbackMirror(workspace, sink, cursor=None), recorded)
+    assert await workspace.cursor(CURSOR) == 0
+
+
+async def test_mirroring_again_from_the_start_leaves_the_cursor() -> None:
+    workspace, run_id, _ = await fired(traced=False)
+    first = await rate(workspace, run_id, 4)
+    await workspace.save_cursor(CURSOR, first + 5)  # as if another process had got further
+    sink = InMemoryScoreSink()
+
+    async def recorded() -> bool:
+        return bool(sink.scores)
+
+    await following(FeedbackMirror(workspace, sink, cursor=CURSOR), recorded, after_seq=0)
+    assert await workspace.cursor(CURSOR) == first + 5
 
 
 async def test_score_configs_are_created_once() -> None:
