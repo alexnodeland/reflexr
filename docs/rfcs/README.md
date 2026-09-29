@@ -41,3 +41,4 @@ RFCs are living documents while Accepted: the tracking checklist and "unresolved
 |---|---|---|
 | [0001](0001-v0.1-implementation-plan.md) | v0.1 implementation plan | Implemented |
 | [0002](0002-observability-feedback-and-evaluation.md) | Observability, feedback, evaluation and the LLM gateway | Implemented |
+| [0003](0003-managing-rules-at-runtime.md) | Managing rules at runtime | Discussion |
