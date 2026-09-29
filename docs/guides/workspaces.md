@@ -131,7 +131,7 @@ The incident's `causation` names the firing and run behind it, and its depth cou
 | `schedule_ticks()` | When each [schedule](schedules.md) last ticked in the workspace |
 | `schedule_statuses()` | A `ScheduleStatus` for each schedule that targets the workspace: its `last_tick` and `next_tick`, or neither before its first check |
 
-The statuses are what REST's `GET /v1/workspaces/{workspace_id}/rules` and `GET /v1/workspaces/{workspace_id}/schedules` return ([REST endpoints](serving.md#rest-endpoints)), and what MCP's `rule_status` tool reports as text ([External agents over MCP](mcp.md#tools)), so the surfaces agree.
+The statuses are what REST's `GET /v1/workspaces/{workspace_id}/rules` and `GET /v1/workspaces/{workspace_id}/schedules` return ([REST endpoints](serving.md#rest-endpoints)), and what MCP's `rule_status` and `schedule_status` tools report as text ([External agents over MCP](mcp.md#tools)), so the surfaces agree.
 
 `subscribe` yields the stored envelopes and then the live ones on one iterator, so nothing falls between catching up and following along:
 

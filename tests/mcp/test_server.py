@@ -3,6 +3,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import pytest
@@ -14,7 +15,14 @@ from mcp.types import TextContent, TextResourceContents
 from reflexr import Actor, F, Feedback, Rule, by, on, run
 from reflexr.core import EvaluationError, ExternalAgentActor, TenantId, WorkspaceId
 from reflexr.mcp import ReflexrMcp, run_uri
-from reflexr.workspace import InMemoryStorage, Reaction, Reactor, WorkspaceRef, Workspaces
+from reflexr.workspace import (
+    InMemoryStorage,
+    Reaction,
+    Reactor,
+    Schedule,
+    WorkspaceRef,
+    Workspaces,
+)
 from tests.event_types import Deploy, ServiceError
 
 CLAUDE = ExternalAgentActor(client_id="claude-code", name="Claude Code")
@@ -111,6 +119,8 @@ async def test_agents_publish_read_and_operate(server: Server, workspaces: Works
         assert (await call(client, "rule_status", workspace_id="empty"))[1] == (
             "- deploys: enabled, cursor 0, 0 behind, generation 0, 0 dead letters"
         )
+        schedules = await call(client, "schedule_status", workspace_id="prod")
+        assert schedules == (False, "No schedule targets this workspace.")
         failing, done = [
             json.loads(line)
             for line in (await call(client, "list_runs", workspace_id="prod"))[1].splitlines()
@@ -199,6 +209,7 @@ async def test_authorize_decides_which_workspaces_a_client_may_use(
         "publish_event": {"event": {"type": "deploy.finished", "service": "auth"}},
         "read_events": {},
         "rule_status": {},
+        "schedule_status": {},
         "replay_rule": {"rule": "deploys"},
         "list_runs": {},
         "get_run": run_id,
@@ -256,6 +267,45 @@ async def test_the_rule_status_lists_every_registered_rule_as_rest_does() -> Non
     )
     assert [s.rule for s in await workspace.rule_statuses()] == ["deploys", "off"]  # REST's list
     assert none == "No rules are registered."
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = datetime(2026, 1, 1, tzinfo=UTC)
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+async def test_the_schedule_status_shows_last_and_next_ticks_as_rest_does() -> None:
+    heartbeat = Schedule(name="heartbeat-check", every=timedelta(seconds=30))
+    elsewhere = Schedule(name="elsewhere", every=timedelta(hours=1), workspaces=(("acme", "ops"),))
+    clock = Clock()
+    workspaces = Workspaces(
+        InMemoryStorage(clock=clock), events=[Deploy], schedules=[heartbeat, elsewhere], clock=clock
+    )
+    workspace = await workspaces.open("acme", "prod", actor=CLAUDE)
+    await workspace.publish(Deploy(service="auth"))
+    reactor = Reactor(workspaces)
+    await reactor.tick()
+    clock.now += timedelta(seconds=65)
+    await reactor.tick()
+    mcp = ReflexrMcp(workspaces, resolve=Identity().resolve)
+    try:
+        async with Client(mcp.server) as client:
+            _, prod = await call(client, "schedule_status", workspace_id="prod")
+            _, fresh = await call(client, "schedule_status", workspace_id="fresh")
+    finally:
+        await mcp.aclose()
+    assert prod == (
+        "- heartbeat-check: last tick 2026-01-01T00:01:00Z, next tick 2026-01-01T00:01:30Z"
+    )
+    assert fresh == "- heartbeat-check: not started in this workspace yet"
+    [status] = await workspace.schedule_statuses()  # what REST returns
+    assert (status.last_tick, status.next_tick) == (
+        clock.now - timedelta(seconds=5),
+        clock.now + timedelta(seconds=25),
+    )
 
 
 async def test_the_http_app_and_lifespan(server: Server) -> None:

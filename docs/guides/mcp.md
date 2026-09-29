@@ -73,6 +73,7 @@ The server's instructions tell the client what it is talking to: event logs, one
 | `read_events(workspace_id, after_seq=0, types=None, limit=50)` | Reads envelopes, oldest first, as JSON lines |
 | `list_rules()` | The rules every workspace evaluates, as JSON. They are the application's, the same for every tenant, so every client sees them all ([Multi-tenancy and security](security.md#tenants-and-workspaces)) |
 | `rule_status(workspace_id)` | Every registered rule, as `GET /v1/workspaces/{workspace_id}/rules` lists them: whether it is enabled, its cursor, how far it is behind the log, its generation and its number of dead letters. A rule that has not evaluated the workspace yet is at cursor 0. |
+| `schedule_status(workspace_id)` | Each [schedule](schedules.md) that targets the workspace, as `GET /v1/workspaces/{workspace_id}/schedules` lists them: when it last ticked and when it ticks next, or that it has not started there yet |
 | `replay_rule(workspace_id, rule, from_seq=0, mode="rebuild")` | Evaluates a rule again from `from_seq`: rebuilds its state quietly, or refires ([The reactor](reactor.md#replaying-a-rule)) |
 | `list_runs(workspace_id, rule=None, status=None, limit=20)` | Runs, newest first, as JSON lines |
 | `get_run(workspace_id, run_id)` | One run: its status, attempts, error, output and checkpoint |

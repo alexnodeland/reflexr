@@ -32,7 +32,14 @@ from reflexr.core import (
     load_event,
 )
 from reflexr.telemetry import actor_attributes, workspace_attributes
-from reflexr.workspace import Authorize, RuleStatus, Workspace, Workspaces, execute
+from reflexr.workspace import (
+    Authorize,
+    RuleStatus,
+    ScheduleStatus,
+    Workspace,
+    Workspaces,
+    execute,
+)
 
 ResolveClient = Callable[[Context], Awaitable[tuple[TenantId, ExternalAgentActor]]]
 """Authenticates an MCP request: returns the client's tenant and actor."""
@@ -201,6 +208,13 @@ class ReflexrMcp:
             return "\n".join(map(_rule_line, statuses)) or "No rules are registered."
 
         @server.tool()
+        async def schedule_status(workspace_id: str, ctx: Context) -> str:
+            """Show each schedule that ticks in a workspace: when it last ticked and ticks next."""
+            workspace = await self._workspace(ctx, workspace_id)
+            statuses = await workspace.schedule_statuses()
+            return "\n".join(map(_schedule_line, statuses)) or "No schedule targets this workspace."
+
+        @server.tool()
         async def replay_rule(
             workspace_id: str,
             rule: str,
@@ -298,6 +312,13 @@ def _rule_line(status: RuleStatus) -> str:
         f"- {status.rule}: {'enabled' if status.enabled else 'disabled'}, cursor {status.cursor}, "
         f"{status.lag} behind, generation {status.generation}, {letters}"
     )
+
+
+def _schedule_line(status: ScheduleStatus) -> str:
+    if status.last_tick is None:
+        return f"- {status.schedule}: not started in this workspace yet"
+    ticks = status.model_dump(mode="json")  # the times as REST writes them
+    return f"- {status.schedule}: last tick {ticks['last_tick']}, next tick {ticks['next_tick']}"
 
 
 async def _tool[T](awaitable: Awaitable[T]) -> T:
