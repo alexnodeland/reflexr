@@ -63,15 +63,15 @@ Settled(ticks=0, firings=1, attempts=1)
 6 system run_succeeded
 ```
 
-`settle()` leaves runs that are waiting to retry later alone, and raises `RuntimeError` if work is still happening after `max_rounds` rounds (100), as when rules keep triggering each other within the depth limit ([Loop and spend safety](safety.md)).
+`settle()` leaves runs that are waiting to retry later alone, and raises `RuntimeError` if work is still happening after `max_rounds` rounds (100), as when rules keep triggering each other within the depth limit ([Loop and spend safety](safety.md)). A round that finds a lease it needs held by another reactor, on a workspace to evaluate or a run to attempt, is not a round in which nothing happens: `settle()` waits a few milliseconds, longer each time up to a tenth of a second, and tries again. So several reactors settling on one database stop only when none of them has anything left to do ([Several processes](#several-processes)).
 
 | Method | What it does |
 |---|---|
 | `serve(poll_interval=)` | `tick`, `evaluate` and `execute` in a loop, until cancelled |
-| `settle(max_rounds=)` | The same, until a round does nothing; returns `Settled(ticks, firings, attempts)` |
+| `settle(max_rounds=)` | The same, until a round does nothing and meets no lease another reactor holds; returns `Settled(ticks, firings, attempts)` |
 | `tick()` | Publishes the [schedules](schedules.md)' due ticks; returns how many |
 | `evaluate(workspace=None)` | Evaluates every enabled rule over new envelopes, in one workspace or in all; returns how many times rules fired |
-| `execute(limit=100)` | Attempts up to `limit` due runs; returns how many attempts finished |
+| `execute(limit=100)` | Attempts up to `limit` due runs that can start; returns how many attempts finished |
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -149,7 +149,7 @@ The workspace's rule status, `GET /v1/workspaces/{workspace_id}/rules` or the MC
 
 ## Execution
 
-Acting is at least once ([ADR-0027](../adr/0027-executing-runs.md)). A firing creates a pending **run** whose id is the firing's id. `execute()` finds due runs of enabled rules across workspaces and attempts up to `concurrency` of them at a time. Each attempt has three steps:
+Acting is at least once ([ADR-0027](../adr/0027-executing-runs.md)). A firing creates a pending **run** whose id is the firing's id. `execute()` finds the due runs of enabled rules that can start, across workspaces, and attempts up to `concurrency` of them at a time. With `ordering="scope"` that is the first unfinished run of each scope, so a backlog in one scope takes one place in `limit` and does not hold up the others ([Ordering](#ordering)). Each attempt has three steps:
 
 1. **Claim.** Under the run's lease, one transaction checks that the run is still due and first in its scope, and appends `run_started`.
 2. **Act.** The action runs outside any transaction, with a [`Reaction`](actions.md#the-reaction), inside an `invoke_workflow {rule}` span. The reactor renews the run's lease every third of `lease_ttl` while the action works.
@@ -281,8 +281,8 @@ await reactor.settle()
 
 Any number of reactors, in any number of processes, can share the work, as long as they share a storage that works across processes, such as [SQL storage](storage.md#sql-storage); in-memory storage lives in one process. Leases divide the work:
 
-- **One evaluator per workspace.** A reactor that finds another holding a workspace's evaluation lease skips that workspace for now.
-- **One executor per run.** A run's lease is taken before its attempt and renewed while the action works.
+- **One evaluator per workspace.** A reactor that finds another holding a workspace's evaluation lease skips that workspace for now; in `settle()`, it looks again shortly.
+- **One executor per run.** A run's lease is taken before its attempt and renewed while the action works. A reactor that finds a run leased leaves it to the other; in `settle()`, it looks again shortly, since the other may be about to find that the run cannot start yet and let it go.
 - **One publisher per tick.** Ticks have ids derived from the schedule and the time, so replicas never publish one twice.
 
 A lease lapses when its holder stops renewing it for `lease_ttl`. If a reactor dies, or is stopped, in the middle of a run, the run becomes due again once its lease lapses or is released, and the next claim records the abandoned attempt as a failed one ("the attempt was abandoned: its executor stopped", with the reason `abandoned`). So the retry policy also bounds actions that keep crashing their process. Give each process its own `holder`, so the leases say which process holds what.

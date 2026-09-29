@@ -157,7 +157,7 @@ async def test_a_failing_page_is_retried(
     assert (done.status, done.attempts) == ("succeeded", 2)
 ```
 
-`settle` raises `RuntimeError` if work is still going on after 100 rounds, which in a test usually means rules that keep triggering each other. `reactor.evaluate()` and `reactor.execute()` run one half at a time, for tests that need to look between them, such as a run that is pending but not yet started.
+`settle` raises `RuntimeError` if work is still going on after 100 rounds, which in a test usually means rules that keep triggering each other, or a lease the test took for another reactor and never released: `settle` waits for a lease another reactor holds, rather than taking it for nothing to do. `reactor.evaluate()` and `reactor.execute()` run one half at a time, for tests that need to look between them, such as a run that is pending but not yet started.
 
 ## Scripting agents
 

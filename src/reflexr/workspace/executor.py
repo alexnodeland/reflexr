@@ -50,7 +50,7 @@ from reflexr.telemetry import attributes as a
 from reflexr.telemetry.metrics import DEAD_LETTERS, RUN_ATTEMPTS, RUN_DURATION, RUNS
 from reflexr.telemetry.telemetry import Attributes
 from reflexr.workspace.actions import Action, Reaction, RunContext, RunFailure
-from reflexr.workspace.storage import Entry, Transaction, WorkspaceRef, run_lease
+from reflexr.workspace.storage import Entry, RunPolicy, Transaction, WorkspaceRef, run_lease
 from reflexr.workspace.workspace import Workspaces
 
 EXECUTOR = SystemActor(name="reactor")
@@ -58,6 +58,25 @@ EXECUTOR = SystemActor(name="reactor")
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 type _Fact = RunStarted | RunSucceeded | RunRetrying | RunDeadLettered | RunCancelled
+
+
+type _Attempt = Literal["finished", "declined", "contended"]
+"""How an attempt ended: it finished, the run could not start, or another executor held it."""
+
+
+@dataclass(frozen=True)
+class Executed:
+    """What one pass of an :class:`Executor` did."""
+
+    attempts: int = 0
+    """How many attempts finished, whether they succeeded or failed."""
+
+    contended: int = 0
+    """How many runs it left alone because another executor held their lease.
+
+    Such a run is not idle: the other executor may be running it, or may be about to find it
+    cannot start and let it go.
+    """
 
 
 @dataclass(frozen=True)
@@ -91,39 +110,36 @@ class Executor[D]:
         self._concurrency = concurrency
         self._run_context = run_context
 
-    async def execute(self, *, limit: int) -> int:
-        """Attempt up to ``limit`` due runs, ``concurrency`` at a time.
-
-        Returns:
-            How many attempts finished, whether they succeeded or failed.
-        """
-        disabled = [name for name, rule in self._workspaces.rules.items() if not rule.enabled]
+    async def execute(self, *, limit: int) -> Executed:
+        """Attempt up to ``limit`` of the runs that can start, ``concurrency`` at a time."""
+        rules = self._workspaces.rules.values()
         due = await self._workspaces.storage.due_runs(
-            now=self._workspaces.clock(), limit=limit, disabled=disabled
+            now=self._workspaces.clock(), limit=limit, policy=RunPolicy.of(rules)
         )
         gate = asyncio.Semaphore(self._concurrency)
 
-        async def attempt(ref: WorkspaceRef, run: Run) -> bool:
+        async def attempt(ref: WorkspaceRef, run: Run) -> _Attempt:
             async with gate:
                 return await self._attempt(ref, run)
 
         async with asyncio.TaskGroup() as group:
             attempts = [group.create_task(attempt(ref, run)) for ref, run in due]
-        return sum(task.result() for task in attempts)
+        results = [task.result() for task in attempts]
+        return Executed(attempts=results.count("finished"), contended=results.count("contended"))
 
-    async def _attempt(self, ref: WorkspaceRef, run: Run) -> bool:
+    async def _attempt(self, ref: WorkspaceRef, run: Run) -> _Attempt:
         rule = self._workspaces.rules.get(run.rule)
         if rule is not None and not rule.enabled:
-            return False  # its runs wait until it is enabled again
+            return "declined"  # its runs wait until it is enabled again
         storage = self._workspaces.storage
         key = run_lease(run.id)
         if not await storage.acquire_lease(ref, key, self._holder, self._lease_ttl):
-            return False
+            return "contended"
         try:
             if rule is None:
                 await self._cancel_orphan(ref, run)
-                return False
-            return await self._attempt_leased(ref, run, rule)
+                return "declined"
+            return "finished" if await self._attempt_leased(ref, run, rule) else "declined"
         finally:
             await storage.release_lease(ref, key, self._holder)
 

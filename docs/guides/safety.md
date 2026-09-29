@@ -123,6 +123,6 @@ Spend across all runs, per tenant, key or model, belongs in the LLM gateway: a L
 
 ## Concurrency
 
-Each reactor executes at most `concurrency` runs at once (10 by default), and each call of `execute` attempts at most `limit` due runs (100). With the default `ordering="scope"`, a rule runs one run per scope at a time, so a burst of firings for one service is worked through in order rather than all at once ([Ordering](reactor.md#ordering)).
+Each reactor executes at most `concurrency` runs at once (10 by default), and each call of `execute` attempts at most `limit` due runs (100). With the default `ordering="scope"`, a rule runs one run per scope at a time, so a burst of firings for one service is worked through in order rather than all at once, and takes one place in `limit` while it waits ([Ordering](reactor.md#ordering)).
 
 Those are the limits today. ADR-0010 also plans concurrency limits per rule and per workspace; they are not built yet, so to hold an expensive rule back, throttle it, or give its actions a semaphore of your own in `deps`.

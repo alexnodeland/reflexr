@@ -1,7 +1,7 @@
 """The reactor's execution: runs attempted at least once, under leases, in order per scope."""
 
 import asyncio
-from collections.abc import AsyncIterator, Collection
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -36,6 +36,7 @@ from reflexr.workspace import (
     Reaction,
     Reactor,
     RunFailure,
+    RunPolicy,
     Settled,
     Storage,
     Workspace,
@@ -183,6 +184,42 @@ async def test_runs_of_a_scope_run_in_firing_order(build: Build, clock: FakeCloc
     assert {r.status for r in await workspace.runs()} == {"succeeded"}
 
 
+async def test_a_scopes_backlog_does_not_hold_up_other_scopes(build: Build) -> None:
+    workspaces = build([rule()])
+    deps = Deps()
+    workspace = await open_(workspaces)
+    await workspace.publish_many([Deploy(service="busy") for _ in range(150)])
+    await workspace.publish(Deploy(service="quiet"))
+    executor = reactor(workspaces, deps)
+    await executor.evaluate()
+    # More runs of busy wait than execute's limit (100), and quiet's one run fired last.
+    assert await executor.execute() == 2
+    assert [r.scope["service"] for r in deps.calls] == ["busy", "quiet"]
+
+
+@pytest.mark.parametrize("depth", [2, 25])
+async def test_each_pass_claims_one_run_per_scope_however_deep_the_backlog(
+    build: Build, telemetry: Telemetry, depth: int
+) -> None:
+    workspaces = build([rule()])
+    workspace = await open_(workspaces)
+    services = ["auth", "billing"] * depth + ["db"]
+    await workspace.publish_many([Deploy(service=service) for service in services])
+    executor = reactor(workspaces, Deps())
+    await executor.evaluate()
+
+    def claims() -> int:
+        spans = telemetry.spans.get_finished_spans()
+        return sum(span.name == "invoke_workflow page" for span in spans)
+
+    passes: list[int] = []
+    while attempts := await executor.execute():
+        assert claims() - sum(passes) == attempts  # every claim was an attempt
+        passes.append(attempts)
+    assert passes == [3] + [2] * (depth - 1)
+    assert claims() == len(services)
+
+
 async def test_timeouts_and_bad_outputs_fail_the_attempt(build: Build) -> None:
     class Paged(BaseModel):
         service: str
@@ -315,13 +352,101 @@ async def test_runs_leased_elsewhere_are_left_alone(build: Build, storage: Stora
     assert await executor.execute() == 0
 
 
+async def test_settling_waits_for_a_run_another_reactor_holds(
+    build: Build, storage: Storage
+) -> None:
+    workspaces = build([rule()])
+    workspace = await open_(workspaces)
+    await workspace.publish(Deploy(service="auth"))
+    executor = reactor(workspaces, Deps())
+    await executor.evaluate()
+    [pending] = await workspace.runs()
+    key = run_lease(pending.id)
+    await storage.acquire_lease(ACME, key, "elsewhere", timedelta(minutes=1))
+
+    async def let_go() -> None:  # as a reactor that found it could not start the run would
+        await asyncio.sleep(0.02)
+        await storage.release_lease(ACME, key, "elsewhere")
+
+    letting_go = asyncio.create_task(let_go())
+    assert await executor.settle() == Settled(attempts=1)
+    await letting_go
+    assert [r.status for r in await workspace.runs()] == ["succeeded"]
+
+
+async def test_settling_gives_up_on_a_run_held_elsewhere_for_good(
+    build: Build, storage: Storage
+) -> None:
+    workspaces = build([rule()])
+    workspace = await open_(workspaces)
+    await workspace.publish(Deploy(service="auth"))
+    executor = reactor(workspaces, Deps())
+    await executor.evaluate()
+    [pending] = await workspace.runs()
+    await storage.acquire_lease(ACME, run_lease(pending.id), "elsewhere", timedelta(minutes=1))
+    with pytest.raises(RuntimeError, match="still busy after 4 rounds"):
+        await executor.settle(max_rounds=4)
+
+
+class SlowToLetGo(InMemoryStorage):
+    """Storage on which the reactor named "slow" holds on to run leases until it is let go."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        super().__init__(clock=clock)
+        self.holding = asyncio.Event()
+        self.let_go = asyncio.Event()
+
+    async def release_lease(self, workspace: WorkspaceRef, key: str, holder: str) -> None:
+        if holder == "slow" and key.startswith(run_lease("")):
+            self.holding.set()
+            await self.let_go.wait()
+        await super().release_lease(workspace, key, holder)
+
+
+async def first_waits(reaction: Reaction[Deps]) -> None:
+    reaction.deps.calls.append(reaction)
+    if reaction.run.fired_seq == 1:
+        reaction.deps.started.set()
+        await reaction.deps.release.wait()
+
+
+async def test_reactors_settling_together_leave_nothing_to_do(clock: FakeClock) -> None:
+    # Two reactors settle at once, as in #57. Before, while fast ran the scope's first run,
+    # slow leased the two behind it, found they could not start, and was slow to let them go;
+    # fast finished, found them leased, took that for nothing to do and settled, and so did
+    # slow, leaving both pending. Now slow finds nothing it could start, and fast does it all.
+    storage = SlowToLetGo(clock)
+    workspaces = Workspaces(storage, events=[Deploy], rules=[rule()], clock=clock)
+    workspace = await open_(workspaces)
+    await workspace.publish_many([Deploy(service="auth") for _ in range(3)])
+    deps = Deps()
+    fast, slow = (
+        Reactor(workspaces, actions={"respond": first_waits}, deps=deps, holder=holder)
+        for holder in ("fast", "slow")
+    )
+    await fast.evaluate()
+    async with asyncio.timeout(5):
+        fast_settling = asyncio.create_task(fast.settle())
+        await deps.started.wait()
+        slow_settling = asyncio.create_task(slow.settle())
+        holding = asyncio.create_task(storage.holding.wait())
+        await asyncio.wait({holding, slow_settling}, return_when=asyncio.FIRST_COMPLETED)
+        deps.release.set()
+        settled = [await fast_settling]
+        storage.let_go.set()
+        settled.append(await slow_settling)
+    holding.cancel()
+    assert [r.status for r in await workspace.runs()] == ["succeeded"] * 3
+    assert sum(s.attempts for s in settled) == len(deps.calls) == 3
+
+
 class StaleDue(InMemoryStorage):
     """Storage whose due runs were read before other writers changed them."""
 
     stale: list[tuple[WorkspaceRef, Run]] | None = None
 
     async def due_runs(
-        self, *, now: object, limit: int, disabled: Collection[str] = ()
+        self, *, now: object, limit: int, policy: RunPolicy
     ) -> list[tuple[WorkspaceRef, Run]]:
         return self.stale or []
 

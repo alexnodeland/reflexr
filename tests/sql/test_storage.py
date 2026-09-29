@@ -20,6 +20,7 @@ from reflexr.workspace import (
     Entry,
     Reaction,
     Reactor,
+    RunPolicy,
     WorkspaceRef,
     Workspaces,
     run_lease,
@@ -171,9 +172,13 @@ async def test_due_runs_compare_instants_whatever_the_zone(schema: Database) -> 
         await transaction.save_runs([later, soon, held, lapsed])
     assert await storage.acquire_lease(ACME, run_lease("r3"), "executor", 3 * MINUTE)
     assert await storage.acquire_lease(ACME, run_lease("r4"), "executor", MINUTE)
-    due = await storage.due_runs(now=(NOON + timedelta(seconds=90)).astimezone(WEST), limit=10)
+    due = await storage.due_runs(
+        now=(NOON + timedelta(seconds=90)).astimezone(WEST), limit=10, policy=RunPolicy()
+    )
     assert [run.id for _, run in due] == ["r4", "r1"]
-    due = await storage.due_runs(now=(NOON + 3 * MINUTE).astimezone(EAST), limit=10)
+    due = await storage.due_runs(
+        now=(NOON + 3 * MINUTE).astimezone(EAST), limit=10, policy=RunPolicy()
+    )
     assert [run.id for _, run in due] == ["r3", "r4", "r1", "r2"]
 
 

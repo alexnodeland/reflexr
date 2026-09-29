@@ -56,6 +56,12 @@ EVALUATION_LEASE = "evaluate"
 REACTOR = SystemActor(name="reactor")
 """The actor of the facts the reactor records."""
 
+_CONTENDED_WAIT = timedelta(milliseconds=2)
+"""How long :meth:`Reactor.settle` first waits after a round in which another reactor held a
+lease it needed. The wait doubles each time, up to :data:`_CONTENDED_WAIT_MAX`."""
+
+_CONTENDED_WAIT_MAX = timedelta(milliseconds=100)
+
 
 @dataclass(frozen=True)
 class Settled:
@@ -164,29 +170,40 @@ class Reactor[D]:
         return self._holder
 
     async def execute(self, *, limit: int = 100) -> int:
-        """Attempt the runs that are due, up to ``limit`` of them.
+        """Attempt the runs that are due and can start, up to ``limit`` of them.
 
         Returns:
             How many attempts finished, whether they succeeded or failed.
         """
-        return await self._executor.execute(limit=limit)
+        return (await self._executor.execute(limit=limit)).attempts
 
     async def settle(self, *, max_rounds: int = 100) -> Settled:
         """Evaluate and execute until nothing more happens now.
 
-        Useful in tests and scripts. Runs waiting to retry later are left waiting.
+        Useful in tests and scripts. Runs waiting to retry later are left waiting. A round in
+        which another reactor held a lease this one needed, on a workspace to evaluate or a run
+        to attempt, is not idle, since the other may be about to let that work go: the reactor
+        waits a few milliseconds, longer each time up to a tenth of a second, and tries again.
 
         Raises:
             RuntimeError: If work is still happening after ``max_rounds`` rounds, as when
-                rules keep triggering each other within the depth limit.
+                rules keep triggering each other within the depth limit, or another reactor
+                keeps holding a lease this one needs.
         """
         ticks = firings = attempts = 0
+        wait = _CONTENDED_WAIT
         for _ in range(max_rounds):
             ticked = await self.tick()
-            fired = await self.evaluate()
-            attempted = await self.execute()
-            ticks, firings, attempts = ticks + ticked, firings + fired, attempts + attempted
-            if not ticked and not fired and not attempted:
+            fired, busy_elsewhere = await self._evaluate(None)
+            executed = await self._executor.execute(limit=100)
+            ticks, firings = ticks + ticked, firings + fired
+            attempts += executed.attempts
+            if ticked or fired or executed.attempts:
+                wait = _CONTENDED_WAIT
+            elif busy_elsewhere or executed.contended:
+                await asyncio.sleep(wait.total_seconds())
+                wait = min(wait * 2, _CONTENDED_WAIT_MAX)
+            else:
                 return Settled(ticks=ticks, firings=firings, attempts=attempts)
         raise RuntimeError(f"still busy after {max_rounds} rounds")
 
@@ -278,17 +295,27 @@ class Reactor[D]:
             How many times rules fired. A workspace whose lease another reactor holds is
             skipped.
         """
-        storage = self._workspaces.storage
-        refs = [workspace] if workspace is not None else await storage.workspaces()
-        fired = 0
-        for ref in refs:
-            fired += await self._evaluate_workspace(ref)
+        fired, _ = await self._evaluate(workspace)
         return fired
 
-    async def _evaluate_workspace(self, ref: WorkspaceRef) -> int:
+    async def _evaluate(self, workspace: WorkspaceRef | None) -> tuple[int, bool]:
+        """Evaluate, and say whether another reactor held a workspace's evaluation lease."""
+        storage = self._workspaces.storage
+        refs = [workspace] if workspace is not None else await storage.workspaces()
+        fired, contended = 0, False
+        for ref in refs:
+            evaluated = await self._evaluate_workspace(ref)
+            if evaluated is None:
+                contended = True
+            else:
+                fired += evaluated
+        return fired, contended
+
+    async def _evaluate_workspace(self, ref: WorkspaceRef) -> int | None:
+        """Evaluate a workspace's rules; return None if another reactor holds its lease."""
         storage = self._workspaces.storage
         if not await storage.acquire_lease(ref, EVALUATION_LEASE, self._holder, self._lease_ttl):
-            return 0
+            return None
         telemetry = self._workspaces.telemetry
         try:
             await self._record_lag(ref)

@@ -6,7 +6,7 @@ cannot be shared between processes.
 """
 
 import asyncio
-from collections.abc import AsyncGenerator, Callable, Collection, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Collection, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -23,7 +23,7 @@ from reflexr.core import (
     ScopeKey,
     ScopeState,
 )
-from reflexr.workspace.storage import Entry, WorkspaceRef, run_lease
+from reflexr.workspace.storage import Entry, RunPolicy, WorkspaceRef, run_lease
 
 Clock = Callable[[], datetime]
 """Returns the current time; injectable so tests control time."""
@@ -162,6 +162,21 @@ def _latest[K, V](pending: dict[K, V], committed: dict[K, V], key: K) -> V | Non
     return pending[key] if key in pending else committed.get(key)
 
 
+def _first_holding(
+    runs: Iterable[Run], policy: RunPolicy
+) -> dict[tuple[RuleName, ScopeKey], RunId]:
+    """Return the first run of each scope that holds it, in firing order.
+
+    The sort is stable, so runs fired at the same ``seq`` keep their creation order, as in
+    :meth:`_Transaction.scope_runs`.
+    """
+    first: dict[tuple[RuleName, ScopeKey], RunId] = {}
+    for run in sorted(runs, key=lambda run: run.fired_seq):
+        if policy.holds(run):
+            first.setdefault((run.rule, run.scope_key), run.id)
+    return first
+
+
 class InMemoryStorage:
     """Storage that keeps every workspace in process memory.
 
@@ -260,24 +275,24 @@ class InMemoryStorage:
         return [ref for ref, data in self._workspaces.items() if data.log]
 
     async def due_runs(
-        self, *, now: datetime, limit: int, disabled: Collection[RuleName] = ()
+        self, *, now: datetime, limit: int, policy: RunPolicy
     ) -> list[tuple[WorkspaceRef, Run]]:
-        """Return the runs to attempt now, across workspaces, oldest first."""
+        """Return the runs to attempt now that can start, across workspaces, oldest first."""
 
-        def due(data: _Data, run: Run) -> bool:
-            if run.rule in disabled:
+        def due(data: _Data, run: Run, first: Mapping[tuple[RuleName, ScopeKey], RunId]) -> bool:
+            if run.rule in policy.disabled:
                 return False
             if run.status == "running":
                 lease = data.leases.get(run_lease(run.id))
                 return lease is None or lease[1] <= now
-            return run.status in ("pending", "retrying") and run.next_attempt_at <= now
+            if run.status not in ("pending", "retrying") or run.next_attempt_at > now:
+                return False
+            return run.rule not in policy.ordered or first[run.rule, run.scope_key] == run.id
 
-        found = [
-            (ref, run)
-            for ref, data in self._workspaces.items()
-            for run in data.runs.values()
-            if due(data, run)
-        ]
+        found: list[tuple[WorkspaceRef, Run]] = []
+        for ref, data in self._workspaces.items():
+            first = _first_holding(data.runs.values(), policy)
+            found.extend((ref, run) for run in data.runs.values() if due(data, run, first))
         return sorted(found, key=lambda item: item[1].next_attempt_at)[:limit]
 
     async def acquire_lease(
