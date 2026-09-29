@@ -30,8 +30,9 @@ test: ## Run the tests with the 100% branch-coverage gate
 
 check: lint typecheck test ## Run everything CI runs
 
-schema: ## Regenerate the rule JSON Schema from the models
-	$(UV) run python -m reflexr.core.schema > schemas/reflexr.rules.v1.json
+schema: ## Regenerate the rule and protocol JSON Schemas from the models
+	$(UV) run python -m reflexr.core.schema rules > schemas/reflexr.rules.v1.json
+	$(UV) run python -m reflexr.core.schema protocol > schemas/reflexr.v1.json
 
 changelog: ## Regenerate CHANGELOG.md from conventional commits
 	$(UV) run git-cliff --output CHANGELOG.md

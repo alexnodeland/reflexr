@@ -1,0 +1,1186 @@
+{
+  "$defs": {
+    "AgentActor": {
+      "description": "An agent or graph running an action for one firing of a rule.",
+      "properties": {
+        "kind": {
+          "const": "agent",
+          "default": "agent",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "rule": {
+          "$ref": "#/$defs/RuleName"
+        },
+        "run_id": {
+          "$ref": "#/$defs/RunId"
+        }
+      },
+      "required": [
+        "rule",
+        "run_id",
+        "name"
+      ],
+      "title": "AgentActor",
+      "type": "object"
+    },
+    "CancelRun": {
+      "additionalProperties": false,
+      "description": "Cancel a run that has not finished, stopping its action if it is running.",
+      "properties": {
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "run_id": {
+          "$ref": "#/$defs/RunId"
+        },
+        "type": {
+          "const": "cancel_run",
+          "default": "cancel_run",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "title": "CancelRun",
+      "type": "object"
+    },
+    "Causation": {
+      "description": "What caused an event that a run emitted, and how deep its causal chain is.",
+      "properties": {
+        "depth": {
+          "minimum": 1,
+          "title": "Depth",
+          "type": "integer"
+        },
+        "firing_id": {
+          "$ref": "#/$defs/FiringId"
+        },
+        "run_id": {
+          "$ref": "#/$defs/RunId"
+        }
+      },
+      "required": [
+        "firing_id",
+        "run_id",
+        "depth"
+      ],
+      "title": "Causation",
+      "type": "object"
+    },
+    "ChainTarget": {
+      "additionalProperties": false,
+      "description": "Feedback on a causal chain: everything one triggering event led to.",
+      "properties": {
+        "correlation_id": {
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "chain",
+          "default": "chain",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "correlation_id"
+      ],
+      "title": "ChainTarget",
+      "type": "object"
+    },
+    "ClientFrame": {
+      "discriminator": {
+        "mapping": {
+          "command": "#/$defs/CommandFrame",
+          "hello": "#/$defs/Hello"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Hello"
+        },
+        {
+          "$ref": "#/$defs/CommandFrame"
+        }
+      ]
+    },
+    "Command": {
+      "discriminator": {
+        "mapping": {
+          "cancel_run": "#/$defs/CancelRun",
+          "give_feedback": "#/$defs/GiveFeedback",
+          "publish": "#/$defs/Publish",
+          "replay_rule": "#/$defs/ReplayRule",
+          "retry_run": "#/$defs/RetryRun",
+          "skip_run": "#/$defs/SkipRun"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Publish"
+        },
+        {
+          "$ref": "#/$defs/GiveFeedback"
+        },
+        {
+          "$ref": "#/$defs/RetryRun"
+        },
+        {
+          "$ref": "#/$defs/SkipRun"
+        },
+        {
+          "$ref": "#/$defs/CancelRun"
+        },
+        {
+          "$ref": "#/$defs/ReplayRule"
+        }
+      ]
+    },
+    "CommandFrame": {
+      "additionalProperties": false,
+      "description": "A client's command, with an id that correlates it with its result.\n\n``command_id`` is also an idempotency key: the server deduplicates repeated ids.",
+      "properties": {
+        "command": {
+          "$ref": "#/$defs/Command"
+        },
+        "command_id": {
+          "minLength": 1,
+          "title": "Command Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "command",
+          "default": "command",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "command"
+      ],
+      "title": "CommandFrame",
+      "type": "object"
+    },
+    "CommandResult": {
+      "additionalProperties": false,
+      "description": "The result of one command frame.",
+      "properties": {
+        "command_id": {
+          "title": "Command Id",
+          "type": "string"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Outcome"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rejection": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rejection"
+        },
+        "type": {
+          "const": "command_result",
+          "default": "command_result",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "ok"
+      ],
+      "title": "CommandResult",
+      "type": "object"
+    },
+    "ErrorFrame": {
+      "additionalProperties": false,
+      "description": "A frame the server could not understand.",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "type": {
+          "const": "error",
+          "default": "error",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "title": "ErrorFrame",
+      "type": "object"
+    },
+    "EvaluatorActor": {
+      "description": "An evaluator: a judge or decision model whose verdicts are recorded as feedback.",
+      "properties": {
+        "kind": {
+          "const": "evaluator",
+          "default": "evaluator",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "EvaluatorActor",
+      "type": "object"
+    },
+    "EventFrame": {
+      "description": "An envelope from the log.",
+      "properties": {
+        "actor": {
+          "discriminator": {
+            "mapping": {
+              "agent": "#/$defs/AgentActor",
+              "evaluator": "#/$defs/EvaluatorActor",
+              "external_agent": "#/$defs/ExternalAgentActor",
+              "source": "#/$defs/SourceActor",
+              "system": "#/$defs/SystemActor",
+              "user": "#/$defs/UserActor"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UserActor"
+            },
+            {
+              "$ref": "#/$defs/AgentActor"
+            },
+            {
+              "$ref": "#/$defs/ExternalAgentActor"
+            },
+            {
+              "$ref": "#/$defs/SystemActor"
+            },
+            {
+              "$ref": "#/$defs/SourceActor"
+            },
+            {
+              "$ref": "#/$defs/EvaluatorActor"
+            }
+          ],
+          "title": "Actor"
+        },
+        "causation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Causation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "correlation_id": {
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "event": {
+          "additionalProperties": true,
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "Event",
+          "type": "object"
+        },
+        "id": {
+          "$ref": "#/$defs/EventId"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "traceparent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Traceparent"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "type": {
+          "const": "event",
+          "default": "event",
+          "title": "Type",
+          "type": "string"
+        },
+        "workspace_id": {
+          "$ref": "#/$defs/WorkspaceId"
+        }
+      },
+      "required": [
+        "seq",
+        "id",
+        "ts",
+        "workspace_id",
+        "actor",
+        "correlation_id",
+        "event"
+      ],
+      "title": "EventFrame",
+      "type": "object"
+    },
+    "EventId": {
+      "type": "string"
+    },
+    "ExternalAgentActor": {
+      "description": "An agent outside reflexr, connected over MCP.",
+      "properties": {
+        "client_id": {
+          "title": "Client Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "external_agent",
+          "default": "external_agent",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        }
+      },
+      "required": [
+        "client_id"
+      ],
+      "title": "ExternalAgentActor",
+      "type": "object"
+    },
+    "FeedbackTarget": {
+      "discriminator": {
+        "mapping": {
+          "chain": "#/$defs/ChainTarget",
+          "firing": "#/$defs/FiringTarget",
+          "run": "#/$defs/RunTarget"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RunTarget"
+        },
+        {
+          "$ref": "#/$defs/FiringTarget"
+        },
+        {
+          "$ref": "#/$defs/ChainTarget"
+        }
+      ]
+    },
+    "FiringId": {
+      "type": "string"
+    },
+    "FiringTarget": {
+      "additionalProperties": false,
+      "description": "Feedback on one firing: whether the rule should have fired.",
+      "properties": {
+        "firing_id": {
+          "$ref": "#/$defs/FiringId"
+        },
+        "kind": {
+          "const": "firing",
+          "default": "firing",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "firing_id"
+      ],
+      "title": "FiringTarget",
+      "type": "object"
+    },
+    "GiveFeedback": {
+      "additionalProperties": false,
+      "description": "Give typed feedback on a run, a firing or a causal chain.",
+      "properties": {
+        "feedback_type": {
+          "title": "Feedback Type",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/FeedbackTarget"
+        },
+        "type": {
+          "const": "give_feedback",
+          "default": "give_feedback",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Value",
+          "type": "object"
+        }
+      },
+      "required": [
+        "feedback_type",
+        "target",
+        "value"
+      ],
+      "title": "GiveFeedback",
+      "type": "object"
+    },
+    "Hello": {
+      "additionalProperties": false,
+      "description": "The first frame a client sends on a connection.",
+      "properties": {
+        "protocol": {
+          "title": "Protocol",
+          "type": "string"
+        },
+        "resume_after_seq": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Resume After Seq",
+          "type": "integer"
+        },
+        "type": {
+          "const": "hello",
+          "default": "hello",
+          "title": "Type",
+          "type": "string"
+        },
+        "types": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Types"
+        }
+      },
+      "required": [
+        "protocol"
+      ],
+      "title": "Hello",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "Outcome": {
+      "discriminator": {
+        "mapping": {
+          "published": "#/$defs/PublishedOutcome",
+          "recorded": "#/$defs/RecordedOutcome",
+          "rule": "#/$defs/RuleOutcome",
+          "run": "#/$defs/RunOutcome"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PublishedOutcome"
+        },
+        {
+          "$ref": "#/$defs/RecordedOutcome"
+        },
+        {
+          "$ref": "#/$defs/RunOutcome"
+        },
+        {
+          "$ref": "#/$defs/RuleOutcome"
+        }
+      ]
+    },
+    "Publish": {
+      "additionalProperties": false,
+      "description": "Publish an event. Publishing an ``id`` already in the log appends nothing.",
+      "properties": {
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "event": {
+          "additionalProperties": true,
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "Event",
+          "type": "object"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EventId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "publish",
+          "default": "publish",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "title": "Publish",
+      "type": "object"
+    },
+    "PublishedOutcome": {
+      "additionalProperties": false,
+      "description": "What publishing did: the event's position, and whether it was already there.",
+      "properties": {
+        "duplicate": {
+          "default": false,
+          "title": "Duplicate",
+          "type": "boolean"
+        },
+        "id": {
+          "$ref": "#/$defs/EventId"
+        },
+        "seq": {
+          "title": "Seq",
+          "type": "integer"
+        },
+        "type": {
+          "const": "published",
+          "default": "published",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "id"
+      ],
+      "title": "PublishedOutcome",
+      "type": "object"
+    },
+    "RecordedOutcome": {
+      "additionalProperties": false,
+      "description": "Where a fact the command recorded, such as feedback, was appended.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/EventId"
+        },
+        "seq": {
+          "title": "Seq",
+          "type": "integer"
+        },
+        "type": {
+          "const": "recorded",
+          "default": "recorded",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "id"
+      ],
+      "title": "RecordedOutcome",
+      "type": "object"
+    },
+    "ReplayComplete": {
+      "additionalProperties": false,
+      "description": "Every event up to ``up_to_seq`` has been replayed; what follows is live.",
+      "properties": {
+        "type": {
+          "const": "replay_complete",
+          "default": "replay_complete",
+          "title": "Type",
+          "type": "string"
+        },
+        "up_to_seq": {
+          "title": "Up To Seq",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "up_to_seq"
+      ],
+      "title": "ReplayComplete",
+      "type": "object"
+    },
+    "ReplayRule": {
+      "additionalProperties": false,
+      "description": "Reset a rule to evaluate the log again, rebuilding its state or firing again.",
+      "properties": {
+        "from_seq": {
+          "default": 0,
+          "minimum": 0,
+          "title": "From Seq",
+          "type": "integer"
+        },
+        "mode": {
+          "default": "rebuild",
+          "enum": [
+            "rebuild",
+            "refire"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "rule": {
+          "$ref": "#/$defs/RuleName"
+        },
+        "type": {
+          "const": "replay_rule",
+          "default": "replay_rule",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule"
+      ],
+      "title": "ReplayRule",
+      "type": "object"
+    },
+    "RetryRun": {
+      "additionalProperties": false,
+      "description": "Make a run runnable now.",
+      "properties": {
+        "run_id": {
+          "$ref": "#/$defs/RunId"
+        },
+        "type": {
+          "const": "retry_run",
+          "default": "retry_run",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "title": "RetryRun",
+      "type": "object"
+    },
+    "RuleName": {
+      "type": "string"
+    },
+    "RuleOutcome": {
+      "additionalProperties": false,
+      "description": "A rule's progress after the command reset it.",
+      "properties": {
+        "progress": {
+          "$ref": "#/$defs/RuleProgress"
+        },
+        "rule": {
+          "$ref": "#/$defs/RuleName"
+        },
+        "type": {
+          "const": "rule",
+          "default": "rule",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule",
+        "progress"
+      ],
+      "title": "RuleOutcome",
+      "type": "object"
+    },
+    "RuleProgress": {
+      "additionalProperties": false,
+      "description": "Where a rule is in a workspace's log, stored with its cursor.",
+      "properties": {
+        "cursor": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cursor",
+          "type": "integer"
+        },
+        "deadlines": {
+          "additionalProperties": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "default": {},
+          "propertyNames": {
+            "$ref": "#/$defs/ScopeKey"
+          },
+          "title": "Deadlines",
+          "type": "object"
+        },
+        "definition": {
+          "default": "",
+          "title": "Definition",
+          "type": "string"
+        },
+        "generation": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "silent_through": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Silent Through",
+          "type": "integer"
+        }
+      },
+      "title": "RuleProgress",
+      "type": "object"
+    },
+    "Run": {
+      "additionalProperties": false,
+      "description": "One firing's action: its status, attempts, and a graph's latest checkpoint.",
+      "properties": {
+        "attempts": {
+          "default": 0,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "checkpoint": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null
+        },
+        "correlation_id": {
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "depth": {
+          "default": 0,
+          "title": "Depth",
+          "type": "integer"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "fired_seq": {
+          "title": "Fired Seq",
+          "type": "integer"
+        },
+        "id": {
+          "$ref": "#/$defs/RunId"
+        },
+        "matched": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Matched",
+          "type": "array"
+        },
+        "next_attempt_at": {
+          "format": "date-time",
+          "title": "Next Attempt At",
+          "type": "string"
+        },
+        "output": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null
+        },
+        "rule": {
+          "$ref": "#/$defs/RuleName"
+        },
+        "scope": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Scope",
+          "type": "object"
+        },
+        "scope_key": {
+          "$ref": "#/$defs/ScopeKey"
+        },
+        "status": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "running",
+            "retrying",
+            "succeeded",
+            "dead",
+            "cancelled",
+            "skipped"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step"
+        },
+        "trace_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Trace Ids",
+          "type": "array"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "rule",
+        "scope_key",
+        "scope",
+        "fired_seq",
+        "matched",
+        "correlation_id",
+        "next_attempt_at",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "Run",
+      "type": "object"
+    },
+    "RunId": {
+      "type": "string"
+    },
+    "RunOutcome": {
+      "additionalProperties": false,
+      "description": "A run after the command changed it.",
+      "properties": {
+        "run": {
+          "$ref": "#/$defs/Run"
+        },
+        "type": {
+          "const": "run",
+          "default": "run",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "title": "RunOutcome",
+      "type": "object"
+    },
+    "RunTarget": {
+      "additionalProperties": false,
+      "description": "Feedback on one run: a workflow execution.",
+      "properties": {
+        "kind": {
+          "const": "run",
+          "default": "run",
+          "title": "Kind",
+          "type": "string"
+        },
+        "run_id": {
+          "$ref": "#/$defs/RunId"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "title": "RunTarget",
+      "type": "object"
+    },
+    "ScopeKey": {
+      "type": "string"
+    },
+    "ServerFrame": {
+      "discriminator": {
+        "mapping": {
+          "command_result": "#/$defs/CommandResult",
+          "error": "#/$defs/ErrorFrame",
+          "event": "#/$defs/EventFrame",
+          "replay_complete": "#/$defs/ReplayComplete",
+          "welcome": "#/$defs/Welcome"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Welcome"
+        },
+        {
+          "$ref": "#/$defs/EventFrame"
+        },
+        {
+          "$ref": "#/$defs/ReplayComplete"
+        },
+        {
+          "$ref": "#/$defs/CommandResult"
+        },
+        {
+          "$ref": "#/$defs/ErrorFrame"
+        }
+      ]
+    },
+    "SkipRun": {
+      "additionalProperties": false,
+      "description": "Give up on a waiting or dead-lettered run.",
+      "properties": {
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "run_id": {
+          "$ref": "#/$defs/RunId"
+        },
+        "type": {
+          "const": "skip_run",
+          "default": "skip_run",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "title": "SkipRun",
+      "type": "object"
+    },
+    "SourceActor": {
+      "description": "A system that publishes events, such as a monitoring service or a webhook.",
+      "properties": {
+        "kind": {
+          "const": "source",
+          "default": "source",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "SourceActor",
+      "type": "object"
+    },
+    "SystemActor": {
+      "description": "reflexr itself (the reactor, schedules), or the application acting on its own behalf.",
+      "properties": {
+        "kind": {
+          "const": "system",
+          "default": "system",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "default": "reflexr",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "title": "SystemActor",
+      "type": "object"
+    },
+    "UserActor": {
+      "description": "A person, identified by the host application's user id.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "user",
+          "default": "user",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "UserActor",
+      "type": "object"
+    },
+    "Welcome": {
+      "additionalProperties": false,
+      "description": "The server's answer to ``hello``.",
+      "properties": {
+        "head_seq": {
+          "title": "Head Seq",
+          "type": "integer"
+        },
+        "protocol": {
+          "default": "reflexr.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "reset": {
+          "default": false,
+          "title": "Reset",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "welcome",
+          "default": "welcome",
+          "title": "Type",
+          "type": "string"
+        },
+        "workspace_id": {
+          "$ref": "#/$defs/WorkspaceId"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "head_seq"
+      ],
+      "title": "Welcome",
+      "type": "object"
+    },
+    "WorkspaceId": {
+      "type": "string"
+    }
+  },
+  "$id": "https://github.com/alexnodeland/reflexr/schemas/reflexr.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Frames of the reflexr.v1 workspace protocol: `client` is any frame a client sends, `server` any frame a server sends.",
+  "properties": {
+    "client": {
+      "$ref": "#/$defs/ClientFrame"
+    },
+    "server": {
+      "$ref": "#/$defs/ServerFrame"
+    }
+  },
+  "title": "reflexr.v1",
+  "type": "object"
+}

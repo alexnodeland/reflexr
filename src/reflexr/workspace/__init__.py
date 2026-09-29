@@ -5,6 +5,7 @@ through it. Rules are evaluated and runs executed by the ``Reactor``.
 """
 
 from reflexr.workspace.actions import Action, Reaction
+from reflexr.workspace.commands import execute
 from reflexr.workspace.memory import Clock, InMemoryStorage, utc_now
 from reflexr.workspace.reactor import EVALUATION_LEASE, REACTOR, Reactor, Settled
 from reflexr.workspace.schedules import SCHEDULER, Schedule, tick_id
@@ -29,6 +30,7 @@ __all__ = [
     "Workspace",
     "WorkspaceRef",
     "Workspaces",
+    "execute",
     "run_lease",
     "tick_id",
     "utc_now",
