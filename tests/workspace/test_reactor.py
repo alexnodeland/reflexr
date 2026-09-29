@@ -1,7 +1,10 @@
 """The reactor's evaluation: rules over workspaces' logs, exactly once, with their facts."""
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import timedelta
+from typing import Any
 
 import pytest
 from opentelemetry.trace import SpanKind
@@ -328,6 +331,45 @@ async def test_a_reactor_that_loses_its_lease_stops(clock: FakeClock) -> None:
     # The lease is taken, renewed once after the first batch, and lost after the second.
     assert await Reactor(workspaces, actions=ACTIONS, batch_size=1).evaluate() == 2
     assert (await workspace.rule_progress())["deploys"].cursor == 2
+
+
+class StopsInATransaction(InMemoryStorage):
+    """Storage that asks the reactor to stop in the first transaction once it is armed."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        super().__init__(clock=clock)
+        self.stop = asyncio.Event()
+        self.armed = False
+
+    @asynccontextmanager
+    async def transaction(self, workspace: WorkspaceRef) -> AsyncIterator[Any]:
+        if self.armed:
+            self.stop.set()
+        async with super().transaction(workspace) as transaction:
+            yield transaction
+
+
+async def test_a_stopped_reactor_stops_evaluating_after_its_current_batch(
+    clock: FakeClock,
+) -> None:
+    storage = StopsInATransaction(clock)
+    audit = Rule(name="audit", when=on(Deploy), then=run("note"))
+    workspaces = Workspaces(storage, rules=[deploys, audit], clock=clock)
+    handles = [
+        await workspaces.open("acme", name, actor=SourceActor(name="monitor"))
+        for name in ("prod", "staging")
+    ]
+    for workspace in handles:
+        await workspace.publish_many([Deploy(service="auth") for _ in range(3)])
+    storage.armed = True
+    async with asyncio.timeout(5):
+        await Reactor(workspaces, actions=ACTIONS, batch_size=1).serve(stop=storage.stop)
+    # The batch that was evaluating when the stop came finished, and nothing after it began,
+    # not even the firing's run.
+    progress = [await w.rule_progress() for w in handles]
+    cursors = sorted((p["deploys"].cursor, p["audit"].cursor) for p in progress)
+    assert cursors == [(0, 0), (1, 0)]
+    assert [r.status for w in handles for r in await w.runs()] == ["pending"]
 
 
 async def test_batches_are_bounded(build: Build) -> None:

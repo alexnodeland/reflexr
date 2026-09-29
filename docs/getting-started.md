@@ -215,7 +215,7 @@ A monitoring system or a frontend publishes over HTTP. Install the `fastapi` ext
 
 ```python
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from starlette.requests import HTTPConnection
@@ -234,11 +234,11 @@ async def resolve_actor(connection: HTTPConnection) -> tuple[TenantId, Actor]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    serving = asyncio.create_task(reactor.serve())  # evaluate and execute in the background
+    stop = asyncio.Event()
+    serving = asyncio.create_task(reactor.serve(stop=stop))  # evaluate and execute
     yield
-    serving.cancel()
-    with suppress(asyncio.CancelledError):
-        await serving
+    stop.set()  # at shutdown: let running actions end, then let go of every lease
+    await serving
 
 
 app = FastAPI(lifespan=lifespan)
