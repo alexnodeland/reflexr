@@ -385,6 +385,12 @@ Coverage is 100% of lines and branches, and pyright runs in strict mode with no 
 | [0015](adr/0015-reference-implementation-oncall.md) | Reference implementation: incident response |
 | [0016](adr/0016-tenants-and-workspaces-like-artifactr.md) | Tenants and workspaces, like artifactr |
 | [0017](adr/0017-the-cores-evaluation-contract.md) | The core's evaluation contract |
+| [0018](adr/0018-opentelemetry-observability-with-langfuse.md) | OpenTelemetry-native observability, with Langfuse primary |
+| [0019](adr/0019-typed-feedback-as-events.md) | Typed feedback as events, mirrored to Langfuse |
+| [0020](adr/0020-evalr-shared-eval-kit.md) | evalr, a shared eval kit |
+| [0021](adr/0021-contributor-compose-and-dev-containers.md) | Contributor Compose and dev containers here, infrastructure in stackr |
+| [0022](adr/0022-litellm-proxy-first.md) | LiteLLM, proxy first, for routing and guardrails |
+| [0023](adr/0023-libraries-and-the-stackr-template.md) | Libraries, and stackr as the infrastructure template |
 
 ## Open questions
 
