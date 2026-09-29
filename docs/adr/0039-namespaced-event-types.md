@@ -38,12 +38,12 @@ artifactr names events differently. Its own events are a closed union that only 
 
 ## Decision
 
-The maintainer decided the eight questions on 2026-09-29, as recorded on #45. Two differ from the draft's recommendations: namespaces live both on the wire and in a registry per `Workspaces` (1a), and every name is qualified, applications' included (2b).
+The maintainer decided the eight questions on 2026-09-29, as recorded on #45. Two differ from the draft's recommendations: namespaces live both on the wire and in a registry per `Workspaces` (1a), and every name is qualified, applications' included (2b). A simplicity review then reshaped the registry into a view over the one process-wide type table, which the maintainer chose (1a).
 
 | # | Question | Decided |
 |---|---|---|
-| 1a | Where namespaces live | Both: qualified names on the wire, and a registry per `Workspaces`, the process-wide one by default |
-| 1b | How an owner declares one | `namespace=` on an abstract base, declared once per registry |
+| 1a | Where namespaces live | Both: qualified names on the wire, and a registry per `Workspaces`, as a view over the one type table |
+| 1b | How an owner declares one | `namespace=` on an abstract base, declared once per process |
 | 2a | Separator and grammar | `:`, exactly once; lowercase snake_case segments |
 | 2b | Unqualified names | None: every name is qualified, applications' included |
 | 2c | reflexr's facts | `reflexr:rule_fired` and so on, with migration 0004 |
@@ -58,8 +58,8 @@ A name is a namespace, a `:` and a local name, everywhere a name appears: `oncal
 - **A namespace** is lowercase letters, digits and underscores, starting with a letter, like a Python package name.
 - **A local name** is one or more such segments joined by dots, as names are written today.
 - **The pattern** is `^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`. `*` and uppercase are outside it, so a namespace wildcard (`artifactr:*`) could come later without clashing with a name.
-- **Where it's checked:** when a type is defined; in rules, including JSON rules as they load; in publishes; and in type filters (`hello.types`, REST's `type=`, MCP's `types`, `Workspace.read`). The JSON Schemas carry the pattern. Stored envelopes aren't checked again as they are read.
-- **Storage** keeps the qualified name in the one `event_type` column.
+- **It is written once,** as an `EventName` annotated type in core: the pattern, a validator that adds a hint, and `WithJsonSchema`, so the JSON Schemas carry the pattern.
+- **Storage** keeps the qualified name in the one `event_type` column. Stored envelopes aren't checked again as they are read.
 
 ### An owner declares its namespace once, on an abstract base
 
@@ -76,43 +76,51 @@ class AlertFired(OncallEvent, name="alert.fired"):  # oncall:alert.fired
 
 - Subclasses inherit the namespace. `name=` is the local part, or the snake-cased class name as before, and a `:` in it is refused.
 - A concrete type with no namespace fails at definition.
-- Declaring a namespace a second time in one registry fails at import, naming both declarations, as a duplicate name does today.
+- A namespace is unique per process, like a Python package name, and belongs to the base that declared it. Declaring it from another base fails at import, naming both. Importing the same base again is fine: its module and qualified name are compared, as `_register` compares types today.
 - reflexr declares `reflexr` for its facts, relayr `artifactr`, oncall `oncall`, and reflexr's tests `app`.
 
-### A bare name fails with a hint
+### Where names are checked, and the hint
 
-Old names fail loudly, and point at the new one. The hint lists each registered type with that local name; with none, it shows the form a name takes.
+Old names fail loudly, and point at the new one. Four checks cover every way in:
 
-| Where | What happens |
-|---|---|
-| A class with no namespace | `TypeError`: `AlertFired has no namespace; subclass a base declared with namespace=..., such as class OncallEvent(Event, abstract=True, namespace="oncall")` |
-| A rule, built or loaded from JSON | Invalid: `event type 'run_dead_lettered' has no namespace; did you mean 'reflexr:run_dead_lettered'?` |
-| A `publish`, over any surface | `validation_failed`, with the same message |
-| A type filter: REST's `type=`, MCP's `types`, `Workspace.read` | `validation_failed`, with the same message |
-| `hello.types` | The stream closes with `4400`, as for any bad `hello` |
+| Check | Covers | A bare name gets |
+|---|---|---|
+| Defining a type | Every class | `TypeError`: `AlertFired has no namespace; subclass a base declared with namespace=..., such as class OncallEvent(Event, abstract=True, namespace="oncall")` |
+| `EventName`, on `OnFilter.types` and `Hello.types` | Rules, built or loaded from JSON, and `hello` | Invalid: `event type 'run_dead_lettered' has no namespace; did you mean 'reflexr:run_dead_lettered'?` A bad `hello` closes the stream with `4400`, as today |
+| `Workspace.read` | REST's `type=`, MCP's `types` and the agent's tools | `validation_failed`, with the same message |
+| `_check_publishable` | Every publish, over any surface | `validation_failed`, with the same message |
 
-### A registry per `Workspaces`, the process-wide one by default
+The hint lists each type in the process with that local name, and otherwise shows the form a name takes. It searches the one type table, so it works whatever registry a `Workspaces` uses.
 
-A registry's job is isolation. Namespaces keep owners apart within a registry; registries keep applications apart within a process. Two applications, or a test suite and an example, can each declare into a registry of their own. The same namespace and names can then exist in both as different types, and neither's workspaces accept the other's.
+### A registry per `Workspaces`: a view over the one type table
+
+A registry's job is isolation: which types a `Workspaces` accepts. It is a view, not a second table. There is still one process-wide table of types, as today's `_registry`, so every name parses one way, with a table of namespaces beside it.
 
 ```python
 ONCALL = EventRegistry()
 
 
 class OncallEvent(Event, abstract=True, namespace="oncall", registry=ONCALL):
-    """Every oncall event, kept out of the process-wide registry."""
+    """Every oncall event."""
 
 
 workspaces = Workspaces(storage, registry=ONCALL, events=EVENTS)
 ```
 
-- **What a registry holds:** types by qualified name, and which base declared each namespace. Every registry holds reflexr's facts.
-- **`DEFAULT_REGISTRY`** holds every type whose namespace's base names no registry. `event_types()` and `get_event_type()` read it, as they read the one registry today.
-- **Joining one:** a namespace's base passes `registry=`, and its types inherit it. `registry.add(*types)` includes types declared elsewhere, such as a library's.
-- **What `Workspaces(registry=)` changes:** its rules are checked against the registry; `events=` and `emitted=` must be types in it; `events=None` accepts every type in it, rather than every type any import registered; and it resolves each event it publishes or reads through the registry. Resolving validates an event as the registry's type for its name, if it isn't one already. An unregistered name stays `UnknownEvent` on a read, and is `not_found` on a publish.
-- **Everything else parses through the default registry, as today:** storage adapters, the surfaces' frames and bodies, and the builder's field checks. A type outside the default registry comes out of them as `UnknownEvent`, and its workspace resolves it. So its field errors are the workspace's `validation_failed`, rather than a parse error, and `Rule.check` checks its fields rather than the builder.
-- **The rule this gives:** a name in the default registry means that type throughout the process. Applications that must not share names each use a registry of their own.
-- **It is additive.** Without `registry=`, every type is in the default registry and every `Workspaces` uses it: the qualified-name design alone.
+- **An `EventRegistry` is a set of namespaces.**
+  - A base's `registry=` puts its namespace in that set.
+  - `DEFAULT_REGISTRY` holds every namespace whose base names no registry.
+  - `registry.add(*bases)` includes a library's namespace, by its base, not type by type.
+  - `reflexr` is in every registry.
+- **It is a read-only `Mapping[str, type[Event]]`:** the types in its namespaces, by name. So `Rule.check(events=registry)` works as it is, and `event_types()` and `get_event_type()` fold into it: `DEFAULT_REGISTRY` is the mapping they returned, and a lookup is `registry[name]`.
+- **`Workspaces(registry=)`,** `DEFAULT_REGISTRY` if omitted:
+  - `events=None` means the registry's types
+  - `events=` and `emitted=` must be in it
+  - `Rule.check` checks against it
+  - a publish of any other type is `not_found`
+- **Nothing else changes.** Storage, the surfaces, the builder, the reactor and the executor parse through the one type table, as today.
+- **What's given up:** the same namespace defined as two sets of types in one process. No known need requires it. Two applications, or a test suite and an example, each have a namespace of their own, and each `Workspaces` accepts only its registry's.
+- **It is additive.** Without `registry=`, every namespace is in `DEFAULT_REGISTRY` and every `Workspaces` uses it: the qualified-name design alone.
 
 ### reflexr's facts, compatibility, reserved publishers and relayr
 
@@ -130,9 +138,9 @@ The examples use three types: an application's `alert.fired`, relayr's bridge of
 | Option | An application and a library in one `Workspaces` | Wire | Cost |
 |---|---|---|---|
 | Convention: flat names with agreed prefixes | By discipline | Unchanged | Nothing to build, and nothing enforced |
-| A registry per `Workspaces`, the global one by default | Not solved: one log still needs one name per type | Unchanged | Names resolved in places no `Workspaces` reaches |
+| A registry per `Workspaces`, the global one by default | Not solved: one log still needs one name per type | Unchanged | A second parse path, for names no `Workspaces` reaches |
 | Qualified names on the wire, in one registry | Solved | Names gain a namespace | The grammar, and a migration for reflexr's facts |
-| **Both (decided)** | Solved | Names gain a namespace | Both, with a workspace resolving what the default registry doesn't hold |
+| **Both (decided), with the registry as a view** | Solved | Names gain a namespace | The grammar, the migration, and a set of namespaces per `Workspaces` |
 
 **Convention**, as RFC-0002 wrote its placeholders. Nothing says `artifactr.` is a namespace or who owns it, so #72 has nothing to hang on:
 
@@ -146,7 +154,7 @@ column    event_type = 'artifactr.feedback_given'
 **A registry per `Workspaces`** alone. Two applications in one process could each have a `heartbeat`. But relayr's types and reflexr's facts share one log, so relayr would still need a prefix by convention:
 
 ```text
-declare   registry.add(AlertFired, FeedbackGiven); Workspaces(storage, registry=registry)
+declare   Workspaces(storage, registry=registry)      a registry holding AlertFired and FeedbackGiven
 rule      {"kind": "on", "types": ["feedback_given"]}      reflexr's fact, or artifactr's?
 publish   {"type": "publish", "event": {"type": "feedback_given", ...}}
 envelope  {"seq": 12, ..., "event": {"type": "feedback_given", ...}}
@@ -164,14 +172,23 @@ envelope  {"seq": 12, "actor": {"kind": "source", "name": "artifactr"}, ..., "ev
 column    event_type = 'artifactr:feedback_given'
 ```
 
-**Both (decided).** The wire is the qualified names'. A registry adds isolation: the same namespace in two registries, and `events=None` scoped to one application's types. The draft recommended qualified names alone, adding a registry if it was ever needed. The maintainer chose isolation from the start, kept additive:
+**Both (decided), with the registry as a view.** The wire is the qualified names', and a registry scopes which types a `Workspaces` accepts. The draft recommended qualified names alone. The maintainer chose both.
+
+As first drafted, a registry held types of its own, so one namespace could be two sets of types in one process. A simplicity review found that this needs a second parse path, and that it leaked:
+
+- the reactor's evaluation and the executor's claims read storage without going through `Workspace`, so they would miss the step that resolved types
+- SQL storage parses envelopes again where in-memory storage doesn't, so the two would behave differently
+- one field error would get two response formats
+- isolation wouldn't cover the default registry
+
+So the registry is a view: a set of namespaces over the one process-wide type table. The maintainer chose that design. All it gives up is defining one namespace as two sets of types in one process:
 
 ```text
 declare   ONCALL = EventRegistry()
           class OncallEvent(Event, abstract=True, namespace="oncall", registry=ONCALL)
           Workspaces(storage, registry=ONCALL, events=EVENTS)
 rule      {"kind": "on", "types": ["oncall:alert.fired"]}
-publish   {"type": "publish", "event": {"type": "oncall:alert.fired", "service": "api", ...}}   resolved through ONCALL
+publish   {"type": "publish", "event": {"type": "oncall:alert.fired", "service": "api", ...}}   not_found in a Workspaces whose registry lacks oncall
 envelope  {"seq": 7, ..., "event": {"type": "oncall:alert.fired", ...}}, event_type = 'oncall:alert.fired'
 ```
 
@@ -180,7 +197,7 @@ envelope  {"seq": 7, ..., "event": {"type": "oncall:alert.fired", ...}}, event_t
 | Option | Declared | A typo | Precedent |
 |---|---|---|---|
 | In each name: `name="oncall:alert.fired"` | Per type | Quietly makes a new namespace for one type | None |
-| **`namespace=` on an abstract base, declared once (decided)** | Once per owner | Is in the base, so every type shows it | pydantic-ai's `CapabilityEvent` |
+| **`namespace=` on an abstract base, declared once per process (decided)** | Once per owner | Is in the base, so every type shows it | pydantic-ai's `CapabilityEvent` |
 | Derived from the module: `oncall.events` gives `oncall` | Implicitly | Can't happen: nothing is typed | None, and moving a module renames its types on the wire |
 
 The wire is the same under all three:
@@ -196,7 +213,7 @@ publish   {"type": "publish", "event": {"type": "oncall:alert.fired", "service":
 envelope  {"seq": 7, ..., "event": {"type": "oncall:alert.fired", ...}}, event_type = 'oncall:alert.fired'
 ```
 
-pydantic-ai lets any class use a namespace, and refuses only duplicate kinds. Declaring once makes the owner something the registry knows, which #72 can rely on.
+pydantic-ai lets any class use a namespace, and refuses only duplicate kinds. Declaring once makes the owner something the process knows, which #72 can rely on.
 
 | Owner | Declares | Names |
 |---|---|---|
@@ -322,7 +339,7 @@ What changes:
 | The JSON Schemas | The pattern on names in both, regenerated. The `$id`s stay |
 | Clients | Publish and filter by qualified names. Old names fail with the hint |
 | Stored envelopes | Migration 0004 renames reflexr's facts. Stored application types with old names read back as `UnknownEvent` until the application renames them |
-| MCP | `_RUN_FACTS` comes from the classes, not the `run_` prefix |
+| MCP | `_RUN_FACTS` picks run facts by the `reflexr:run_` prefix |
 | Dashboards | Legends show qualified names. The queries name no types, so they don't change |
 | oncall | Declares `oncall`, keeping ADR-0031's local names |
 
@@ -369,7 +386,7 @@ envelope  {"seq": 40, "actor": {"kind": "source", "name": "artifactr"}, ..., "ev
 | `feedback_given` | `artifactr:feedback_given` |
 | An application's `app_event`s and artifact kinds | The application's own types, in its namespace, reserved to relayr type by type (4) |
 
-relayr declares `artifactr` once, on its base, so nothing else in its registry can. RFC-0002's `install-rule`:
+relayr declares `artifactr` once, on its base, so nothing else in the process can. RFC-0002's `install-rule`:
 
 ```text
 artifactr: (decided)
@@ -388,25 +405,19 @@ flat      rule      {"kind": "on", "types": ["artifactr.proposal_resolved"]}
 
 ## Trade-off analysis
 
-Qualified names solve all three collisions with one mechanism, and every name says who owns it. A registry per `Workspaces` adds what namespaces can't: two applications that use the same namespace in one process, and a `Workspaces` that accepts only its own application's types. It stays small by resolving in one place, the workspace, so storage adapters, surfaces and the builder don't change, and an application that never names a registry never sees one. The price is that a type outside the default registry is checked by its workspace rather than where it is parsed. Qualifying every name costs every application a base class and a rename, and buys names with no exceptions. `:` is the one separator that can't be confused with the dots names already use, without adding a field. The protocol hasn't shipped, so this is the cheapest moment for a break.
+Qualified names solve all three collisions with one mechanism, and every name says who owns it. A registry per `Workspaces` scopes which types a `Workspaces` accepts, so two applications, or a test suite and an example, share a process without accepting each other's types. As a view over the one type table, it adds no parse path: storage, the surfaces, the builder, the reactor and the executor don't change. What it gives up, one namespace defined as two sets of types in one process, no known need requires. Qualifying every name costs every application a base class and a rename, and buys names with no exceptions. `:` is the one separator that can't be confused with the dots names already use, without adding a field. The protocol hasn't shipped, so this is the cheapest moment for a break.
 
 ## What artifactr needs
 
-No matching change.
-
-- **Its event types can't collide.** artifactr's own events are a closed union that only artifactr defines, and nothing registers event types in an artifactr process.
-- **The protocols share a shape, not a vocabulary.** `event.type` stays a string, and a client that speaks both protocols already treats it as an opaque one. A `:` in reflexr's names changes nothing for that client.
-- **relayr does the renaming.** It maps artifactr's names to `artifactr:` names, so artifactr renames nothing.
-- **Optional:** artifactr's docs could suggest the same `namespace:name` form for `app_event.name`, which no registry checks, when plugins share a process. It costs nothing, and relayr doesn't need it.
-- **Separate:** artifactr's artifact kinds and feedback types, like reflexr's feedback types, sit in flat, process-wide registries too. relayr's `rule` artifact kind (RFC-0002's phase 5) could meet an application's own `rule`. The same grammar can apply there, through an issue in each library. Phase 1 doesn't need it.
+No matching change. artifactr's own events are a closed union that nothing else registers, and relayr maps them to `artifactr:` names, so artifactr renames nothing. Its artifact kinds and feedback types, like reflexr's feedback types, sit in flat, process-wide registries that relayr's `rule` kind (RFC-0002's phase 5) could meet; the same grammar can apply there, through an issue in each library, but phase 1 doesn't need it.
 
 ## Consequences
 
 - Easier: libraries, plugins, bridges and applications define types without agreeing on names, and every name on the wire says who owns it.
-- Easier: two applications, or a test suite and an example, share a process, even with the same namespace, each in a registry of its own.
+- Easier: two applications, or a test suite and an example, share a process, each `Workspaces` accepting only its own registry's types.
 - Easier: relayr's names are final from phase 1, and #72 can reserve a namespace in one entry.
 - Harder: every application declares a namespace, and every JSON rule, client and stored application envelope changes once.
-- Harder: a name in the default registry must mean one type throughout the process, since storage and the surfaces parse through it.
+- Harder: a namespace is unique per process, so one namespace can't be two sets of types, even in separate registries.
 - To revisit:
   - namespace wildcards in `on`, `hello.types` and `type=`
   - feedback types (`feedback_given.feedback_type`), whose registry has the same shape; relayr's phase 6 registers some
@@ -414,10 +425,10 @@ No matching change.
 
 ## Action items
 
-1. [ ] Core: the grammar and its hints; `namespace=` and `registry=` on abstract bases; `EventRegistry` and `DEFAULT_REGISTRY`; reflexr's facts as `reflexr:*`.
-2. [ ] Workspace: `Workspaces(registry=)`, resolving what it publishes and reads; type filters checked; MCP's run facts from the classes.
+1. [ ] Core: `EventName` and its hint; `namespace=` and `registry=` on abstract bases; the namespace table; `EventRegistry` and `DEFAULT_REGISTRY`, in place of `event_types()` and `get_event_type()`; reflexr's facts as `reflexr:*`.
+2. [ ] Workspace: `Workspaces(registry=)`, and the checks in `Workspace.read` and `_check_publishable`; MCP's run facts by the `reflexr:run_` prefix.
 3. [ ] SQL: migration 0004, tested on SQLite and PostgreSQL.
-4. [ ] Schemas: the pattern on names; regenerate both.
+4. [ ] Schemas: regenerate both, with `EventName`'s pattern.
 5. [ ] oncall: the `oncall` namespace, keeping ADR-0031's local names.
 6. [ ] Docs: the protocol, the architecture, the guides and the getting-started page.
 7. [ ] Then: #72 on namespace keys, relayr's phase 1 with `artifactr:` names, and RFC-0002's tracking item in stackr.
