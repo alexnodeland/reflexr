@@ -30,6 +30,7 @@ dependencies = [
 
 [project.optional-dependencies]
 fastapi = ["fastapi>=0.141"]
+mcp = ["mcp>=2.2"]
 
 [project.urls]
 Homepage = "https://github.com/alexnodeland/reflexr"
@@ -46,6 +47,7 @@ test = [
     "opentelemetry-sdk>=1.45",
     "httpx>=0.28",
     "fastapi>=0.141",
+    "mcp>=2.2",
 ]
 lint = ["ruff>=0.16", "pyright>=1.1.414"]
 dev = [

@@ -10,7 +10,7 @@
 | `reflexr.agent` | Implemented: agent actions with the `EventContext` capability, and checkpointed graph actions |
 | `reflexr.sql` | Planned (phase 4) |
 | `reflexr.fastapi` | Implemented: REST and the WebSocket stream, over one command handler |
-| `reflexr.mcp` | Planned (phase 5) |
+| `reflexr.mcp` | Implemented: publishing, reading and administration as MCP tools, and runs as resources |
 | `examples/oncall` | Planned (phase 6) |
 
 ## What reflexr is

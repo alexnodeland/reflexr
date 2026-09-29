@@ -106,13 +106,14 @@ reflexr's own events, alongside the application's:
 
 ## MCP
 
-`reflexr.mcp` serves the same commands and reads to MCP clients, with the host's `resolve(ctx)` returning the client's tenant and `ExternalAgentActor`.
+`reflexr.mcp` serves the same commands and reads to MCP clients, with the host's `resolve(ctx)` returning the client's tenant and `ExternalAgentActor`. Commands go through the same handler as REST and the WebSocket; a rejection is a tool error carrying its message.
 
 | MCP | reflexr |
 |---|---|
 | Tools `publish_event`, `read_events` | Publish and read, with the same idempotency and filters. |
 | Tools `list_rules`, `rule_status`, `replay_rule` | Inspect and replay rules. |
 | Tools `list_runs`, `get_run`, `retry_run`, `skip_run`, `cancel_run`, `list_dead_letters` | Operate runs. |
+| Tool `give_feedback` | Typed feedback on a run, a firing or a chain. |
 | Resource template `reflexr://{tenant_id}/{workspace_id}/runs/{run_id}` | A run's current JSON, with resource-updated notifications as it progresses. Readable only by clients of that tenant. |
 
 ## Versioning and schema
