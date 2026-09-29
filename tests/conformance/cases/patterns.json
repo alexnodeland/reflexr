@@ -1,0 +1,1318 @@
+{
+  "description": "Patterns: when the envelopes a rule considers make it fire.",
+  "cases": [
+    {
+      "name": "count fires when enough arrive within the window, and consumes them",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          },
+          "pattern": {
+            "kind": "count",
+            "at_least": 3,
+            "within": "PT60S"
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 10,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 20,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 4,
+          "at": 30,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 5,
+          "at": 40,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 6,
+          "at": 50,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 3,
+            "matched": [
+              1,
+              2,
+              3
+            ]
+          },
+          {
+            "seq": 6,
+            "matched": [
+              4,
+              5,
+              6
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "count forgets envelopes as old as the window",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          },
+          "pattern": {
+            "kind": "count",
+            "at_least": 2,
+            "within": "PT60S"
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 60,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 61,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 3,
+            "matched": [
+              2,
+              3
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "a count of one fires for each envelope",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          },
+          "pattern": {
+            "kind": "count",
+            "at_least": 1,
+            "within": "PT60S"
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 5,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 1,
+            "matched": [
+              1
+            ]
+          },
+          {
+            "seq": 2,
+            "matched": [
+              2
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "a sequence fires when its steps happen in order",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "any",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "all",
+                "of": [
+                  {
+                    "kind": "on",
+                    "types": [
+                      "service.error"
+                    ]
+                  },
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "ge",
+                    "value": 7
+                  }
+                ]
+              }
+            ]
+          },
+          "pattern": {
+            "kind": "sequence",
+            "steps": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "all",
+                "of": [
+                  {
+                    "kind": "on",
+                    "types": [
+                      "service.error"
+                    ]
+                  },
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "ge",
+                    "value": 7
+                  }
+                ]
+              }
+            ],
+            "within": "PT600S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "deploy.finished",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 60,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 8
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 2,
+            "matched": [
+              1,
+              2
+            ],
+            "scope": {
+              "service": "auth"
+            }
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "a later step alone does not start a sequence",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "any",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "all",
+                "of": [
+                  {
+                    "kind": "on",
+                    "types": [
+                      "service.error"
+                    ]
+                  },
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "ge",
+                    "value": 7
+                  }
+                ]
+              }
+            ]
+          },
+          "pattern": {
+            "kind": "sequence",
+            "steps": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "all",
+                "of": [
+                  {
+                    "kind": "on",
+                    "types": [
+                      "service.error"
+                    ]
+                  },
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "ge",
+                    "value": 7
+                  }
+                ]
+              }
+            ],
+            "within": "PT600S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 8
+          }
+        },
+        {
+          "seq": 2,
+          "at": 10,
+          "event": {
+            "type": "deploy.finished",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "a sequence expires after its window",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "any",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "all",
+                "of": [
+                  {
+                    "kind": "on",
+                    "types": [
+                      "service.error"
+                    ]
+                  },
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "ge",
+                    "value": 7
+                  }
+                ]
+              }
+            ]
+          },
+          "pattern": {
+            "kind": "sequence",
+            "steps": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "all",
+                "of": [
+                  {
+                    "kind": "on",
+                    "types": [
+                      "service.error"
+                    ]
+                  },
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "ge",
+                    "value": 7
+                  }
+                ]
+              }
+            ],
+            "within": "PT600S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "deploy.finished",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 600,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 8
+          }
+        }
+      ],
+      "expect": {
+        "firings": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "a new first step restarts a sequence",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "any",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "all",
+                "of": [
+                  {
+                    "kind": "on",
+                    "types": [
+                      "service.error"
+                    ]
+                  },
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "ge",
+                    "value": 7
+                  }
+                ]
+              }
+            ]
+          },
+          "pattern": {
+            "kind": "sequence",
+            "steps": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "all",
+                "of": [
+                  {
+                    "kind": "on",
+                    "types": [
+                      "service.error"
+                    ]
+                  },
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "ge",
+                    "value": 7
+                  }
+                ]
+              }
+            ],
+            "within": "PT600S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "deploy.finished",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 300,
+          "event": {
+            "type": "deploy.finished",
+            "service": "auth",
+            "version": "2"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 700,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 8
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 3,
+            "matched": [
+              2,
+              3
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "sequences are per scope",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "any",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "all",
+                "of": [
+                  {
+                    "kind": "on",
+                    "types": [
+                      "service.error"
+                    ]
+                  },
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "ge",
+                    "value": 7
+                  }
+                ]
+              }
+            ]
+          },
+          "pattern": {
+            "kind": "sequence",
+            "steps": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "all",
+                "of": [
+                  {
+                    "kind": "on",
+                    "types": [
+                      "service.error"
+                    ]
+                  },
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "ge",
+                    "value": 7
+                  }
+                ]
+              }
+            ],
+            "within": "PT600S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "deploy.finished",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 10,
+          "event": {
+            "type": "service.error",
+            "service": "billing",
+            "severity": 8
+          }
+        }
+      ],
+      "expect": {
+        "firings": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "a sequence can have more than two steps",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "any",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "all",
+                "of": [
+                  {
+                    "kind": "on",
+                    "types": [
+                      "service.error"
+                    ]
+                  },
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "ge",
+                    "value": 7
+                  }
+                ]
+              },
+              {
+                "kind": "on",
+                "types": [
+                  "heartbeat"
+                ]
+              }
+            ]
+          },
+          "pattern": {
+            "kind": "sequence",
+            "steps": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "all",
+                "of": [
+                  {
+                    "kind": "on",
+                    "types": [
+                      "service.error"
+                    ]
+                  },
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "ge",
+                    "value": 7
+                  }
+                ]
+              },
+              {
+                "kind": "on",
+                "types": [
+                  "heartbeat"
+                ]
+              }
+            ],
+            "within": "PT600S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "deploy.finished",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 10,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 8
+          }
+        },
+        {
+          "seq": 3,
+          "at": 20,
+          "event": {
+            "type": "heartbeat",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 3,
+            "matched": [
+              1,
+              2,
+              3
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "envelopes that match no step are ignored",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "any",
+            "of": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "all",
+                "of": [
+                  {
+                    "kind": "on",
+                    "types": [
+                      "service.error"
+                    ]
+                  },
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "ge",
+                    "value": 7
+                  }
+                ]
+              }
+            ]
+          },
+          "pattern": {
+            "kind": "sequence",
+            "steps": [
+              {
+                "kind": "on",
+                "types": [
+                  "deploy.finished"
+                ]
+              },
+              {
+                "kind": "all",
+                "of": [
+                  {
+                    "kind": "on",
+                    "types": [
+                      "service.error"
+                    ]
+                  },
+                  {
+                    "kind": "where",
+                    "field": "severity",
+                    "op": "ge",
+                    "value": 7
+                  }
+                ]
+              }
+            ],
+            "within": "PT600S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "deploy.finished",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 10,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 5
+          }
+        },
+        {
+          "seq": 3,
+          "at": 20,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "severity": 8
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 3,
+            "matched": [
+              1,
+              3
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "absence fires once when a scope goes quiet",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "heartbeat"
+            ]
+          },
+          "pattern": {
+            "kind": "absence",
+            "within": "PT300S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "heartbeat",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 299,
+          "event": {
+            "type": "tick",
+            "schedule": "clock",
+            "at": "2026-01-01T00:00:00Z"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 300,
+          "event": {
+            "type": "tick",
+            "schedule": "clock",
+            "at": "2026-01-01T00:00:00Z"
+          }
+        },
+        {
+          "seq": 4,
+          "at": 600,
+          "event": {
+            "type": "tick",
+            "schedule": "clock",
+            "at": "2026-01-01T00:00:00Z"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 3,
+            "matched": [
+              1
+            ],
+            "scope": {
+              "service": "auth"
+            }
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "a heartbeat before the deadline keeps a scope alive",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "heartbeat"
+            ]
+          },
+          "pattern": {
+            "kind": "absence",
+            "within": "PT300S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "heartbeat",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 200,
+          "event": {
+            "type": "heartbeat",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 400,
+          "event": {
+            "type": "tick",
+            "schedule": "clock",
+            "at": "2026-01-01T00:00:00Z"
+          }
+        },
+        {
+          "seq": 4,
+          "at": 500,
+          "event": {
+            "type": "tick",
+            "schedule": "clock",
+            "at": "2026-01-01T00:00:00Z"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 4,
+            "matched": [
+              2
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "only quiet scopes fire",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "heartbeat"
+            ]
+          },
+          "pattern": {
+            "kind": "absence",
+            "within": "PT300S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "heartbeat",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 0,
+          "event": {
+            "type": "heartbeat",
+            "service": "billing"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 250,
+          "event": {
+            "type": "heartbeat",
+            "service": "billing"
+          }
+        },
+        {
+          "seq": 4,
+          "at": 300,
+          "event": {
+            "type": "tick",
+            "schedule": "clock",
+            "at": "2026-01-01T00:00:00Z"
+          }
+        },
+        {
+          "seq": 5,
+          "at": 560,
+          "event": {
+            "type": "tick",
+            "schedule": "clock",
+            "at": "2026-01-01T00:00:00Z"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 4,
+            "matched": [
+              1
+            ],
+            "scope": {
+              "service": "auth"
+            }
+          },
+          {
+            "seq": 5,
+            "matched": [
+              3
+            ],
+            "scope": {
+              "service": "billing"
+            }
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "a scope never seen cannot go quiet",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "heartbeat"
+            ]
+          },
+          "pattern": {
+            "kind": "absence",
+            "within": "PT300S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 1000,
+          "event": {
+            "type": "tick",
+            "schedule": "clock",
+            "at": "2026-01-01T00:00:00Z"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [],
+        "errors": []
+      }
+    },
+    {
+      "name": "absence rearms with the next heartbeat",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "heartbeat"
+            ]
+          },
+          "pattern": {
+            "kind": "absence",
+            "within": "PT300S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "heartbeat",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 300,
+          "event": {
+            "type": "tick",
+            "schedule": "clock",
+            "at": "2026-01-01T00:00:00Z"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 400,
+          "event": {
+            "type": "heartbeat",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 4,
+          "at": 700,
+          "event": {
+            "type": "tick",
+            "schedule": "clock",
+            "at": "2026-01-01T00:00:00Z"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 2,
+            "matched": [
+              1
+            ]
+          },
+          {
+            "seq": 4,
+            "matched": [
+              3
+            ]
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "any envelope moves time forward",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "heartbeat"
+            ]
+          },
+          "pattern": {
+            "kind": "absence",
+            "within": "PT300S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "heartbeat",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 300,
+          "event": {
+            "type": "service.error",
+            "service": "unrelated"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 2,
+            "matched": [
+              1
+            ],
+            "scope": {
+              "service": "auth"
+            }
+          }
+        ],
+        "errors": []
+      }
+    }
+  ]
+}

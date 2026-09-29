@@ -39,4 +39,4 @@ The expensive failures in Reflex were decisions made wrong (thresholds never che
 ## Action items
 
 1. [x] Remove the template and package, and lay the library's foundation (RFC-0001 phase 0).
-2. [ ] Implement `reflexr.core` with the conformance suite (phase 1).
+2. [x] Implement `reflexr.core` with the conformance suite (phase 1).

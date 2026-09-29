@@ -20,5 +20,6 @@ Each record captures one decision: the context that forced it, the options consi
 | [0014](0014-mit-license.md) | MIT license | Accepted |
 | [0015](0015-reference-implementation-oncall.md) | Reference implementation: incident response | Accepted |
 | [0016](0016-tenants-and-workspaces-like-artifactr.md) | Tenants and workspaces, like artifactr | Accepted |
+| [0017](0017-the-cores-evaluation-contract.md) | The core's evaluation contract | Accepted |
 
 To add a record, copy [`template.md`](template.md) to the next number and add a row above.

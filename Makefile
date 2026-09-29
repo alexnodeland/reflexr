@@ -5,7 +5,7 @@
 .DEFAULT_GOAL := help
 UV ?= uv
 
-.PHONY: help install fmt lint typecheck test check changelog clean
+.PHONY: help install fmt lint typecheck test check schema changelog clean
 
 help: ## List the available commands
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -29,6 +29,9 @@ test: ## Run the tests with the 100% branch-coverage gate
 	$(UV) run pytest --cov --cov-report=term-missing
 
 check: lint typecheck test ## Run everything CI runs
+
+schema: ## Regenerate the rule JSON Schema from the models
+	$(UV) run python -m reflexr.core.schema > schemas/reflexr.rules.v1.json
 
 changelog: ## Regenerate CHANGELOG.md from conventional commits
 	$(UV) run git-cliff --output CHANGELOG.md

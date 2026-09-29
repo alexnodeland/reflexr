@@ -1,0 +1,259 @@
+{
+  "description": "Scopes: how a rule's state and firings are partitioned.",
+  "cases": [
+    {
+      "name": "scoped rules count each scope separately",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          },
+          "pattern": {
+            "kind": "count",
+            "at_least": 2,
+            "within": "PT60S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "billing"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 4,
+          "at": 3,
+          "event": {
+            "type": "service.error",
+            "service": "billing"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 3,
+            "matched": [
+              1,
+              3
+            ],
+            "scope": {
+              "service": "auth"
+            }
+          },
+          {
+            "seq": 4,
+            "matched": [
+              2,
+              4
+            ],
+            "scope": {
+              "service": "billing"
+            }
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "a missing scope field is an error for that envelope alone",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error",
+              "heartbeat"
+            ]
+          }
+        },
+        "scope": {
+          "fields": [
+            "region"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "heartbeat",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 2,
+            "matched": [
+              2
+            ],
+            "scope": {
+              "region": "eu"
+            }
+          }
+        ],
+        "errors": [
+          {
+            "seq": 1,
+            "contains": "lacks the scope fields: region"
+          }
+        ]
+      }
+    },
+    {
+      "name": "scopes can span several fields",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          },
+          "pattern": {
+            "kind": "count",
+            "at_least": 2,
+            "within": "PT60S"
+          }
+        },
+        "scope": {
+          "fields": [
+            "service",
+            "region"
+          ]
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "auth",
+            "region": "us"
+          }
+        },
+        {
+          "seq": 3,
+          "at": 2,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 3,
+            "matched": [
+              1,
+              3
+            ],
+            "scope": {
+              "service": "auth",
+              "region": "eu"
+            }
+          }
+        ],
+        "errors": []
+      }
+    },
+    {
+      "name": "without scope fields the scope is the whole workspace",
+      "rule": {
+        "when": {
+          "filter": {
+            "kind": "on",
+            "types": [
+              "service.error"
+            ]
+          },
+          "pattern": {
+            "kind": "count",
+            "at_least": 2,
+            "within": "PT60S"
+          }
+        }
+      },
+      "envelopes": [
+        {
+          "seq": 1,
+          "at": 0,
+          "event": {
+            "type": "service.error",
+            "service": "auth"
+          }
+        },
+        {
+          "seq": 2,
+          "at": 1,
+          "event": {
+            "type": "service.error",
+            "service": "billing"
+          }
+        }
+      ],
+      "expect": {
+        "firings": [
+          {
+            "seq": 2,
+            "matched": [
+              1,
+              2
+            ],
+            "scope": {}
+          }
+        ],
+        "errors": []
+      }
+    }
+  ]
+}

@@ -41,4 +41,4 @@ Pure reducers make stateful rules as testable as stateless ones and make replay 
 
 ## Action items
 
-1. [ ] Implement the reducers and property tests (RFC-0001 phase 1).
+1. [x] Implement the reducers and property tests (RFC-0001 phase 1).

@@ -22,6 +22,7 @@ Run `make` on its own to list every command:
 | `make typecheck` | Type-check with pyright (strict for `src/`) |
 | `make test` | Run the tests with the 100% branch-coverage gate |
 | `make check` | Everything CI runs |
+| `make schema` | Regenerate `schemas/reflexr.rules.v1.json` from the rule models (a test fails if it drifts) |
 | `make changelog` | Regenerate `CHANGELOG.md` from commit history |
 
 ## How work flows: trunk-based development
