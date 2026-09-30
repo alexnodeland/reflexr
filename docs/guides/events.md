@@ -179,6 +179,8 @@ reflexr records what it decides and does in the same log, as events of its own, 
 | `reflexr:rule_fired` | `RuleFired` | `rule`, `scope`, `scope_key`, `firing_id`, `matched` | A rule's condition held for a scope; `matched` lists the `seq` of every envelope that made it hold |
 | `reflexr:rule_errored` | `RuleErrored` | `rule`, `seq`, `error` | A rule could not evaluate an envelope, which is dead-lettered for that rule alone |
 | `reflexr:rule_reset` | `RuleReset` | `rule`, `generation`, `reason`, `from_seq`, `silent_through` | A rule's definition changed (`"changed"`) or someone replayed it (`"replayed"`) |
+| `reflexr:rule_installed` | `RuleInstalled` | `rule`, `version`, `spec`, `provenance` | Someone installed or updated a [stored rule](rules.md#stored-rules); `spec` is the rule, as JSON |
+| `reflexr:rule_archived` | `RuleArchived` | `rule`, `version`, `reason`, `cancelled` | Someone archived a stored rule; `cancelled` counts the unfinished runs it cancelled |
 | `reflexr:run_started` | `RunStarted` | `run_id`, `rule`, `scope`, `scope_key`, `attempt` | An attempt of a run began; `scope` holds the scope's field values, as on `reflexr:rule_fired` |
 | `reflexr:run_progressed` | `RunProgressed` | `run_id`, `rule`, `step` | A graph run completed a step and saved a checkpoint |
 | `reflexr:run_retrying` | `RunRetrying` | `run_id`, `rule`, `attempt`, `error`, `next_attempt_at`, `reason` | An attempt failed, and the run will be tried again. `reason` is a stable code for why, such as `timeout`, when there is one |

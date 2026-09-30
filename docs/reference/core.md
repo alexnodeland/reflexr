@@ -50,6 +50,10 @@ The facts reflexr appends about rules, runs, feedback and schedules. See [reflex
 
 ::: reflexr.core.RuleReset
 
+::: reflexr.core.RuleInstalled
+
+::: reflexr.core.RuleArchived
+
 ::: reflexr.core.RunStarted
 
 ::: reflexr.core.RunProgressed
@@ -120,6 +124,8 @@ What rules installed at runtime may do, the limits every one is held to, and how
 
 ::: reflexr.core.check_stored
 
+::: reflexr.core.check_provenance
+
 ::: reflexr.core.StoredRule
 
 ::: reflexr.core.MAX_STORED_FIRINGS_PER_HOUR
@@ -133,6 +139,10 @@ What rules installed at runtime may do, the limits every one is held to, and how
 ::: reflexr.core.MAX_STORED_DESCRIPTION
 
 ::: reflexr.core.MAX_STORED_BYTES
+
+::: reflexr.core.MAX_STORED_PROVENANCE
+
+::: reflexr.core.MAX_STORED_RULES
 
 ## Conditions
 
@@ -328,6 +338,12 @@ The stream protocol's commands, outcomes, frames and resume rule. See the [strea
 
 ::: reflexr.core.ReplayRule
 
+::: reflexr.core.InstallRule
+
+::: reflexr.core.UpdateRule
+
+::: reflexr.core.ArchiveRule
+
 ::: reflexr.core.Outcome
 
 ::: reflexr.core.PublishedOutcome
@@ -337,6 +353,8 @@ The stream protocol's commands, outcomes, frames and resume rule. See the [strea
 ::: reflexr.core.RunOutcome
 
 ::: reflexr.core.RuleOutcome
+
+::: reflexr.core.RuleVersionOutcome
 
 ::: reflexr.core.Hello
 

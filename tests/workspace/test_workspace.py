@@ -47,7 +47,6 @@ from reflexr.core import (
 from reflexr.telemetry import attributes as a
 from reflexr.workspace import (
     InMemoryStorage,
-    RuleStatus,
     Storage,
     Workspace,
     WorkspaceRef,
@@ -359,10 +358,16 @@ async def test_the_rule_statuses_list_every_registered_rule(build: Build, storag
         name="app:added", when=on(Deploy), then=run("page")
     )  # registered after the log began
     later = await build([triage, paused, added]).open("acme", "prod", actor=UserActor(id="ada"))
-    assert await later.rule_statuses() == [
-        RuleStatus(rule="app:triage", enabled=True, cursor=2, lag=1, generation=1, dead_letters=2),
-        RuleStatus(rule="app:paused", enabled=False, cursor=0, lag=3, generation=0, dead_letters=0),
-        RuleStatus(rule="app:added", enabled=True, cursor=0, lag=3, generation=0, dead_letters=0),
+    statuses = await later.rule_statuses()
+    assert [(s.rule, s.origin, s.version) for s in statuses] == [
+        ("app:triage", "code", None),
+        ("app:paused", "code", None),
+        ("app:added", "code", None),
+    ]
+    assert [(s.enabled, s.cursor, s.lag, s.generation, s.dead_letters) for s in statuses] == [
+        (True, 2, 1, 1, 2),
+        (False, 0, 3, 0, 0),
+        (True, 0, 3, 0, 0),
     ]
 
 

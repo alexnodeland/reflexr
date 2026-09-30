@@ -24,8 +24,10 @@ from reflexr.workspace.workspace import (
     Authorize,
     Published,
     RuleStatus,
+    RuleVersion,
     ScheduleStatus,
     Workspace,
+    WorkspaceRule,
     Workspaces,
 )
 
@@ -43,6 +45,7 @@ __all__ = [
     "Reaction",
     "Reactor",
     "RuleStatus",
+    "RuleVersion",
     "RunContext",
     "RunFailure",
     "RunPolicy",
@@ -53,6 +56,7 @@ __all__ = [
     "Transaction",
     "Workspace",
     "WorkspaceRef",
+    "WorkspaceRule",
     "Workspaces",
     "execute",
     "run_lease",

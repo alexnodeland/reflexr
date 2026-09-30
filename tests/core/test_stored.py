@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from reflexr.core import (
     MAX_STORED_BYTES,
+    MAX_STORED_PROVENANCE,
     Actor,
     AgentActor,
     Rule,
@@ -14,6 +15,7 @@ from reflexr.core import (
     StoredRules,
     TenantId,
     WorkspaceId,
+    check_provenance,
     check_stored,
 )
 
@@ -217,6 +219,15 @@ def test_the_throttle_bounds_the_firings_any_hour_can_have(
 ) -> None:
     rule = stored(when=when(throttle={"at_most": at_most, "per": per}))
     assert (check_stored(rule, CONFIG) == []) is allowed
+
+
+def test_provenance_is_held_to_its_size() -> None:
+    assert check_provenance({"source": "artifactr", "proposal": "prp_12"}) == []
+    padding = MAX_STORED_PROVENANCE - len('{"note":""}')
+    assert check_provenance({"note": "x" * padding}) == []
+    assert check_provenance({"note": "x" * (padding + 1)}) == [
+        "provenance must be at most 4096 bytes of JSON"
+    ]
 
 
 def test_the_reflexr_namespace_is_reserved() -> None:

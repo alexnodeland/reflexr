@@ -28,6 +28,7 @@ from reflexr.core import (
     Envelope,
     InvalidRule,
     Rule,
+    RuleName,
     Run,
     RunCancelled,
     RunDeadLettered,
@@ -144,6 +145,7 @@ class Executor[D]:
         """
         stop = stop or asyncio.Event()
         grace_over = grace_over or asyncio.Event()
+        # Stored rules are enabled and unordered, as the policy takes a rule it does not name.
         rules = self._workspaces.rules.values()
         with untraced():  # polling: the attempts it finds are traced, each as its own trace
             due = await self._workspaces.storage.due_runs(
@@ -163,44 +165,36 @@ class Executor[D]:
         return Executed(attempts=results.count("finished"), contended=results.count("contended"))
 
     async def _attempt(self, ref: WorkspaceRef, run: Run, grace_over: asyncio.Event) -> _Attempt:
-        rule = self._workspaces.rules.get(run.rule)
-        if rule is not None and not rule.enabled:
-            return "declined"  # its runs wait until it is enabled again
         storage = self._workspaces.storage
         key = run_lease(run.id)
         with untraced():
             if not await storage.acquire_lease(ref, key, self._holder, self._lease_ttl):
                 return "contended"
         try:
-            if rule is None:
-                await self._cancel_orphan(ref, run)
-                return "declined"
-            finished = await self._attempt_leased(ref, run, rule, grace_over)
+            finished = await self._attempt_leased(ref, run, grace_over)
             return "finished" if finished else "declined"
         finally:
             with untraced():
                 await storage.release_lease(ref, key, self._holder)
 
-    async def _attempt_leased(
-        self, ref: WorkspaceRef, due: Run, rule: Rule, grace_over: asyncio.Event
-    ) -> bool:
+    async def _attempt_leased(self, ref: WorkspaceRef, due: Run, grace_over: asyncio.Event) -> bool:
         telemetry = self._workspaces.telemetry
         with telemetry.tracer.start_as_current_span(
-            f"invoke_workflow {rule.name}",
+            f"invoke_workflow {due.rule}",
             attributes={
                 **workspace_attributes(ref.tenant_id, ref.workspace_id),
                 **chain_attributes(due.correlation_id),
                 a.OPERATION_NAME: "invoke_workflow",
-                a.WORKFLOW_NAME: rule.name,
-                a.RULE: rule.name,
+                a.WORKFLOW_NAME: due.rule,
+                a.RULE: due.rule,
                 a.SCOPE: due.scope_key,
                 a.RUN_ID: due.id,
             },
         ) as span:
-            claimed = await self._claim(ref, due, rule)
+            claimed = await self._claim(ref, due)
             if claimed is None:
                 return False
-            run, events = claimed
+            run, rule, events = claimed
             span.set_attribute(a.ATTEMPT, run.attempts)
             for envelope in events:
                 linked = parse_traceparent(envelope.traceparent)
@@ -215,22 +209,39 @@ class Executor[D]:
             recorded = await self._complete(ref, run, rule, outcome)
             if recorded is None:
                 return False
-            self._record(ref, RUN_DURATION, perf_counter() - started, rule, recorded.status)
+            self._record(ref, RUN_DURATION, perf_counter() - started, rule.name, recorded.status)
             return True
 
     async def _claim(
-        self, ref: WorkspaceRef, due: Run, rule: Rule
-    ) -> tuple[Run, tuple[Envelope, ...]] | None:
-        """Start an attempt of a run, if it is still due and first in its scope."""
+        self, ref: WorkspaceRef, due: Run
+    ) -> tuple[Run, Rule, tuple[Envelope, ...]] | None:
+        """Start an attempt of a run, if it is still due and first in its scope.
+
+        The attempt runs its rule as the claim reads it. A run whose rule the workspace no
+        longer has is cancelled instead, so it stops being due, and a disabled rule's runs wait
+        until it is enabled again.
+        """
         async with self._workspaces.storage.transaction(ref) as transaction:
             run = await transaction.run(due.id)
             assert run is not None, "runs are never deleted"
             now = self._workspaces.clock()
+            found = (await self._workspaces.rules_in(transaction)).get(run.rule)
+            if found is None:
+                if run.status not in FINISHED:
+                    cancelled, fact = cancel(
+                        run, now=now, reason="its rule is gone from the workspace"
+                    )
+                    await self._save(transaction, cancelled, fact)
+                    self._record_status(ref, cancelled)
+                return None
+            rule = found.rule
+            if not rule.enabled:
+                return None
             if run.status == "running":
                 # Its executor stopped renewing the lease: the attempt counts as failed.
                 failed, fact = fail(run, rule, now=now, error=ABANDONED, reason="abandoned")
                 await self._save(transaction, failed, fact)
-                self._record_status(ref, rule, failed)
+                self._record_status(ref, failed)
                 return None
             if run.status not in WAITING or run.next_attempt_at > now:
                 return None
@@ -242,9 +253,9 @@ class Executor[D]:
             events: list[Envelope] = []
             for seq in run.matched:
                 events.extend(await transaction.read(after_seq=seq - 1, limit=1))
-        self._record(ref, RUN_ATTEMPTS, 1, rule)
-        self._record_status(ref, rule, started)
-        return started, tuple(events)
+        self._record(ref, RUN_ATTEMPTS, 1, rule.name)
+        self._record_status(ref, started)
+        return started, rule, tuple(events)
 
     async def _run_action(
         self,
@@ -394,20 +405,8 @@ class Executor[D]:
                     permanent=outcome.permanent,
                 )
             await self._save(transaction, done, fact)
-        self._record_status(ref, rule, done)
+        self._record_status(ref, done)
         return done
-
-    async def _cancel_orphan(self, ref: WorkspaceRef, due: Run) -> None:
-        """Cancel a run whose rule is no longer registered, so it stops being due."""
-        async with self._workspaces.storage.transaction(ref) as transaction:
-            run = await transaction.run(due.id)
-            assert run is not None, "runs are never deleted"
-            if run.status in FINISHED:
-                return
-            cancelled, fact = cancel(
-                run, now=self._workspaces.clock(), reason="its rule is no longer registered"
-            )
-            await self._save(transaction, cancelled, fact)
 
     @staticmethod
     async def _save(transaction: Transaction, run: Run, fact: _Fact) -> None:
@@ -422,24 +421,24 @@ class Executor[D]:
         )
         await transaction.append([entry])
 
-    def _record_status(self, ref: WorkspaceRef, rule: Rule, run: Run) -> None:
+    def _record_status(self, ref: WorkspaceRef, run: Run) -> None:
         extra: dict[str, AttributeValue] = {a.ACTOR_KIND: "system"}
         if run.status in ("retrying", "dead") and run.reason is not None:
             extra[a.RUN_REASON] = run.reason
-        self._record(ref, RUNS, 1, rule, run.status, extra)
+        self._record(ref, RUNS, 1, run.rule, run.status, extra)
         if run.status == "dead":
-            self._record(ref, DEAD_LETTERS, 1, rule)
+            self._record(ref, DEAD_LETTERS, 1, run.rule)
 
     def _record(
         self,
         ref: WorkspaceRef,
         metric: Metric,
         value: float,
-        rule: Rule,
+        rule: RuleName,
         status: str | None = None,
         extra: Attributes | None = None,
     ) -> None:
-        attributes: dict[str, AttributeValue] = {a.RULE: rule.name, **(extra or {})}
+        attributes: dict[str, AttributeValue] = {a.RULE: rule, **(extra or {})}
         if status is not None:
             attributes[a.RUN_STATUS] = status
         self._workspaces.telemetry.record(

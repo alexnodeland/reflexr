@@ -195,7 +195,7 @@ stateDiagram-v2
     retrying --> pending: retry
 ```
 
-Runs whose rule is no longer registered are cancelled, with a reason, so they stop being due.
+Runs whose rule is gone from the workspace, a code rule no longer registered or a stored rule whose namespace a deploy dropped, are cancelled, with a reason, so they stop being due. Archiving a stored rule cancels its own.
 
 ## Retries and dead letters
 

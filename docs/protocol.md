@@ -22,8 +22,13 @@ A command is a JSON object with a `type`. Over REST and WebSocket it travels in 
 | `skip_run` | `run_id`, `reason?` | A pending, retrying or dead-lettered run is marked skipped, unblocking its scope. |
 | `cancel_run` | `run_id` | A running run is cancelled and recorded as cancelled. |
 | `replay_rule` | `rule`, `from_seq`, `mode` (`rebuild` or `refire`) | Resets the rule's cursor to `from_seq` and appends `reflexr:rule_reset`. `rebuild` recomputes state up to the head of the log (`silent_through`) and appends no `reflexr:rule_fired` or `reflexr:rule_errored` events for it and creates no runs; `refire` records the firings found and creates runs for them, with new ids. `from_seq` beyond the head is `validation_failed`. |
+| `install_rule` | `rule` (the whole rule), `provenance?` | Installs a stored rule in the workspace: version 1, or the next version of an archived rule. It starts at its `reflexr:rule_installed` fact. An active rule of that name is `invalid_state`, and a workspace with 50 active stored rules is `validation_failed`. |
+| `update_rule` | `rule`, `expected_version?`, `provenance?` | A new version of an active stored rule, reset at its fact, with `reflexr:rule_reset`, if its condition or scope changed. A rule at another version than `expected_version` is `invalid_state`, and the message names its version; so is an archived rule. |
+| `archive_rule` | `rule` (the name), `expected_version?`, `reason?` | Archives a stored rule, cancels its unfinished runs, and appends `reflexr:rule_archived`. |
 
-Run commands answer with `run`: the run as it now is; `replay_rule` answers with `rule`: `{rule, progress}`. Each outcome has a `type` naming which it is.
+Run commands answer with `run`: the run as it now is; `replay_rule` answers with `rule`: `{rule, progress}`; and the stored-rule commands with `rule_version`: `{rule, version, seq, duplicate}`, where `seq` is the change's fact. Each outcome has a `type` naming which it is.
+
+Stored rules are off unless the application configures them, and then its `allow` hook is asked about each change after `authorize`: without either, the change is `forbidden`, as it is for a code rule's name. `provenance` is an opaque JSON object of at most 4 KiB, kept on the rule and its fact. A rule that fails `Rule.check` or `check_stored`, or provenance over 4 KiB, is `validation_failed`, with every problem in `errors`. Updating or archiving a name no stored rule has is `not_found`. A change that would leave the rule as it is appends nothing and answers `duplicate: true`, checked before `expected_version`, so a retried change is no conflict; its `seq` is the head of the log.
 
 Rejections carry a stable `type` and a `message`: `not_found`, `invalid_state`, `validation_failed` (with Pydantic's `errors`), `forbidden`, `depth_exceeded` (a publish beyond the causation limit), and `unsupported_protocol`.
 
@@ -37,7 +42,7 @@ Rejections carry a stable `type` and a `message`: `not_found`, `invalid_state`, 
 | `POST /v1/workspaces/{workspace_id}/events` | Publish `{"event": {...}, "id"?}`, or `{"events": [{"event", "id"?}, ...], "correlation_id"?}` atomically and in order. A convenience for producers and webhooks, equivalent to `publish` commands; the response lists each `published` outcome. |
 | `GET /v1/workspaces/{workspace_id}/events?after_seq=&before_seq=&type=&limit=&last=` | A page of the log, as envelopes, oldest first: the window `after_seq < seq < before_seq` (to the head without `before_seq`), of the event types `type` names (it may repeat), and of those the first `limit` or the last `last`. `last` is the tail of the log; `last` with `before_seq` set to the oldest `seq` a client has pages backwards. Both `limit` and `last`, or a negative number, is `validation_failed`. |
 | `GET /v1/rules` | The registered rules, as JSON. Rules are the application's, shared by every tenant, so every authenticated client of any tenant gets them all, and `authorize` is not asked. |
-| `GET /v1/workspaces/{workspace_id}/rules` | Whether each rule is `enabled`, and its `cursor`, `lag` behind the head, `generation`, and `dead_letters` count. A disabled rule's cursor holds. |
+| `GET /v1/workspaces/{workspace_id}/rules` | Each of the workspace's rules: its `origin` (`code` or `stored`) and a stored rule's `version`, whether it is `enabled`, and its `cursor`, `lag` behind the head, `generation`, and `dead_letters` count. A disabled rule's cursor holds. |
 | `GET /v1/workspaces/{workspace_id}/runs?rule=&scope_key=&status=&limit=` | Runs, newest first. |
 | `GET /v1/workspaces/{workspace_id}/runs/{run_id}` | A run, with its attempts, last error and checkpoint. |
 | `GET /v1/workspaces/{workspace_id}/dead-letters?rule=` | The envelopes rules could not evaluate. |
@@ -85,6 +90,8 @@ reflexr's own events, alongside the application's:
 | `reflexr:rule_fired` | `rule`, `scope`, `firing_id`, `matched` (the `seq`s of the matched envelopes) |
 | `reflexr:rule_errored` | `rule`, `seq`, `error` |
 | `reflexr:rule_reset` | `rule`, `generation`, `reason` (`changed` or `replayed`), `from_seq`, `silent_through` |
+| `reflexr:rule_installed` | `rule`, `version`, `spec` (the rule), `provenance` (a stored rule was installed or updated) |
+| `reflexr:rule_archived` | `rule`, `version`, `reason?`, `cancelled` (how many unfinished runs archiving cancelled) |
 | `reflexr:run_started` | `run_id`, `rule`, `scope`, `scope_key`, `attempt` |
 | `reflexr:run_progressed` | `run_id`, `step` (a graph step completed and was checkpointed) |
 | `reflexr:run_retrying` | `run_id`, `attempt`, `error`, `next_attempt_at`, `reason?` (a stable code, such as `timeout`) |
@@ -120,6 +127,8 @@ reflexr's own events, alongside the application's:
 | Tool `give_feedback` | Typed feedback on a run, a firing or a chain. |
 | Resource template `reflexr://{tenant_id}/{workspace_id}/runs/{run_id}` | A run's current JSON, with resource-updated notifications as it progresses. Readable only by clients of that tenant, in a workspace `authorize` allows. |
 | `subscriptions/listen` and resource-updated notifications | Published for every run fact in each workspace a client has used through a tool. A `listen` request that names a run of another tenant, or of a workspace `authorize` refuses, fails with `INVALID_PARAMS` and the message a read of it would fail with; the error's data carries the URI and the `forbidden` rejection. |
+
+The stored-rule commands are not MCP tools yet, and neither REST nor MCP reads one rule: both come with phase 4 of [RFC-0003](rfcs/0003-managing-rules-at-runtime.md).
 
 ## Versioning and schema
 

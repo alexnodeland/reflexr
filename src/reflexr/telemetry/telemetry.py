@@ -4,7 +4,7 @@ reflexr uses the OpenTelemetry API only. Without an SDK configured every span an
 is a no-op, and applications choose the SDK, exporters and backends (ADR-0018).
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Set
 from importlib.metadata import version
 
 from opentelemetry import metrics, trace
@@ -13,7 +13,7 @@ from opentelemetry.trace import SpanContext, Tracer, TracerProvider, get_current
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.util.types import AttributeValue
 
-from reflexr.core import Actor, TenantId, UserActor, WorkspaceId
+from reflexr.core import Actor, RuleName, TenantId, UserActor, WorkspaceId
 from reflexr.telemetry import attributes as a
 from reflexr.telemetry.metrics import METRICS, SCOPE, Metric
 
@@ -33,6 +33,8 @@ class Telemetry:
     Args:
         tracer_provider: Where spans go. Defaults to the global provider.
         meter_provider: Where metrics go. Defaults to the global provider.
+        stored_namespaces: The rule namespaces of stored rules, whose names code does not bound.
+            Metrics record a rule in one as the namespace, such as ``chat:*``.
     """
 
     def __init__(
@@ -40,11 +42,22 @@ class Telemetry:
         *,
         tracer_provider: TracerProvider | None = None,
         meter_provider: MeterProvider | None = None,
+        stored_namespaces: Set[str] = frozenset(),
     ) -> None:
         release = version("reflexr")
         self.tracer: Tracer = trace.get_tracer(SCOPE, release, tracer_provider)
         meter = metrics.get_meter(SCOPE, release, meter_provider)
         self._recorders = {name: _recorder(meter, metric) for name, metric in METRICS.items()}
+        self._stored_namespaces = frozenset(stored_namespaces)
+
+    def rule_attribute(self, rule: RuleName) -> str:
+        """Return what metrics record as a rule's ``reflexr.rule``.
+
+        That is its name, or for a stored rule its namespace, such as ``chat:*``, so tenants'
+        rules share a series per namespace.
+        """
+        namespace = rule.partition(":")[0]
+        return f"{namespace}:*" if namespace in self._stored_namespaces else rule
 
     def record(
         self,
@@ -57,12 +70,16 @@ class Telemetry:
     ) -> None:
         """Record a measurement of a registered metric.
 
+        A rule is recorded as :meth:`rule_attribute` says.
+
         Raises:
             KeyError: If the metric is not in the registry.
             ValueError: If an attribute is not one the metric declares.
         """
         recorder = self._recorders[metric.name]
         given = {**(attributes or {}), a.TENANT_ID: tenant_id, a.WORKSPACE_ID: workspace_id}
+        if a.RULE in given:
+            given[a.RULE] = self.rule_attribute(str(given[a.RULE]))
         undeclared = given.keys() - METRICS[metric.name].attributes
         if undeclared:
             raise ValueError(f"{metric.name} does not declare {sorted(undeclared)}")

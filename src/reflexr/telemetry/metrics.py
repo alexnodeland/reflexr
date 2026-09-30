@@ -7,7 +7,8 @@ accident, and the dashboards in ``deploy/grafana/dashboards/`` are tested agains
 The cardinality policy, as in artifactr (its ADR-0036):
 
 - Run, firing, event, chain and scope values are never metric attributes. Those granularities
-  come from traces. Rule names are, since code bounds them.
+  come from traces. Rule names are, since code bounds them; a stored rule is recorded as its
+  namespace, such as ``chat:*``, which configuration bounds.
 - Tenant and workspace are attributes by default. :data:`MetricsDetail` names how much of
   that detail to keep, and ``reflexr.otel.metric_views`` turns it into OpenTelemetry views
   that drop the rest before aggregation.

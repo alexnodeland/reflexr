@@ -500,7 +500,7 @@ async def test_a_disabled_rules_run_found_due_is_left_waiting(clock: FakeClock) 
 
 
 async def test_runs_of_rules_no_longer_registered_are_cancelled(
-    build: Build, storage: Storage
+    build: Build, storage: Storage, telemetry: Telemetry
 ) -> None:
     async with storage.transaction(ACME) as transaction:
         await transaction.save_runs([fired("r1", rule="app:retired")])
@@ -510,8 +510,10 @@ async def test_runs_of_rules_no_longer_registered_are_cancelled(
     assert orphan is not None
     assert (orphan.status, (await storage.read(ACME))[-1].event) == (
         "cancelled",
-        RunCancelled(run_id="r1", rule="app:retired", reason="its rule is no longer registered"),
+        RunCancelled(run_id="r1", rule="app:retired", reason="its rule is gone from the workspace"),
     )
+    [(attributes, count)] = telemetry.points("reflexr.runs")
+    assert (attributes[a.RULE], attributes[a.RUN_STATUS], count) == ("app:retired", "cancelled", 1)
 
 
 async def test_settling_gives_up_on_endless_work(build: Build) -> None:
