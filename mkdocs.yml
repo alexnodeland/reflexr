@@ -209,6 +209,7 @@ nav:
           - adr/0043-graph-checkpoints.md
           - adr/0044-surfaces.md
           - adr/0045-scores-on-evalr.md
+          - adr/0046-one-docs-build.md
           - adr/template.md
       - RFCs:
           - rfcs/README.md

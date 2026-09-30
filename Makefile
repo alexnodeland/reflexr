@@ -34,7 +34,7 @@ test: ## Run the tests with the 100% branch-coverage gate
 
 check: lint typecheck test ## Run everything CI runs
 
-docs: ## Build the documentation site in strict mode, and check its lists rendered, as CI does
+docs: changelog ## Build the documentation site, changelog included, in strict mode, and check its lists rendered, as the Docs workflow does
 	$(UV) run zensical build --strict --clean
 	$(UV) run python scripts/check_site.py site
 

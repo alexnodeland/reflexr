@@ -27,7 +27,7 @@ Run `make` on its own to list every command:
 | `make pg-up` / `make pg-down` | Start or stop PostgreSQL for the SQL tests, from `compose.yaml` (needs Docker) |
 | `make app-up` | Build and start oncall, the reference app, on PostgreSQL, at <http://localhost:8000> |
 | `make test-pg` | Run the tests on PostgreSQL as well as SQLite |
-| `make docs` | Build the documentation site in strict mode and check that its lists rendered, as CI does |
+| `make docs` | Build the documentation site, changelog included, in strict mode and check that its lists rendered, as the Docs workflow does |
 | `make docs-serve` | Serve the documentation site with live reload at <http://localhost:8000> |
 | `make changelog` | Regenerate `CHANGELOG.md` from commit history |
 
@@ -91,7 +91,7 @@ fix(workspace): release a run's lease when the run is cancelled
 docs(adr): record the cron parsing decision
 ```
 
-Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`. Scopes are package or area names: `core`, `workspace`, `agent`, `sql`, `fastapi`, `mcp`, `examples`, `deploy`, `docs`, `adr`, `rfc`. Mark breaking changes with `!` (`feat(core)!: ...`) and a `BREAKING CHANGE:` footer. The changelog is generated from these messages. Don't edit `CHANGELOG.md` by hand: the documentation site regenerates it from `main`'s history on every build, and `make changelog` regenerates the file before a release.
+Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`. Scopes are package or area names: `core`, `workspace`, `agent`, `sql`, `fastapi`, `mcp`, `examples`, `deploy`, `docs`, `adr`, `rfc`. Mark breaking changes with `!` (`feat(core)!: ...`) and a `BREAKING CHANGE:` footer. The changelog is generated from these messages. Don't edit `CHANGELOG.md` by hand: `make docs` regenerates it from the history for the documentation site, as every build of the site does, and `make changelog` regenerates the file to commit before a release. Don't commit the `CHANGELOG.md` that `make docs` leaves in your working tree.
 
 ## Dependencies
 

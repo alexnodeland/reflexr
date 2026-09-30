@@ -1,37 +1,38 @@
-# Builds the documentation site and publishes it to GitHub Pages at
-# https://reflexr.alexnodeland.com (ADR-0032, ADR-0033): on every push to main, so the site
-# always shows main's documentation, and by hand. The custom domain is set in the repository's
-# Pages settings, with "GitHub Actions" as the source.
+# Builds the documentation site with `make docs` on every pull request, and publishes it to
+# GitHub Pages at https://reflexr.alexnodeland.com (ADR-0032, ADR-0033, ADR-0046) from
+# main: on every push, so the site always shows main's documentation, and by hand. The custom
+# domain is set in the repository's Pages settings, with "GitHub Actions" as the source.
 
 name: Docs
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Runs on main wait their turn, so an older commit never deploys after a newer one; a newer run
+# on a pull request cancels the older one.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: docs-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
-    name: Build
+    name: Docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0  # git-cliff reads the whole history
+          fetch-depth: 0  # make docs runs git-cliff, which reads the whole history
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
       - run: uv sync --locked --all-extras --all-groups --all-packages
-      - run: uv run git-cliff --output CHANGELOG.md  # the site shows main's changelog
-      - run: uv run zensical build --strict --clean
-      - run: uv run python scripts/check_site.py site
+      - run: make docs
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
@@ -39,6 +40,7 @@ jobs:
 
   deploy:
     name: Deploy
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:
