@@ -72,9 +72,9 @@ async def test_severe_alerts_are_triaged_and_the_incident_resolved(
     assert chain == {third_alert["id"]}
     assert (opened["causation"]["depth"], resolved["causation"]["depth"]) == (1, 2)
 
-    # The runbook checkpointed after every step, the decision included.
+    # The runbook checkpointed after every step and after the decision, but not before it.
     steps = [e["event"]["step"] for e in await log(client, "run_progressed")]
-    assert steps == ["__start__", "diagnose", "decide", "roll_back", "verify", "resolve", "__end__"]
+    assert steps == ["__start__", "decide", "roll_back", "verify", "resolve", "__end__"]
 
 
 async def test_alerts_count_per_service_within_five_minutes(

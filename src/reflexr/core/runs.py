@@ -51,6 +51,12 @@ RunStatus = Literal["pending", "running", "retrying", "succeeded", "dead", "canc
 FINISHED: frozenset[RunStatus] = frozenset({"succeeded", "dead", "cancelled", "skipped"})
 """Statuses in which a run does not run again unless retried."""
 
+WAITING: frozenset[RunStatus] = frozenset({"pending", "retrying"})
+"""Statuses in which a run waits for its next attempt to start."""
+
+HOLDING: frozenset[RunStatus] = frozenset({"pending", "retrying", "running"})
+"""Statuses in which a run of a rule ordered by scope holds back the later runs of its scope."""
+
 
 class Run(BaseModel):
     """One firing's action: its status, attempts, and a graph's latest checkpoint."""
@@ -214,18 +220,21 @@ def runnable(runs: Sequence[Run], rule: Rule, *, now: AwareDatetime) -> list[Run
         rule: Their rule, whose ordering and dead-letter policy apply.
         now: The current time.
     """
-    due = [r for r in runs if r.status in ("pending", "retrying") and r.next_attempt_at <= now]
+    due = [r for r in runs if r.status in WAITING and r.next_attempt_at <= now]
     if rule.ordering == "none":
         return due
-    for candidate in runs:
-        if candidate.status in ("cancelled", "skipped", "succeeded"):
-            continue
-        if candidate.status == "dead":
-            if rule.on_dead_letter == "block":
-                return []
-            continue
-        return [candidate] if candidate in due else []
-    return []
+    blocking = rule.on_dead_letter == "block"
+    first = next((r for r in runs if holds(r, blocking=blocking)), None)
+    return [first] if first in due else []
+
+
+def holds(run: Run, *, blocking: bool) -> bool:
+    """Whether a run of a rule ordered by scope holds back the later runs of its scope.
+
+    It does while it is waiting or running, and a dead-lettered one does too if its rule blocks
+    (``on_dead_letter="block"``).
+    """
+    return run.status in HOLDING or (blocking and run.status == "dead")
 
 
 def _require(run: Run, action: str, *statuses: RunStatus) -> None:

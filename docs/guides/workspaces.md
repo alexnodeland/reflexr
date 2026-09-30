@@ -32,7 +32,7 @@ ada = monitoring.as_actor(UserActor(id="ada", name="Ada"))
 | `max_depth` | 8 | The deepest causal chain an event may extend ([Causation depth](safety.md#causation-depth)) |
 | `tracer_provider`, `meter_provider` | OpenTelemetry's global ones | Where spans and metrics go ([Observability](observability.md)) |
 
-`open(tenant_id, workspace_id, actor=...)` is the only place a tenant id enters. The handle it returns is bound to that tenant, that workspace and one actor, and nothing on it can reach another tenant. Workspaces need no creating: opening one that has never been written to gives an empty workspace, and it appears to the reactor once it has a log. Handles are cheap, so open one per request or connection, for the actor making it. `as_actor(actor)` returns a handle on the same workspace acting as someone else, and every write through a handle is attributed to its actor.
+`open(tenant_id, workspace_id, actor=...)` is the only place a tenant id enters. The handle it returns is bound to that tenant, that workspace and one actor, and nothing on it can reach another tenant. Workspaces need no creating: opening one that has never been written to gives an empty workspace, and it appears to the reactor once it has a log. Handles are cheap, so open one per request or connection, for the actor making it. `as_actor(actor)` returns a handle on the same workspace acting as someone else, and every write through a handle is attributed to its actor. `open` also takes an `authorize(tenant_id, workspace_id, actor)` hook, and raises `Forbidden` if it refuses the actor the workspace: the surfaces pass theirs, so REST, the WebSocket and MCP refuse a workspace alike ([Multi-tenancy and security](security.md)).
 
 ## Publishing events
 

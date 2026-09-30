@@ -7,8 +7,6 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-import reflexr.fastapi
-import reflexr.workspace
 from reflexr import Rule, on, run
 from reflexr.core import Event, PredicateFilter
 from reflexr.workspace import Reactor, Schedule, Workspaces
@@ -156,6 +154,18 @@ async def test_commands_are_idempotent_and_map_rejections_to_statuses(app: App) 
     }
 
 
+async def test_a_command_id_is_remembered_per_participant(app: App) -> None:
+    client, _, _ = app
+    frame = {"type": "command", "command_id": "c1", "command": {"type": "publish", "event": ERROR}}
+    url = "/workspaces/prod/commands"
+    first = await client.post(url, json=frame, headers={"x-name": "Ada"})
+    renamed = await client.post(url, json=frame, headers={"x-name": "Ada Lovelace"})
+    assert first.json() == renamed.json(), "one participant, whatever its display name"
+    other = await client.post(url, json=frame, headers={"x-user": "grace"})
+    assert other.json()["outcome"]["seq"] == 2, "another participant's command runs"
+    assert len((await client.get("/workspaces/prod/events")).json()) == 2
+
+
 async def test_the_rule_status_says_whether_a_rule_is_enabled() -> None:
     application, _, _ = build(rules=[spike.model_copy(update={"enabled": False})])
     transport = httpx.ASGITransport(app=application)
@@ -242,10 +252,7 @@ async def test_the_rule_and_schedule_status_bodies_keep_their_json() -> None:
     assert fresh == [{"schedule": "heartbeat-check", "last_tick": None, "next_tick": None}]
 
 
-def test_the_status_bodies_are_the_workspaces_own() -> None:
-    assert reflexr.fastapi.RuleStatus is reflexr.workspace.RuleStatus
-    assert reflexr.fastapi.ScheduleStatus is reflexr.workspace.ScheduleStatus
-    assert {"RuleStatus", "ScheduleStatus"} <= set(reflexr.fastapi.__all__)
+def test_the_status_bodies_forbid_unknown_fields() -> None:
     application, _, _ = build()
     schemas = application.openapi()["components"]["schemas"]
     assert [schemas[name]["additionalProperties"] for name in ("RuleStatus", "ScheduleStatus")] == [
@@ -255,7 +262,6 @@ def test_the_status_bodies_are_the_workspaces_own() -> None:
 
 
 async def test_requests_are_authenticated_and_authorized(app: App) -> None:
-    assert reflexr.fastapi.Authorize is reflexr.workspace.Authorize  # every surface's hook
     client, _, _ = app
     bad = await client.get("/workspaces/prod/events", headers={"x-token": "bad"})
     assert (bad.status_code, bad.json()["detail"]) == (401, "bad token")

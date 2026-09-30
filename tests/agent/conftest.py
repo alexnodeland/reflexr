@@ -7,7 +7,8 @@ import pytest
 from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from tests.workspace.conftest import FakeClock
+from reflexr.agent import function_model
+from tests.clock import FakeClock
 
 Step = ModelResponse | Callable[[list[ModelMessage]], ModelResponse]
 
@@ -30,7 +31,7 @@ class Script:
 
     @property
     def model(self) -> FunctionModel:
-        return FunctionModel(self._respond)
+        return function_model(self._respond)
 
     def _respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         self.requests.append(list(messages))

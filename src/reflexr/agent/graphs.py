@@ -1,4 +1,4 @@
-"""Graph actions: pydantic-graph graphs as adapters of the action port, checkpointed (ADR-0009).
+"""Graph actions: pydantic-graph graphs as adapters of the action port, checkpointed (ADR-0043).
 
 A :class:`GraphAction` drives a ``GraphBuilder`` graph step by step. At each step boundary
 where it is safe to, it saves the graph's state and the tasks that run next to the run, so a
@@ -9,10 +9,11 @@ between a fork and its join, and the next node's input type is known. Inside a f
 resumes from the checkpoint before the fork, so the branches that had finished run again: the
 same at-least-once guarantee runs have everywhere.
 
-A step's input type is its ``StepContext`` annotation. Decisions and forks run no code of their
-own, so their input is whatever the edges into them carry: when every such edge comes, with no
-transform, from a step with a return annotation, the graph's start, or a decision whose type is
-known, and they all carry the same type, that is the node's input type.
+A step's input type is its ``StepContext`` annotation. A fork runs no code of its own, so its
+input is whatever the edges into it carry: when every such edge comes, with no transform, from a
+step with a return annotation or the graph's start, and they all carry the same type, that is
+the fork's input type. The boundary before a decision is never saved: a decision runs no code
+either, so the boundary after it saves the same progress.
 
 A checkpoint is saved only if what it restores reads back as it was: the state, the graph's
 inputs and the next node's inputs. A checkpoint that cannot be resumed, because the graph or
@@ -45,7 +46,7 @@ from pydantic_graph import (
 # pydantic-graph 2.51 does not re-export these from its top level, so they come from its modules,
 # here and nowhere else in reflexr, so that if they move only these lines change: the ids in a
 # task's fork stack, which a checkpoint saves, and the markers on an edge's path, which inferring
-# a decision's or a fork's input type reads.
+# a fork's input type reads.
 from pydantic_graph.id_types import ForkStackItem, NodeID, NodeRunID
 from pydantic_graph.paths import DestinationMarker, TransformMarker
 
@@ -76,16 +77,16 @@ class GraphAction[D, S, I, O]:
     firing and emit events. Its output is the run's output.
 
     A checkpoint saves the next node's inputs as that node's input type. A step's is its
-    ``StepContext`` annotation, and the end node's the graph's output type. A decision's or a
-    fork's is inferred from the edges into it: the return type of the steps they come from, the
-    graph's input type from its start, or the type of a decision before it. It stays unknown
-    when an edge has a transform, or comes from a step with no return annotation (or ``Any``),
-    a join or a fork, or when the edges carry different types. A boundary before a node whose
-    input type is unknown is not saved.
+    ``StepContext`` annotation, and the end node's the graph's output type. A fork's is inferred
+    from the edges into it: the return type of the steps they come from, or the graph's input
+    type from its start. It stays unknown when an edge has a transform, or comes from a step with
+    no return annotation (or ``Any``), a decision, a join or a fork, or when the edges carry
+    different types. A boundary before a node whose input type is unknown is not saved, and
+    neither is one before a decision, which runs no code: the boundary after it saves the same.
 
     Nor is a boundary whose state, graph inputs or next inputs would not read back equal to
     what they were, such as a model given to a stream step or a ``BaseNode``, whose input types
-    say ``Any``, or given to a decision as a subclass, since a decision routes by class.
+    say ``Any``.
 
     Args:
         graph: A graph built with ``GraphBuilder``, whose deps type is ``Reaction[D]``.
@@ -93,10 +94,13 @@ class GraphAction[D, S, I, O]:
         state: Builds the graph's initial state from the reaction; defaults to the state
             type's constructor with no arguments.
         inputs: Builds the graph's inputs from the reaction; defaults to None.
-        input_types: Input types by node id, for the nodes whose type reflexr cannot read or
-            infer, such as a decision after a transform, or a stream step, whose input type
-            reads as ``Any``. An explicit type always wins over an annotation or an inferred
-            type, and decisions after the node infer from it.
+        input_types: Input types by node id, for the steps and forks whose type reflexr
+            cannot read or infer, such as a stream step, whose input type reads as ``Any``, or a
+            fork after a transform. An explicit type wins over an annotation or an inferred one.
+
+    Raises:
+        ValueError: If the action has no name, or ``input_types`` names a node that is not a
+            step or a fork.
     """
 
     graph: Graph[S, Reaction[D], I, O]
@@ -159,7 +163,7 @@ class GraphAction[D, S, I, O]:
         saved: dict[str, Any] = checkpoint
         if saved.get("nodes") != sorted(self.graph.nodes):
             return _discarded("graph_changed")
-        # A node's inferred type depends on the edges into it, not only on the nodes, so a
+        # A fork's inferred type depends on the edges into it, not only on the nodes, so a
         # checkpoint's next node may have no type now (an edge into it gained a transform).
         frontier: list[dict[str, Any]] = saved.get("frontier", [])
         if any(task["node_id"] not in self._types for task in frontier):
@@ -227,9 +231,7 @@ class GraphAction[D, S, I, O]:
         if isinstance(task.inputs, Iterator):
             return None  # writing a one-shot iterator down would use it up before the node runs
         # What cannot be written down, or would not read back as it was, is not saved: the run
-        # resumes from an earlier step instead. A decision routes by class, so its inputs must
-        # read back as the class they had, not only as equal.
-        decision = isinstance(graph.nodes[task.node_id], Decision)
+        # resumes from an earlier step instead.
         try:
             return {
                 **header,
@@ -238,7 +240,7 @@ class GraphAction[D, S, I, O]:
                 "frontier": [
                     {
                         "node_id": task.node_id,
-                        "inputs": _write(self._types[task.node_id], task.inputs, decision),
+                        "inputs": _write(self._types[task.node_id], task.inputs),
                         "fork_stack": _STACK.dump_python(task.fork_stack, mode="json"),
                     }
                 ],
@@ -252,11 +254,19 @@ def _input_adapters(
 ) -> dict[str, TypeAdapter[Any]]:
     """Map each node whose input type is known to an adapter for its inputs.
 
-    An explicit type wins. Otherwise a step's type is its annotation and the end node's the
-    graph's output type, and decisions' and forks' types are inferred from the edges into them.
-    An explicit type pydantic cannot handle raises; an inferred one is dropped, so the graph
-    runs as it would without it, with no checkpoint before that node.
+    An explicit type wins. Otherwise a step's type is its annotation, the end node's the graph's
+    output type, and a fork's the one type the edges into it carry. A decision has none, so the
+    boundary before it is never saved. An explicit type pydantic cannot handle raises; an
+    inferred one is dropped, so the graph runs as it would without it, with no checkpoint before
+    that fork.
+
+    Raises:
+        ValueError: If ``overrides`` names a node that is not a step or a fork, such as a
+            decision, before which nothing is saved.
     """
+    wrong = sorted(n for n in overrides if not isinstance(graph.nodes.get(NodeID(n)), Step | Fork))
+    if wrong:
+        raise ValueError(f"input_types names nodes that are not steps or forks: {', '.join(wrong)}")
     declared: dict[str, Any] = {}
     for node_id, node in graph.nodes.items():
         if isinstance(node, Step):
@@ -267,9 +277,13 @@ def _input_adapters(
             declared[node_id] = graph.output_type
     declared.update(overrides)
     adapters = {node_id: TypeAdapter(kind) for node_id, kind in declared.items()}
-    for node_id, kind in _inferred_types(graph, declared).items():
-        with suppress(PydanticSchemaGenerationError):
-            adapters[node_id] = TypeAdapter(kind)
+    into = _edges_into(graph)
+    for node_id, node in graph.nodes.items():
+        if isinstance(node, Fork) and node_id not in declared:
+            kind = _carried(graph, into.get(node_id, []))
+            if kind is not None:
+                with suppress(PydanticSchemaGenerationError):
+                    adapters[node_id] = TypeAdapter(kind)
     return adapters
 
 
@@ -291,34 +305,6 @@ def _step_output_type(step: Step[Any, Any, Any, Any]) -> Any:
     """
     hint = get_type_hints(step.call).get("return")
     return None if hint is Any or isinstance(hint, TypeVar) else hint
-
-
-def _inferred_types(
-    graph: Graph[Any, Any, Any, Any], declared: Mapping[str, Any]
-) -> dict[str, Any]:
-    """Infer the input types of the decisions and forks ``declared`` does not type.
-
-    Each takes the one type every edge into it carries. Decisions can lead to decisions, so
-    this repeats until a pass learns nothing more.
-    """
-    into = _edges_into(graph)
-    pending = {
-        node_id
-        for node_id, node in graph.nodes.items()
-        if isinstance(node, Decision | Fork) and node_id not in declared
-    }
-    inferred: dict[str, Any] = {}
-    while True:
-        known = {**declared, **inferred}
-        found = {
-            node_id: kind
-            for node_id in pending
-            if (kind := _carried(graph, into.get(node_id, []), known)) is not None
-        }
-        if not found:
-            return inferred
-        inferred |= found
-        pending -= found.keys()
 
 
 def _edges_into(graph: Graph[Any, Any, Any, Any]) -> dict[NodeID, list[tuple[NodeID, bool]]]:
@@ -344,46 +330,38 @@ def _edges_into(graph: Graph[Any, Any, Any, Any]) -> dict[NodeID, list[tuple[Nod
     return into
 
 
-def _carried(
-    graph: Graph[Any, Any, Any, Any],
-    edges: Sequence[tuple[NodeID, bool]],
-    known: Mapping[str, Any],
-) -> Any:
+def _carried(graph: Graph[Any, Any, Any, Any], edges: Sequence[tuple[NodeID, bool]]) -> Any:
     """The type every one of these edges carries, or None if one is unknown or they differ."""
-    kinds = [
-        None if transformed else _output_type(graph, source, known) for source, transformed in edges
-    ]
+    kinds = [None if transformed else _output_type(graph, source) for source, transformed in edges]
     first = kinds[0] if kinds else None
     if first is None or any(kind != first for kind in kinds):
         return None
     return first
 
 
-def _output_type(graph: Graph[Any, Any, Any, Any], source: NodeID, known: Mapping[str, Any]) -> Any:
+def _output_type(graph: Graph[Any, Any, Any, Any], source: NodeID) -> Any:
     """The type a node passes along its edges, or None if it is not known."""
     node = graph.nodes[source]
     if isinstance(node, StartNode):
         return graph.input_type
-    if isinstance(node, Decision):
-        return known.get(source)  # a decision passes its input on
     if isinstance(node, Step):
         return _step_output_type(node)
-    return None  # a join's reduced value, or a fork's items
+    return None  # a decision's input, a join's reduced value, or a fork's items
 
 
-def _write(adapter: TypeAdapter[Any], value: object, same_class: bool = False) -> JsonValue:
-    """Write a value down as JSON, if it reads back equal to it (and of its class, if asked).
+def _write(adapter: TypeAdapter[Any], value: object) -> JsonValue:
+    """Write a value down as JSON, if it reads back equal to it.
 
     Raises:
         _Unwritable: If it does not: a model saved through a type that says ``Any`` reads back
-            as a dict, and a subclass as the class its type declares.
+            as a dict.
     """
     try:
         dumped = adapter.dump_python(value, mode="json", warnings="error")
         back = adapter.validate_python(dumped)
     except (PydanticSerializationError, ValidationError) as error:
         raise _Unwritable from error
-    if back != value or (same_class and type(back) is not type(value)):
+    if back != value:
         raise _Unwritable
     return dumped
 

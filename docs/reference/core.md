@@ -212,6 +212,10 @@ A firing's run and its lifecycle, as pure transitions. See [The reactor](../guid
 
 ::: reflexr.core.FINISHED
 
+::: reflexr.core.WAITING
+
+::: reflexr.core.HOLDING
+
 ::: reflexr.core.create_run
 
 ::: reflexr.core.start
@@ -229,6 +233,8 @@ A firing's run and its lifecycle, as pure transitions. See [The reactor](../guid
 ::: reflexr.core.retry
 
 ::: reflexr.core.runnable
+
+::: reflexr.core.holds
 
 ## Feedback
 

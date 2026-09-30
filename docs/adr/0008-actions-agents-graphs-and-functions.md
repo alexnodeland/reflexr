@@ -34,4 +34,4 @@ Reflex wrapped pydantic-ai in its own class hierarchy (`Agent`, `BaseAgent`, `Si
 
 ## Action items
 
-1. [ ] Implement `Reaction`, function actions (RFC-0001 phase 2), and `AgentAction`, `EventContext` and `GraphAction` (phase 3).
+1. [x] Implement `Reaction`, function actions (RFC-0001 phase 2), and `AgentAction`, `EventContext` and `GraphAction` (phase 3).

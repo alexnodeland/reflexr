@@ -77,9 +77,8 @@ from reflexr.telemetry import (
 from reflexr.telemetry import attributes as a
 from reflexr.telemetry.metrics import EVENTS_PUBLISHED, FEEDBACK, RUNS
 from reflexr.telemetry.telemetry import Attributes
-from reflexr.workspace.memory import Clock, utc_now
 from reflexr.workspace.schedules import Schedule
-from reflexr.workspace.storage import Entry, Storage, Transaction, WorkspaceRef
+from reflexr.workspace.storage import Clock, Entry, Storage, Transaction, WorkspaceRef, utc_now
 
 type _Transition = Callable[[Run, datetime], tuple[Run, RunRequeued | RunSkipped | RunCancelled]]
 
@@ -87,7 +86,8 @@ Authorize = Callable[[TenantId, WorkspaceId, Actor], Awaitable[bool]]
 """Decides whether an actor may use a workspace of its tenant.
 
 The surfaces that serve workspaces, the FastAPI router and the MCP server, take one as their
-``authorize`` hook, and ask it before opening a workspace for a request.
+``authorize`` hook, and pass it to :meth:`Workspaces.open` for every request that names a
+workspace.
 """
 
 
@@ -232,14 +232,38 @@ class Workspaces:
         return self._context.telemetry
 
     async def open(
-        self, tenant_id: TenantId, workspace_id: WorkspaceId, *, actor: Actor
+        self,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+        *,
+        actor: Actor,
+        authorize: Authorize | None = None,
     ) -> "Workspace":
         """Return a handle on a tenant's workspace, acting as ``actor``.
 
         This is the only place a tenant id enters; nothing on the handle can reach another
-        tenant.
+        tenant. The surfaces pass their ``authorize`` hook, so each refuses a workspace alike.
+
+        Raises:
+            Forbidden: If ``authorize`` is given and refuses the actor this workspace.
         """
+        if authorize is not None and not await authorize(tenant_id, workspace_id, actor):
+            raise Forbidden("this workspace is not yours to use")
         return Workspace(self._context, WorkspaceRef(tenant_id, workspace_id), actor)
+
+    def schedules_for(self, tenant_id: TenantId) -> list[Schedule]:
+        """Return the schedules that tick in a tenant's workspaces, as the tenant may see them.
+
+        A schedule that targets particular workspaces lists only the tenant's own, so no tenant
+        sees another's ids; one that targets none of them is left out.
+        """
+        seen: list[Schedule] = []
+        for schedule in self._context.schedules.values():
+            if schedule.workspaces == "all":
+                seen.append(schedule)
+            elif own := tuple(t for t in schedule.workspaces if t[0] == tenant_id):
+                seen.append(schedule.model_copy(update={"workspaces": own}))
+        return seen
 
 
 @dataclass(frozen=True)
@@ -666,8 +690,9 @@ class Workspace:
         Every surface reports this, so they agree. A rule that has not evaluated the workspace
         yet is at cursor 0, and the progress of a rule no longer registered is left out.
         """
-        head = await self.head_seq()
+        # Progress first: the head only grows, so no cursor read before it is past it.
         progress = await self.rule_progress()
+        head = await self.head_seq()
         letters = Counter(letter.rule for letter in await self.dead_letters())
         statuses: list[RuleStatus] = []
         for name, rule in self._context.rules.items():

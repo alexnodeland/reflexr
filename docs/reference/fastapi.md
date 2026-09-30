@@ -14,21 +14,17 @@ The `fastapi` extra. See [Serving over REST and WebSocket](../guides/serving.md)
 
 ::: reflexr.fastapi.ResolveActor
 
-::: reflexr.fastapi.Authorize
-
 ::: reflexr.fastapi.Unauthorized
 
 ::: reflexr.fastapi.STATUS_CODES
 
 ## Bodies and responses
 
+The router's `authorize` hook, [`Authorize`](workspace.md#reflexr.workspace.Authorize), and the statuses it returns, [`RuleStatus`](workspace.md#reflexr.workspace.RuleStatus) and [`ScheduleStatus`](workspace.md#reflexr.workspace.ScheduleStatus), are the workspace layer's, shared by every surface.
+
 ::: reflexr.fastapi.PublishItem
 
 ::: reflexr.fastapi.PublishBatch
-
-::: reflexr.fastapi.RuleStatus
-
-::: reflexr.fastapi.ScheduleStatus
 
 ## The stream
 

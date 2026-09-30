@@ -9,14 +9,13 @@ from typing import Any, Literal
 
 import pytest
 from mcp import Client
-from mcp.server.mcpserver import Context
 from mcp.server.subscriptions import InMemorySubscriptionBus, ResourceUpdated, ServerEvent
 from mcp.shared.exceptions import MCPError
 from mcp.types import INVALID_PARAMS, TextContent, TextResourceContents
 
 from reflexr import Actor, F, Feedback, Rule, by, on, run
 from reflexr.core import EvaluationError, ExternalAgentActor, TenantId, WorkspaceId
-from reflexr.mcp import ReflexrMcp, run_uri
+from reflexr.mcp import McpContext, ReflexrMcp, run_uri
 from reflexr.workspace import (
     InMemoryStorage,
     Reaction,
@@ -54,7 +53,7 @@ class Identity:
         self.tenant: TenantId = "acme"
         self.resolved = 0
 
-    async def resolve(self, ctx: Context) -> tuple[TenantId, ExternalAgentActor]:
+    async def resolve(self, ctx: McpContext) -> tuple[TenantId, ExternalAgentActor]:
         self.resolved += 1
         return self.tenant, CLAUDE
 

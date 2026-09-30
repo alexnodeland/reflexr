@@ -62,4 +62,4 @@ Option A is the only one that is right for all four patterns and keeps the decis
 
 1. [x] `Match.correlation_id`, `Firing.correlation_id`, `Run.correlation_id`, and `chains.json` conformance cases.
 2. [x] `run_requeued` and `core.retry` returning it.
-3. [ ] The reactor appends `rule_fired` in the firing's chain (phase 2c).
+3. [x] The reactor appends `rule_fired` in the firing's chain (phase 2c).

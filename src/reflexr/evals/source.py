@@ -19,7 +19,7 @@ from reflexr.core import (
     RunTarget,
     TargetKind,
 )
-from reflexr.evals.context import RunRecord, chain_events, run_record
+from reflexr.evals.context import LogIndex, RunRecord
 from reflexr.workspace import Workspace
 
 
@@ -93,29 +93,36 @@ class LogFeedbackSource[InputT: BaseModel, VerdictT: Feedback]:
         return self._feedback_type
 
     async def examples(self) -> AsyncIterator[Example[InputT, VerdictT]]:
-        """Yield an example for each piece of the feedback type, oldest first."""
-        for envelope in await self._workspace.read():
+        """Yield an example for each piece of the feedback type, oldest first.
+
+        The log is read once for all of them, and only if there is feedback to build from.
+        """
+        log: LogIndex | None = None
+        for envelope in await self._workspace.read(types=[FeedbackGiven.event_type]):
             event = envelope.event
-            if not isinstance(event, FeedbackGiven):
-                continue
+            assert isinstance(event, FeedbackGiven)
             if event.feedback_type != self._feedback_type.feedback_type:
                 continue
             if self._targets is not None and event.target.kind not in self._targets:
                 continue
             if envelope.actor.kind == "evaluator" and not self._include_evaluators:
                 continue
-            yield await self._example(envelope, event)
+            if log is None:
+                log = LogIndex(await self._workspace.read())
+            yield await self._example(envelope, event, log)
 
-    async def _example(self, envelope: Envelope, event: FeedbackGiven) -> Example[InputT, VerdictT]:
+    async def _example(
+        self, envelope: Envelope, event: FeedbackGiven, log: LogIndex
+    ) -> Example[InputT, VerdictT]:
         feedback = self._feedback_type.model_validate(event.value)
         target = event.target
         context: FeedbackContext[VerdictT]
         if isinstance(target, ChainTarget):
-            chain = await chain_events(self._workspace, target.correlation_id)
+            chain = log.chain(target.correlation_id)
             context = FeedbackContext(envelope=envelope, feedback=feedback, chain=chain)
         else:
             run_id = target.run_id if isinstance(target, RunTarget) else target.firing_id
-            run = await run_record(self._workspace, run_id)
+            run = log.run_record(await self._workspace.run(run_id))
             context = FeedbackContext(envelope=envelope, feedback=feedback, run=run)
         built = self._input(context)
         value = await built if isawaitable(built) else built

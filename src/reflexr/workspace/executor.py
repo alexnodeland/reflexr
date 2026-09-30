@@ -17,12 +17,13 @@ from time import perf_counter
 from typing import Any, Literal
 
 from opentelemetry import baggage, context
-from opentelemetry.trace import Span, Status, StatusCode
+from opentelemetry.trace import Status, StatusCode
 from opentelemetry.util.types import AttributeValue
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
 from reflexr.core import (
     FINISHED,
+    WAITING,
     AgentActor,
     Envelope,
     Rule,
@@ -43,6 +44,7 @@ from reflexr.core import (
 from reflexr.telemetry import (
     Metric,
     chain_attributes,
+    current_trace_id,
     current_traceparent,
     parse_traceparent,
     untraced,
@@ -57,7 +59,9 @@ from reflexr.workspace.workspace import Workspaces
 
 logger = logging.getLogger("reflexr.reactor")
 
-EXECUTOR = SystemActor(name="reactor")
+REACTOR = SystemActor(name="reactor")
+"""The actor of the facts the reactor records, about the rules it evaluates and the runs it
+executes."""
 
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
@@ -185,7 +189,7 @@ class Executor[D]:
                 a.RUN_ID: due.id,
             },
         ) as span:
-            claimed = await self._claim(ref, due, rule, span)
+            claimed = await self._claim(ref, due, rule)
             if claimed is None:
                 return False
             run, events = claimed
@@ -207,7 +211,7 @@ class Executor[D]:
             return True
 
     async def _claim(
-        self, ref: WorkspaceRef, due: Run, rule: Rule, span: Span
+        self, ref: WorkspaceRef, due: Run, rule: Rule
     ) -> tuple[Run, tuple[Envelope, ...]] | None:
         """Start an attempt of a run, if it is still due and first in its scope."""
         async with self._workspaces.storage.transaction(ref) as transaction:
@@ -220,14 +224,12 @@ class Executor[D]:
                 await self._save(transaction, failed, fact)
                 self._record_status(ref, rule, failed)
                 return None
-            if run.status not in ("pending", "retrying") or run.next_attempt_at > now:
+            if run.status not in WAITING or run.next_attempt_at > now:
                 return None
             scope_runs = await transaction.scope_runs(run.rule, run.scope_key)
             if run.id not in {r.id for r in runnable(scope_runs, rule, now=now)}:
                 return None
-            context = span.get_span_context()
-            trace_id = f"{context.trace_id:032x}" if context.is_valid else None
-            started, fact = start(run, now=now, trace_id=trace_id)
+            started, fact = start(run, now=now, trace_id=current_trace_id())
             await self._save(transaction, started, fact)
             events: list[Envelope] = []
             for seq in run.matched:
@@ -383,7 +385,7 @@ class Executor[D]:
         await transaction.save_runs([run])
         entry = Entry(
             id=new_event_id(),
-            actor=EXECUTOR,
+            actor=REACTOR,
             event=fact,
             causation=run.causation,
             correlation_id=run.correlation_id,

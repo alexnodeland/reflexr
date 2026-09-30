@@ -20,6 +20,14 @@ pydantic-graph graphs as actions, checkpointed at their step boundaries. See [Gr
 
 ::: reflexr.agent.GraphAction
 
+## Scripting a model
+
+A model for tests, answering plain and streamed requests from one function. See [Scripting agents](../guides/testing.md#scripting-agents).
+
+::: reflexr.agent.function_model
+
+::: reflexr.agent.Respond
+
 ## Describing a firing
 
 How firings and envelopes are shown to a model. Use them in your own prompts.

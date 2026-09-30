@@ -9,7 +9,13 @@ from pydantic import BaseModel
 
 from reflexr import EvaluatorActor, F, Feedback, Rule, SourceActor, UserActor, by, on, run
 from reflexr.core import ChainTarget, FeedbackGiven, FiringTarget, RunSucceeded, RunTarget
-from reflexr.evals import EvaluatorAction, FeedbackContext, LogFeedbackSource, run_record
+from reflexr.evals import (
+    EvaluatorAction,
+    FeedbackContext,
+    LogFeedbackSource,
+    chain_events,
+    run_record,
+)
 from reflexr.workspace import InMemoryStorage, Reaction, Reactor, Workspace, Workspaces
 from tests.event_types import Deploy, ServiceError
 
@@ -71,6 +77,7 @@ async def test_feedback_becomes_examples_with_the_context_it_is_about() -> None:
     assert (source.input_type, source.verdict_type) == (TriageInput, TriageQuality)
     examples = [e async for e in source.examples()]
     chain = [e for e in await workspace.read() if e.correlation_id == done.correlation_id]
+    assert await chain_events(workspace, done.correlation_id) == tuple(chain)
     assert [e.input for e in examples] == [
         TriageInput(service="auth", emitted=1),
         TriageInput(service="auth", emitted=1),

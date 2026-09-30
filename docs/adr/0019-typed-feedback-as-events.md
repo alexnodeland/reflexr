@@ -31,4 +31,4 @@ People's judgements of workflows (whether a triage was right, whether a rule sho
 
 ## Action items
 
-1. [ ] Implement RFC-0002 phase B2, and the mirror in phase B3.
+1. [x] Implement RFC-0002 phase B2, and the mirror in phase B3.

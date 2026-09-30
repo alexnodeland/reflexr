@@ -47,6 +47,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import InstrumentedAttribute, aliased
 
 from reflexr.core import (
+    HOLDING,
+    WAITING,
     Envelope,
     EvaluationError,
     EventId,
@@ -70,19 +72,13 @@ from reflexr.sql.tables import (
     StateRow,
     WorkspaceRow,
 )
-from reflexr.workspace import Clock, Entry, RunPolicy, WorkspaceRef, run_lease, utc_now
+from reflexr.workspace import RUN_LEASE_PREFIX, Clock, Entry, RunPolicy, WorkspaceRef, utc_now
 
 _PAGE = 500
 """How many envelopes a subscription reads at a time."""
 
 _CHUNK = 500
 """How many keys one ``IN`` clause lists, well within every driver's parameter limit."""
-
-_RUN_LEASE = run_lease("")
-"""The prefix of a run's lease key, which ends with the run's id."""
-
-_HOLDING = ("pending", "retrying", "running")
-"""The statuses in which a run of an ordered rule holds back the later runs of its scope."""
 
 
 async def _to_the_end[T](call: Awaitable[T]) -> T:
@@ -538,9 +534,9 @@ class SqlStorage:
         lease = and_(
             LeaseRow.tenant_id == RunRow.tenant_id,
             LeaseRow.workspace_id == RunRow.workspace_id,
-            LeaseRow.key == _RUN_LEASE + RunRow.id,
+            LeaseRow.key == RUN_LEASE_PREFIX + RunRow.id,
         )
-        waiting = and_(RunRow.status.in_(("pending", "retrying")), RunRow.next_attempt_at <= now)
+        waiting = and_(RunRow.status.in_(sorted(WAITING)), RunRow.next_attempt_at <= now)
         if policy.ordered:
             waiting = and_(waiting, _first_in_scope(policy))
         orphaned = and_(
@@ -642,7 +638,7 @@ def _first_in_scope(policy: RunPolicy) -> ColumnElement[bool]:
     seek to.
     """
     blocking = policy.ordered & policy.blocking
-    groups = [(policy.ordered - blocking, _HOLDING), (blocking, (*_HOLDING, "dead"))]
+    groups = [(policy.ordered - blocking, HOLDING), (blocking, HOLDING | {"dead"})]
     return or_(
         RunRow.rule.not_in(sorted(policy.ordered)),
         *(
@@ -653,7 +649,7 @@ def _first_in_scope(policy: RunPolicy) -> ColumnElement[bool]:
     )
 
 
-def _held_back(statuses: Sequence[str]) -> Exists:
+def _held_back(statuses: Collection[str]) -> Exists:
     """Whether an earlier run of the outer run's scope, in firing order, has one of ``statuses``.
 
     Firing order is ``fired_seq``, then creation position, as in ``scope_runs``. The status
@@ -666,6 +662,6 @@ def _held_back(statuses: Sequence[str]) -> Exists:
         earlier.workspace_id == RunRow.workspace_id,
         earlier.rule == RunRow.rule,
         earlier.scope_key == RunRow.scope_key,
-        earlier.status.in_(statuses),
+        earlier.status.in_(sorted(statuses)),
         tuple_(earlier.fired_seq, earlier.position) < tuple_(RunRow.fired_seq, RunRow.position),
     )

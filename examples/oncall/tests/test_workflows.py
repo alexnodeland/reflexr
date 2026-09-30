@@ -96,7 +96,7 @@ async def test_a_failed_verification_resumes_without_rolling_back_again(
     assert (done["status"], done["attempts"]) == ("succeeded", 2)
     assert deployer.rollbacks == [Rollback("api", "v1")], "the retry resumed at verify"
     steps = [e["event"]["step"] for e in await log(client, "run_progressed")]
-    assert steps == ["__start__", "diagnose", "decide", "roll_back", "verify", "resolve", "__end__"]
+    assert steps == ["__start__", "decide", "roll_back", "verify", "resolve", "__end__"]
     [resolved] = await log(client, "incident.resolved")
     assert resolved["event"]["resolution"].endswith("rolled api back to v1; api is healthy")
 

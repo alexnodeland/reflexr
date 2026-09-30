@@ -76,6 +76,8 @@ The storage protocol, and the in-memory implementation. See [Storage](../guides/
 
 ::: reflexr.workspace.run_lease
 
+::: reflexr.workspace.RUN_LEASE_PREFIX
+
 ::: reflexr.workspace.RunPolicy
 
 ::: reflexr.workspace.InMemoryStorage

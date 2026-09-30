@@ -41,8 +41,9 @@ from reflexr.workspace import (
     WorkspaceRef,
     Workspaces,
 )
+from tests.clock import START, FakeClock
 from tests.event_types import Deploy, ServiceError
-from tests.workspace.conftest import START, Build, FakeClock, Telemetry
+from tests.workspace.conftest import Build, Telemetry
 from tests.workspace.helpers import fired
 
 ACME = WorkspaceRef("acme", "prod")

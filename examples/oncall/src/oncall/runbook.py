@@ -164,9 +164,9 @@ def incident_of(reaction: Reaction[OncallDeps]) -> IncidentOpened:
 
 
 def runbook_action() -> GraphAction[OncallDeps, RunbookState, IncidentOpened, str]:
-    """The runbook as an action.
+    """The runbook as an action, checkpointed after every step.
 
-    The decision's input type is ``diagnose``'s return type, which reflexr infers, so the
-    boundary after ``diagnose`` is checkpointed too.
+    ``diagnose``'s progress is saved at the boundary after ``decide``: nothing is saved before a
+    decision.
     """
     return GraphAction(runbook_graph, inputs=incident_of)

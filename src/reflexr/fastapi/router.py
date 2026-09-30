@@ -17,6 +17,7 @@ from reflexr.core import (
     Envelope,
     EvaluationError,
     EventId,
+    Forbidden,
     PublishedOutcome,
     Rejection,
     Rule,
@@ -104,9 +105,10 @@ def reflexr_router(
         trace.get_current_span().set_attributes(
             {**workspace_attributes(tenant_id, workspace_id), **actor_attributes(actor)}
         )
-        if authorize is not None and not await authorize(tenant_id, workspace_id, actor):
-            raise HTTPException(status_code=403, detail="this workspace is not yours to use")
-        return await workspaces.open(tenant_id, workspace_id, actor=actor)
+        try:
+            return await workspaces.open(tenant_id, workspace_id, actor=actor, authorize=authorize)
+        except Forbidden as refused:
+            raise HTTPException(status_code=403, detail=refused.message) from refused
 
     async def _authenticate(connection: HTTPConnection) -> tuple[TenantId, Actor]:
         try:
@@ -124,7 +126,12 @@ def reflexr_router(
     signed_in = Depends(authenticated)
 
     async def run_command(workspace: Workspace, frame: CommandFrame) -> CommandResult:
-        key = (workspace.tenant_id, workspace.workspace_id, repr(workspace.actor), frame.command_id)
+        key = (
+            workspace.tenant_id,
+            workspace.workspace_id,
+            workspace.actor.participant,
+            frame.command_id,
+        )
         if (remembered := results.get(key)) is not None:
             return remembered
         try:
@@ -227,11 +234,7 @@ def reflexr_router(
         tenant sees another's ids; one that targets none of them is left out.
         """
         tenant_id, _ = await _authenticate(request)
-        return [
-            seen
-            for schedule in workspaces.schedules.values()
-            if (seen := _seen_by(schedule, tenant_id)) is not None
-        ]
+        return workspaces.schedules_for(tenant_id)
 
     @router.get("/workspaces/{workspace_id}/schedules")
     async def list_schedule_status(
@@ -254,14 +257,6 @@ def reflexr_router(
         ).serve()
 
     return router
-
-
-def _seen_by(schedule: Schedule, tenant_id: TenantId) -> Schedule | None:
-    """The schedule as one tenant may see it: its targets narrowed to the tenant's workspaces."""
-    if schedule.workspaces == "all":
-        return schedule
-    own = tuple(target for target in schedule.workspaces if target[0] == tenant_id)
-    return schedule.model_copy(update={"workspaces": own}) if own else None
 
 
 async def _or_http[T](awaitable: Awaitable[T]) -> T:

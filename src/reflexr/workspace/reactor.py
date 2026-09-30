@@ -22,7 +22,6 @@ from reflexr.core import (
     Fact,
     InvalidRule,
     Rule,
-    SystemActor,
     Tick,
     begin,
     create_run,
@@ -44,7 +43,7 @@ from reflexr.telemetry.metrics import (
 )
 from reflexr.telemetry.telemetry import Attributes
 from reflexr.workspace.actions import Action, RunContext
-from reflexr.workspace.executor import Executor
+from reflexr.workspace.executor import REACTOR, Executor
 from reflexr.workspace.schedules import SCHEDULER, Schedule, tick_id
 from reflexr.workspace.storage import Entry, Transaction, WorkspaceRef
 from reflexr.workspace.workspace import Workspaces, meet_rules
@@ -53,9 +52,6 @@ logger = logging.getLogger("reflexr.reactor")
 
 EVALUATION_LEASE = "evaluate"
 """The lease key a reactor holds on a workspace while it evaluates it."""
-
-REACTOR = SystemActor(name="reactor")
-"""The actor of the facts the reactor records."""
 
 _CONTENDED_WAIT = timedelta(milliseconds=2)
 """How long :meth:`Reactor.settle` first waits after a round in which another reactor held a

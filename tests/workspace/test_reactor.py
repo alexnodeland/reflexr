@@ -36,8 +36,9 @@ from reflexr.workspace import (
     WorkspaceRef,
     Workspaces,
 )
+from tests.clock import FakeClock
 from tests.event_types import Deploy, Heartbeat, ServiceError
-from tests.workspace.conftest import Build, FakeClock, Telemetry
+from tests.workspace.conftest import Build, Telemetry
 
 ACME = WorkspaceRef("acme", "prod")
 MINUTE = timedelta(minutes=1)

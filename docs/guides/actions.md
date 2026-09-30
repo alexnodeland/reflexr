@@ -169,7 +169,7 @@ The agent's output is the run's output; a structured `output_type` is stored as 
 
 ## Graphs
 
-A graph action runs a pydantic-graph graph, built with `GraphBuilder`, whose deps are the `Reaction`. reflexr drives it step by step and saves a checkpoint after each step, so a retry resumes after the last completed step instead of starting over ([ADR-0009](../adr/0009-graph-checkpoints.md)):
+A graph action runs a pydantic-graph graph, built with `GraphBuilder`, whose deps are the `Reaction`. reflexr drives it step by step and saves a checkpoint after each step, so a retry resumes after the last completed step instead of starting over ([ADR-0043](../adr/0043-graph-checkpoints.md)):
 
 ```python
 from dataclasses import dataclass, field
@@ -241,7 +241,7 @@ deploy_regression = Rule(
 | `name` | the graph's name | The name rules refer to the action by |
 | `inputs` | `None` | Builds the graph's inputs from the reaction; without it the graph gets `None` |
 | `state` | the state type's constructor | Builds the graph's initial state from the reaction |
-| `input_types` | `{}` | Input types by node id, for the nodes whose type reflexr cannot read or infer, such as stream steps and decisions after a transform ([below](#input-types)); an explicit type always wins |
+| `input_types` | `{}` | Input types by node id, for the steps and forks whose type reflexr cannot read or infer, such as stream steps and forks after a transform ([below](#input-types)); an explicit type always wins |
 
 After each step, the action saves the graph's state and the next task to the run, and appends `run_progressed` with the step's name. If `roll_back` fails the first time, the run waits to retry with `diagnose` as its last saved step, and the retry starts at `roll_back`: `diagnose` does not run again. The run's `run_progressed` events show every saved boundary, across both attempts:
 
@@ -254,35 +254,35 @@ The graph's output is the run's output, and it is checkpointed too, so a run tha
 What is saved has limits:
 
 - **What is saved must read back as it was.** The state, the graph's inputs and the next node's inputs are stored as JSON through a `TypeAdapter` of their types. A boundary is saved only if each of them serializes as its type and reads back equal to what it was, so a resumed run gets what the interrupted one would have. Otherwise the boundary is not saved, and a retry resumes from the one before it. A model in a state field typed `Any`, for example, would read back as a dict.
-- **Types come from annotations.** A step's input type is read from its `StepContext[State, Deps, Input]` annotation, and the end node's is the graph's output type. Decisions and forks run no code of their own, so their input types are inferred ([below](#input-types)). A stream step (`g.stream`) and a `BaseNode` class in the graph read as taking `Any`, since pydantic-graph wraps them: a model given to one is not saved before it, unless `input_types` names its type.
+- **Types come from annotations.** A step's input type is read from its `StepContext[State, Deps, Input]` annotation, and the end node's is the graph's output type. A fork runs no code of its own, so its input type is inferred ([below](#input-types)). A stream step (`g.stream`) and a `BaseNode` class in the graph read as taking `Any`, since pydantic-graph wraps them: a model given to one is not saved before it, unless `input_types` names its type.
+- **Nothing is saved before a decision.** A decision runs no code either, so the boundary after it saves the same progress, and the step it routes to is where a retry resumes.
 - **Nothing is saved inside a fork.** Between a fork and its join, several branches are in flight, so a run that fails there resumes from the checkpoint before the fork, and branches that had finished run again. After the join, boundaries are saved again.
 - **A changed graph starts over.** A checkpoint from a graph whose nodes have changed since, or whose next node's input type is no longer known, or whose values no longer validate as their types (a step's input model gained a required field, say), or from another version of the format, is ignored, and the retry runs the graph from the start. The attempt's `invoke_workflow` span gets a `reflexr.checkpoint.discarded` event that says why ([Observability](observability.md#spans)).
 
 ### Input types
 
-A decision or a fork passes on what the edges into it carry, so reflexr infers its input type from them. When every edge into it comes, with no transform, from a step with a return annotation, from the graph's start, or from a decision whose type is known, and they all carry the same type, that is its input type. A step returning `RollbackPlan | EscalationPlan` into a decision gives the decision that type, and the boundary before it is saved like any other.
+A fork passes on what the edges into it carry, so reflexr infers its input type from them. When every edge into it comes, with no transform, from a step with a return annotation or from the graph's start, and they all carry the same type, that is its input type. A step returning `list[str]` into a map fork gives the fork that type, and the boundary before it, the last one outside the fork, is saved like any other.
 
 `input_types` is needed only where inference cannot decide, and for stream steps given something other than plain JSON values, such as a model. Without it, the boundary before the node is not saved, and a retry resumes from the one before. Inference cannot decide when:
 
-- an edge into the node has a transform, since reflexr does not infer through one
+- an edge into the fork has a transform, since reflexr does not infer through one
 - an edge comes from a step with no return annotation, or one that returns `Any` or a type variable
-- an edge comes from a join, whose reduced value has no annotation to read, or from a fork
+- an edge comes from a decision, a join, whose reduced value has no annotation to read, or another fork
 - the edges carry different types, such as one step returning an `int` and another a `str`
 - pydantic has no schema for the inferred type; the action is still built, without that checkpoint
 
 ```python
-def version_of(ctx: StepContext[Runbook, Reaction[AppDeps], Finding]) -> str:
-    return ctx.inputs.version
+def hosts_of(ctx: StepContext[Runbook, Reaction[AppDeps], Finding]) -> list[str]:
+    return ctx.inputs.hosts
 
 
-# The edge transforms diagnose's Finding, so the decision's input type is given.
-g.add(g.edge_from(diagnose).transform(version_of).to(by_version))
-runbook = GraphAction(g.build(), input_types={"by_version": str})
+# The edge transforms diagnose's Finding, so the fork's input type is given.
+g.add(g.edge_from(diagnose).transform(hosts_of).map(fork_id="each_host").to(check_host))
+runbook = GraphAction(g.build(), input_types={"each_host": list[str]})
 ```
 
-An explicit type always wins over an annotation or an inferred type, and the decisions after it infer from it. Two more rules keep a checkpoint from changing what a resumed run does:
+An explicit type always wins over an annotation or an inferred one. `input_types` names only steps and forks: `GraphAction` raises `ValueError` for a decision, since nothing is saved before one, and for a join or an id that is not in the graph. One more rule keeps a checkpoint from changing what a resumed run does:
 
-- **A decision routes by class**, and pydantic writes a subclass down as the class it is declared as. So the boundary before a decision is saved only if its inputs read back as the class they had, not only as equal: if `diagnose` is annotated `-> Finding` but returns a subclass that a decision routes apart, the boundary before that decision is not saved.
 - **A one-shot iterator is never saved.** Writing a generator down would use it up, so a step that returns one into a map fork has no checkpoint before the fork.
 
 ## Idempotency

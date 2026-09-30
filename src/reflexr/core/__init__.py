@@ -138,12 +138,15 @@ from reflexr.core.protocol import (
 from reflexr.core.rules import ActionRef, Named, RetryPolicy, Rule, Scope, by, run, scope_key
 from reflexr.core.runs import (
     FINISHED,
+    HOLDING,
+    WAITING,
     Run,
     RunStatus,
     cancel,
     checkpoint,
     create_run,
     fail,
+    holds,
     retry,
     runnable,
     skip,
@@ -169,10 +172,12 @@ from reflexr.core.state import (
 
 __all__ = [
     "FINISHED",
+    "HOLDING",
     "NO_PREDICATES",
     "PROTOCOL",
     "SYSTEM_EVENTS",
     "TARGET_KINDS",
+    "WAITING",
     "AbsencePattern",
     "AbsenceState",
     "ActionRef",
@@ -299,6 +304,7 @@ __all__ = [
     "field",
     "firing_id",
     "get_event_type",
+    "holds",
     "load_event",
     "load_feedback",
     "matches",
