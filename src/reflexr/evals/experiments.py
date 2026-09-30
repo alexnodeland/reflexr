@@ -13,7 +13,7 @@ from evalr.core import Example
 from evalr.core.experiments import Task
 from pydantic import BaseModel
 
-from reflexr.core import Envelope, Event, Rule, Run, SourceActor
+from reflexr.core import DEFAULT_REGISTRY, Envelope, Event, EventRegistry, Rule, Run, SourceActor
 from reflexr.workspace import Action, InMemoryStorage, Reactor, Workspaces
 
 
@@ -50,6 +50,7 @@ def replay_task[D, InputT: BaseModel, VerdictT: BaseModel, OutputT: BaseModel](
     events: Callable[[Example[InputT, VerdictT]], Sequence[Event]],
     output: Callable[[Replay], OutputT],
     event_types: Iterable[type[Event]] | None = None,
+    registry: EventRegistry = DEFAULT_REGISTRY,
 ) -> Task[InputT, VerdictT, OutputT]:
     """Build an evalr task that replays each example's events against a candidate action.
 
@@ -59,12 +60,16 @@ def replay_task[D, InputT: BaseModel, VerdictT: BaseModel, OutputT: BaseModel](
         deps: The candidate's dependencies, such as fakes of the services it calls.
         events: The events to publish for an example, in order.
         output: What the experiment's evaluators judge, from the replay.
-        event_types: The event types the isolated workspace accepts; every registered type by
-            default.
+        event_types: The event types the isolated workspace accepts; every type in ``registry``
+            by default.
+        registry: The namespaces whose types the isolated workspace accepts, as the
+            application's ``Workspaces`` has them.
     """
 
     async def task(example: Example[InputT, VerdictT]) -> OutputT:
-        workspaces = Workspaces(InMemoryStorage(), events=event_types, rules=[rule])
+        workspaces = Workspaces(
+            InMemoryStorage(), events=event_types, registry=registry, rules=[rule]
+        )
         workspace = await workspaces.open(
             f"replay:{example.id}", "replay", actor=SourceActor(name="replay")
         )

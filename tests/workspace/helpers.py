@@ -19,7 +19,7 @@ def deploy(event_id: str, service: str = "auth") -> Entry:
     return Entry(id=event_id, actor=SourceActor(name="ci"), event=Deploy(service=service))
 
 
-def fired(run_id: str, *, rule: str = "triage", scope: str = "auth", seq: int = 1) -> Run:
+def fired(run_id: str, *, rule: str = "app:triage", scope: str = "auth", seq: int = 1) -> Run:
     firing = Firing(
         id=run_id,
         rule=rule,

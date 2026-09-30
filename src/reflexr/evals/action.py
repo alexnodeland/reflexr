@@ -21,7 +21,11 @@ class EvaluatorAction[D, InputT: BaseModel, VerdictT: Feedback]:
     Judging every triage run is a rule, sampled and throttled like any other::
 
         judge = EvaluatorAction(triage_judge, input=triage_input, target=judged_run)
-        Rule(name="judge-triage", when=on(RunSucceeded).where(rule="triage"), then=run(judge))
+        Rule(
+            name="app:judge-triage",
+            when=on(RunSucceeded).where(rule="app:triage"),
+            then=run(judge),
+        )
 
     The verdict is given as feedback by an :class:`~reflexr.core.EvaluatorActor` with the
     evaluator's name and version, so people's and evaluators' judgements of the same target

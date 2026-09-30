@@ -531,6 +531,7 @@
           "anyOf": [
             {
               "items": {
+                "pattern": "^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
                 "type": "string"
               },
               "type": "array"

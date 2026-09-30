@@ -8,8 +8,8 @@ event type, and declares what it can be given on::
         severity: Literal["low", "high", "critical"]
         reason: str | None = None
 
-Feedback is recorded as a ``feedback_given`` event, so it is attributed, replayable, and rules
-can watch it. An evaluator's verdict is feedback too, given by an :class:`EvaluatorActor`.
+Feedback is recorded as a ``reflexr:feedback_given`` event, so it is attributed, replayable, and
+rules can watch it. An evaluator's verdict is feedback too, given by an :class:`EvaluatorActor`.
 """
 
 import re

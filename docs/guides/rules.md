@@ -12,7 +12,7 @@ from datetime import timedelta
 from reflexr import F, Rule, by, on, run
 
 error_spike = Rule(
-    name="error-spike",
+    name="ops:error-spike",
     description="Three severe errors from one service within a minute",
     when=on(ServiceError)
     .where(F.severity >= 7)
@@ -25,7 +25,7 @@ error_spike = Rule(
 
 | Field | Default | Meaning |
 |---|---|---|
-| `name` | required | The rule's identity: lowercase letters, digits, `.`, `_` and `-`, at most 100 characters. Its state, cursor and runs are stored under it |
+| `name` | required | The rule's identity, qualified like an event type: a namespace, a `:` and a name of lowercase letters, digits, `.`, `_` and `-`, such as `ops:error-spike`, at most 100 characters. The `reflexr` namespace is reserved. Its state, cursor and runs are stored under it |
 | `description` | `""` | What the rule is for. An agent action is told it in its prompt |
 | `when` | required | The condition: a filter, and optionally dedupe, a pattern and a throttle ([Conditions](#conditions)) |
 | `scope` | the whole workspace | The event fields that partition the rule's state and ordering ([Scopes](#scopes)) |
@@ -105,10 +105,10 @@ Anything the filters cannot express can be a **predicate**: a pure Python functi
 Field references are checked when the condition is built, against the event types that can reach them, so a typo fails at once:
 
 ```text
-ValueError: no field 'severty' on service.error
+ValueError: no field 'severty' on ops:service.error
 ```
 
-A field is checked only on the types its own conjunction admits: the types of the `on` filters beside it in an `AllFilter`, or, without one, the types the enclosing filter admits. An either-or of `on(ServiceError).where(F.severity >= 7)` and `on(Deploy)` checks the severity on `service.error` alone, while a `where` beside an either-or of both types must be a field of both. A `NotFilter` takes away the types it rejects whatever their fields, and a `where` with no `on` to go by is not checked. At run time, a field an envelope does not have compares as false, never as an error.
+A field is checked only on the types its own conjunction admits: the types of the `on` filters beside it in an `AllFilter`, or, without one, the types the enclosing filter admits. An either-or of `on(ServiceError).where(F.severity >= 7)` and `on(Deploy)` checks the severity on `ops:service.error` alone, while a `where` beside an either-or of both types must be a field of both. A `NotFilter` takes away the types it rejects whatever their fields, and a `where` with no `on` to go by is not checked. At run time, a field an envelope does not have compares as false, never as an error.
 
 ## Patterns
 
@@ -127,14 +127,14 @@ The other two rules of the incident-response example use them:
 from reflexr import sequence
 
 deploy_regression = Rule(
-    name="deploy-regression",
+    name="ops:deploy-regression",
     when=sequence(on(Deploy), on(ServiceError), within=timedelta(minutes=10)),
     scope=by(F.service),
     then=run("runbook"),
 )
 
 heartbeat_lost = Rule(
-    name="heartbeat-lost",
+    name="ops:heartbeat-lost",
     when=on(Heartbeat).absent(within=timedelta(minutes=5)),
     scope=by(F.service),
     then=run("page"),
@@ -153,7 +153,7 @@ on(ServiceError).at_most(1, per=timedelta(minutes=15))  # throttle
 ```
 
 - **Dedupe** drops an envelope whose key fields (here the message) were already seen within the window, before the pattern sees it. Four errors with the messages `timeout`, `timeout`, `refused`, `timeout` fire twice.
-- **Throttle** allows at most so many firings per scope in any period. A firing over the limit is dropped, not delayed, and for a count the envelopes it matched are still consumed. With `error-spike`, seven severe errors from `auth` five seconds apart fire once: the second group of three completes within the fifteen minutes and is dropped.
+- **Throttle** allows at most so many firings per scope in any period. A firing over the limit is dropped, not delayed, and for a count the envelopes it matched are still consumed. With `ops:error-spike`, seven severe errors from `auth` five seconds apart fire once: the second group of three completes within the fifteen minutes and is dropped.
 
 A throttle is also a spending limit: it bounds how often a rule can start an agent ([Loop and spend safety](safety.md#throttles)).
 
@@ -161,15 +161,15 @@ A throttle is also a spending limit: it bounds how often a rule can start an age
 
 `scope=by(F.service)` gives a rule independent state and ordering per service. Three errors from `auth` and two from `billing` are two separate counts, and a slow run for `auth` never delays `billing`'s runs. Scope by several fields with `by(F.service, F.region)`. Without a scope, the whole workspace is one scope.
 
-Each scope is identified by its **scope key**, the canonical JSON of its field values, such as `["auth"]` or `["auth","eu"]`. Firings, runs and the `rule_fired` event carry the key and the values, and the values are what an action sees as `reaction.scope`.
+Each scope is identified by its **scope key**, the canonical JSON of its field values, such as `["auth"]` or `["auth","eu"]`. Firings, runs and the `reflexr:rule_fired` event carry the key and the values, and the values are what an action sees as `reaction.scope`.
 
-An envelope that passes a rule's filter but lacks one of its scope fields cannot be evaluated by that rule. The rule records `rule_errored`, dead-letters the envelope for itself alone, and moves on; other rules are unaffected. `workspace.dead_letters()` lists such envelopes. [Checking rules](#checking-rules) catches the usual cause, a scope field the event types do not have, at startup.
+An envelope that passes a rule's filter but lacks one of its scope fields cannot be evaluated by that rule. The rule records `reflexr:rule_errored`, dead-letters the envelope for itself alone, and moves on; other rules are unaffected. `workspace.dead_letters()` lists such envelopes. [Checking rules](#checking-rules) catches the usual cause, a scope field the event types do not have, at startup.
 
 ## Time
 
 Rules measure time by the log, never by a clock ([ADR-0007](../adr/0007-rule-state-as-pure-reducers.md)). Each envelope's `ts` is assigned when it is appended and never decreases within a workspace, and windows, sequences, absences, dedupe and throttles all compare those timestamps. Evaluating the same log with the same rules therefore always decides the same firings, with the same ids, which is what makes rules testable without I/O and safe to [replay](reactor.md#replaying-a-rule).
 
-Every envelope moves a rule's clock forward, including envelopes its filter rejects. When the clock passes an `absence` deadline, the rule fires for every scope whose window has ended. So a deploy from another service, or a schedule's tick, lets `heartbeat-lost` notice that `auth` went quiet, even though neither is a heartbeat and neither has anything to do with `auth`. In a workspace with nothing else going on, a [schedule](schedules.md#keeping-time-moving) keeps time moving.
+Every envelope moves a rule's clock forward, including envelopes its filter rejects. When the clock passes an `absence` deadline, the rule fires for every scope whose window has ended. So a deploy from another service, or a schedule's tick, lets `ops:heartbeat-lost` notice that `auth` went quiet, even though neither is a heartbeat and neither has anything to do with `auth`. In a workspace with nothing else going on, a [schedule](schedules.md#keeping-time-moving) keeps time moving.
 
 ## Checking rules
 
@@ -179,37 +179,37 @@ A rule names event types, fields, predicates and an action that live elsewhere, 
 from reflexr.core import PredicateFilter
 
 bad = Rule(
-    name="bad",
-    when=on("service.eror").where(PredicateFilter(name="business_hours")),
+    name="ops:bad",
+    when=on("ops:service.eror").where(PredicateFilter(name="business_hours")),
     then=run("triage"),
 )
-bad.check(events={"service.error": ServiceError}, actions={"page"})
+bad.check(events={"ops:service.error": ServiceError}, actions={"page"})
 ```
 
 ```text
-reflexr.core.errors.InvalidRule: rule 'bad' is invalid: no event type 'service.eror'; no predicate 'business_hours'; no action 'triage'
+reflexr.core.errors.InvalidRule: rule 'ops:bad' is invalid: no event type 'ops:service.eror'; no predicate 'business_hours'; no action 'triage'
 ```
 
-`InvalidRule` is a `ValueError`, and its `problems` attribute lists the problems one by one, each once.
+`InvalidRule` is a `ValueError`, and its `problems` attribute lists the problems one by one, each once. A name without a namespace fails before that, as the rule is built or loaded: `on("service.error")` raises `ValidationError` with `event type 'service.error' has no namespace; did you mean 'ops:service.error'?`.
 
 You rarely call it yourself:
 
-- **`Workspaces(storage, events=[...], rules=[...], predicates={...})`** checks every rule against the event types it accepts (or every registered type, without an allowlist) and the predicates, and raises `InvalidRule` at startup. reflexr's own events, such as `rule_fired` and `tick`, are always available to rules. Two rules with the same name raise `ValueError`.
+- **`Workspaces(storage, events=[...], rules=[...], predicates={...})`** checks every rule against the event types it accepts (or every type in its registry, without an allowlist) and the predicates, and raises `InvalidRule` at startup. reflexr's own events, such as `reflexr:rule_fired` and `reflexr:tick`, are always available to rules. Two rules with the same name raise `ValueError`.
 - **`Reactor(workspaces, actions={...})`** checks that every rule's action is among the actions it was given.
 
 Fields are checked on the types that can reach them, as [the builder](#filters) checks them: a `where` on the types of its own conjunction, a sequence's steps on the types its filter admits, and the scope and dedupe fields on every type the filter admits. They are checked through nested Pydantic models. A path through a `dict` field cannot be checked, and is accepted.
 
 ## Rules as JSON
 
-A rule serializes to plain JSON, with durations as ISO 8601 strings. This is `error-spike`, written by hand; fields left out take their defaults:
+A rule serializes to plain JSON, with durations as ISO 8601 strings. This is `ops:error-spike`, written by hand; fields left out take their defaults:
 
 ```json
 {
-  "name": "error-spike",
+  "name": "ops:error-spike",
   "description": "Three severe errors from one service within a minute",
   "when": {
     "filter": {"kind": "all", "of": [
-      {"kind": "on", "types": ["service.error"]},
+      {"kind": "on", "types": ["ops:service.error"]},
       {"kind": "where", "field": "severity", "op": "ge", "value": 7}
     ]},
     "pattern": {"kind": "count", "at_least": 3, "within": "PT1M"},

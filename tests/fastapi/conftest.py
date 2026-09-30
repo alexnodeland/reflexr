@@ -22,7 +22,7 @@ from reflexr.workspace import (
 from tests.event_types import Deploy, Heartbeat, ServiceError
 
 spike = Rule(
-    name="spike",
+    name="app:spike",
     when=on(ServiceError).count(at_least=2, within=timedelta(minutes=1)),
     scope=by(F.service),
     then=run("page"),

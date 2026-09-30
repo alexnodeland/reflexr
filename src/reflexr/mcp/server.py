@@ -66,7 +66,9 @@ INSTRUCTIONS = (
     "operate runs and rules. Events you publish are attributed to you."
 )
 
-_RUN_FACTS = frozenset(t.event_type for t in SYSTEM_EVENTS if t.event_type.startswith("run_"))
+_RUN_FACTS = frozenset(
+    t.event_type for t in SYSTEM_EVENTS if t.event_type.startswith("reflexr:run_")
+)
 
 _READ_LIMIT = 50
 """How many envelopes ``read_events`` returns when it is given neither ``limit`` nor ``last``."""

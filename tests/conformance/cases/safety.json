@@ -8,7 +8,7 @@
           "filter": {
             "kind": "on",
             "types": [
-              "service.error"
+              "app:service.error"
             ]
           }
         }
@@ -20,7 +20,7 @@
           "depth": 2,
           "chain": "c",
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         }
@@ -39,7 +39,7 @@
         "errors": [],
         "facts": [
           {
-            "type": "rule_fired",
+            "type": "reflexr:rule_fired",
             "chain": "c",
             "depth": 3
           }
@@ -54,7 +54,7 @@
           "filter": {
             "kind": "on",
             "types": [
-              "service.error"
+              "app:service.error"
             ]
           }
         }
@@ -66,7 +66,7 @@
           "depth": 2,
           "chain": "c",
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -76,7 +76,7 @@
           "depth": 3,
           "chain": "c",
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         }
@@ -98,12 +98,12 @@
         ],
         "facts": [
           {
-            "type": "rule_fired",
+            "type": "reflexr:rule_fired",
             "chain": "c",
             "depth": 3
           },
           {
-            "type": "rule_errored",
+            "type": "reflexr:rule_errored",
             "chain": "c",
             "depth": 3
           }
@@ -117,8 +117,8 @@
           "filter": {
             "kind": "on",
             "types": [
-              "service.error",
-              "heartbeat"
+              "app:service.error",
+              "app:heartbeat"
             ]
           }
         },
@@ -135,7 +135,7 @@
           "depth": 1,
           "chain": "c",
           "event": {
-            "type": "heartbeat",
+            "type": "app:heartbeat",
             "service": "auth"
           }
         }
@@ -150,7 +150,7 @@
         ],
         "facts": [
           {
-            "type": "rule_errored",
+            "type": "reflexr:rule_errored",
             "chain": "c",
             "depth": 1
           }
@@ -167,7 +167,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "rule_errored"
+                  "reflexr:rule_errored"
                 ]
               },
               {
@@ -183,8 +183,8 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "rule_errored",
-            "rule": "other",
+            "type": "reflexr:rule_errored",
+            "rule": "app:other",
             "seq": 1,
             "error": "x"
           }

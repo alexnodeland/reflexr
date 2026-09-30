@@ -8,7 +8,7 @@ from reflexr.workspace import InMemoryStorage, Reaction, Reactor, Workspaces
 from tests.event_types import Deploy
 from tests.langfuse.conftest import Backend
 
-rule = Rule(name="deploys", when=on(Deploy), then=run("note"))
+rule = Rule(name="app:deploys", when=on(Deploy), then=run("note"))
 seen: list[Reaction[None]] = []
 
 
@@ -53,11 +53,11 @@ async def test_a_run_carries_its_session_user_name_tags_and_metadata(backend: Ba
     [done] = await ws.runs()
     backend.exported()
     spans = {span.name: dict(span.attributes or {}) for span in backend.spans.get_finished_spans()}
-    attempt = spans["invoke_workflow deploys"]
+    attempt = spans["invoke_workflow app:deploys"]
     assert attempt["session.id"] == deploy.id
     assert attempt["user.id"] == "ada"
-    assert attempt["langfuse.trace.name"] == "deploys"
-    assert attempt["langfuse.trace.tags"] == ("tenant:acme", "workspace:prod", "rule:deploys")
+    assert attempt["langfuse.trace.name"] == "app:deploys"
+    assert attempt["langfuse.trace.tags"] == ("tenant:acme", "workspace:prod", "rule:app:deploys")
     assert attempt["langfuse.trace.metadata.run_id"] == done.id
     assert attempt["langfuse.trace.metadata.attempt"] == "1"
 
@@ -73,4 +73,4 @@ async def test_attributes_are_ascii_and_within_langfuses_limits() -> None:
     attributes = run_attributes(reaction)
     assert attributes["session_id"] == ("evt_?" + "x" * 300)[:MAX_ATTRIBUTE]
     assert attributes["user_id"] is None, "only people are users"
-    assert attributes["tags"] == ["tenant:acme", "workspace:prod", "rule:deploys"]
+    assert attributes["tags"] == ["tenant:acme", "workspace:prod", "rule:app:deploys"]

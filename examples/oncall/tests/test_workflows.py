@@ -16,11 +16,11 @@ async def test_a_service_that_goes_quiet_is_paged_once(
     client: httpx.AsyncClient, oncall: Oncall, clock: FakeClock
 ) -> None:
     pager = oncall.deps.pager
-    await publish(client, type="service.heartbeat", service="api")
-    await publish(client, type="service.heartbeat", service="db")
+    await publish(client, type="oncall:service.heartbeat", service="api")
+    await publish(client, type="oncall:service.heartbeat", service="db")
     await oncall.reactor.settle()  # the heartbeat check's timetable starts now
     clock.advance(90)
-    await publish(client, type="service.heartbeat", service="db")
+    await publish(client, type="oncall:service.heartbeat", service="db")
     await oncall.reactor.settle()  # a tick at 90s: api has been quiet for less than 2 minutes
     assert pager.pages == []
 
@@ -29,17 +29,17 @@ async def test_a_service_that_goes_quiet_is_paged_once(
     assert (settled.ticks, settled.firings) == (1, 1)
     [page] = pager.pages
     assert page == Page("api", "no heartbeat from api for 2 minutes")
-    [alert] = await log(client, "alert.fired")
+    [alert] = await log(client, "oncall:alert.fired")
     assert alert["event"] == {
-        "type": "alert.fired",
+        "type": "oncall:alert.fired",
         "service": "api",
         "severity": 8,
         "message": "no heartbeat from api for 2 minutes",
     }
-    assert (alert["actor"]["kind"], alert["actor"]["rule"]) == ("agent", "silence")
+    assert (alert["actor"]["kind"], alert["actor"]["rule"]) == ("agent", "oncall:silence")
     [run] = (await client.get(f"{BASE}/runs")).json()
     assert (run["rule"], run["scope"], run["output"]) == (
-        "silence",
+        "oncall:silence",
         {"service": "api"},
         {"paged": "api"},
     )
@@ -47,7 +47,7 @@ async def test_a_service_that_goes_quiet_is_paged_once(
     clock.advance(300)
     await oncall.reactor.settle()
     assert [p.service for p in pager.pages] == ["api", "db"], "api is paged once per silence"
-    await publish(client, type="service.heartbeat", service="api")  # api is back: it rearms
+    await publish(client, type="oncall:service.heartbeat", service="api")  # api is back: it rearms
     clock.advance(150)
     await oncall.reactor.settle()
     assert [p.service for p in pager.pages] == ["api", "db", "api"]
@@ -66,7 +66,7 @@ async def test_the_pager_deduplicates_by_key() -> None:
 async def open_incident(client: httpx.AsyncClient, service: str = "api") -> None:
     """Open an incident by hand, as a person (or an MCP client) can: the runbook runs for it."""
     incident = {"service": service, "severity": 7, "summary": "checkout is slow"}
-    await publish(client, type="incident.opened", **incident)
+    await publish(client, type="oncall:incident.opened", **incident)
 
 
 async def test_a_failed_verification_resumes_without_rolling_back_again(
@@ -75,7 +75,7 @@ async def test_a_failed_verification_resumes_without_rolling_back_again(
     deployer = oncall.deps.deployer
     deployer.unhealthy["api"] = 1  # the first health check fails
     for version in ("v1", "v2"):
-        await publish(client, type="deploy.completed", service="api", version=version)
+        await publish(client, type="oncall:deploy.completed", service="api", version=version)
     await open_incident(client)
     await oncall.reactor.settle()
 
@@ -88,16 +88,16 @@ async def test_a_failed_verification_resumes_without_rolling_back_again(
     assert waiting["checkpoint"]["state"] == {
         "notes": ["api v2 was deployed just before the incident", "rolled api back to v1"]
     }
-    assert await log(client, "incident.resolved") == []
+    assert await log(client, "oncall:incident.resolved") == []
 
     clock.advance(10)  # the runbook rule's backoff
     await oncall.reactor.settle()
     [done] = (await client.get(f"{BASE}/runs")).json()
     assert (done["status"], done["attempts"]) == ("succeeded", 2)
     assert deployer.rollbacks == [Rollback("api", "v1")], "the retry resumed at verify"
-    steps = [e["event"]["step"] for e in await log(client, "run_progressed")]
+    steps = [e["event"]["step"] for e in await log(client, "reflexr:run_progressed")]
     assert steps == ["__start__", "decide", "roll_back", "verify", "resolve", "__end__"]
-    [resolved] = await log(client, "incident.resolved")
+    [resolved] = await log(client, "oncall:incident.resolved")
     assert resolved["event"]["resolution"].endswith("rolled api back to v1; api is healthy")
 
 
@@ -127,7 +127,7 @@ async def test_without_a_version_to_roll_back_to_the_runbook_pages(
     incident_at = START + timedelta(hours=2)
     for service, version, seconds_before in deploys:  # oldest first
         clock.now = incident_at - timedelta(seconds=seconds_before)
-        await publish(client, type="deploy.completed", service=service, version=version)
+        await publish(client, type="oncall:deploy.completed", service=service, version=version)
     clock.now = incident_at
     await open_incident(client)
     await oncall.reactor.settle()
@@ -135,7 +135,7 @@ async def test_without_a_version_to_roll_back_to_the_runbook_pages(
     assert oncall.deps.deployer.rollbacks == []
     [page] = oncall.deps.pager.pages
     assert page == Page("api", reason)
-    [resolved] = await log(client, "incident.resolved")
+    [resolved] = await log(client, "oncall:incident.resolved")
     assert resolved["event"]["resolution"] == (
         f"{reason}; paged the person on call about api; api is healthy"
     )

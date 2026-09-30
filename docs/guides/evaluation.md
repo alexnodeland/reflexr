@@ -4,7 +4,7 @@ To improve a workflow you need to know when it did the right thing. reflexr reco
 
 ## Feedback types
 
-A feedback type is a Pydantic model that subclasses `Feedback`. It is registered by name, like an event type, and declares the targets it can be given on:
+A feedback type is a Pydantic model that subclasses `Feedback`. It is registered by name, and declares the targets it can be given on:
 
 ```python
 from typing import Annotated, Literal
@@ -46,14 +46,14 @@ from reflexr import UserActor
 from reflexr.core import RunTarget
 
 ada = await workspaces.open("acme", "prod", actor=UserActor(id="ada"))
-[latest] = await ada.runs(rule="error-spike", limit=1)
+[latest] = await ada.runs(rule="ops:error-spike", limit=1)
 await ada.give_feedback(
     TriageQuality(correct=False, severity="critical", note="It missed the bad deploy."),
     on=RunTarget(run_id=latest.id),
 )
 ```
 
-The handle checks that the type can be given on the target's kind (`ValidationFailed` otherwise) and that the target exists (`NotFound`), and that a chain target names the first event of its chain (`ValidationFailed`, naming the chain, otherwise), then appends a `feedback_given` event with the validated value. Whoever gave it is the envelope's actor. The feedback joins the causal chain of what it is about, so it appears in that chain's session in your traces, and it is traced as `reflexr.feedback {type}` and counted in the `reflexr.feedback` metric ([Observability](observability.md)).
+The handle checks that the type can be given on the target's kind (`ValidationFailed` otherwise) and that the target exists (`NotFound`), and that a chain target names the first event of its chain (`ValidationFailed`, naming the chain, otherwise), then appends a `reflexr:feedback_given` event with the validated value. Whoever gave it is the envelope's actor. The feedback joins the causal chain of what it is about, so it appears in that chain's session in your traces, and it is traced as `reflexr.feedback {type}` and counted in the `reflexr.feedback` metric ([Observability](observability.md)).
 
 Every surface has it, as the `give_feedback` command. Over REST (`POST /v1/workspaces/{workspace_id}/commands`) and the WebSocket it is a command frame; over MCP it is the `give_feedback` tool, with the same fields:
 
@@ -87,7 +87,7 @@ from reflexr import F, Rule, on, run
 from reflexr.core import FeedbackGiven
 
 wrong_triage = Rule(
-    name="wrong-triage",
+    name="ops:wrong-triage",
     when=on(FeedbackGiven).where(F.value.correct.eq(False), feedback_type="triage_quality"),
     then=run("escalate"),
 )
@@ -139,7 +139,7 @@ task = asyncio.create_task(mirror.follow())  # until cancelled
 | Feedback on | Scored on |
 |---|---|
 | A run | The trace of the run's latest attempt, from `Run.trace_ids` |
-| A firing | The trace of the evaluation that recorded its `rule_fired` |
+| A firing | The trace of the evaluation that recorded its `reflexr:rule_fired` |
 | A chain | The chain's session: the scores have a `session_id` and no trace |
 
 Feedback about something that has no trace, because no SDK was configured when it ran, is scored on the session too. A mirror follows one workspace, so run one task per workspace you want mirrored; any actor's handle will do, since it only reads the log and saves its cursor. Score ids are derived from the feedback's envelope, so a mirror can start over from the beginning of the log without duplicating anything, and feedback of a type the process does not register is skipped.
@@ -194,7 +194,7 @@ uv add "reflexr[evals] @ git+https://github.com/alexnodeland/reflexr" \
 
 ### Evaluators as rules
 
-An evaluator is an action like any other, so judging runs online is a rule. `EvaluatorAction` runs an evalr `Evaluator` when its rule fires and gives the verdict as feedback, from an `EvaluatorActor` with the evaluator's name and version. This one judges every successful `error-spike` run, at most twenty an hour:
+An evaluator is an action like any other, so judging runs online is a rule. `EvaluatorAction` runs an evalr `Evaluator` when its rule fires and gives the verdict as feedback, from an `EvaluatorActor` with the evaluator's name and version. This one judges every successful `ops:error-spike` run, at most twenty an hour:
 
 ```python
 from datetime import timedelta
@@ -224,12 +224,14 @@ triage_judge = FunctionEvaluator(
 
 
 async def judged_input(reaction: Reaction[AppDeps]) -> TriageInput:
-    run_id = str(reaction.events[-1].data["run_id"])  # the run_succeeded that fired the judge
+    run_id = str(
+        reaction.events[-1].data["run_id"]
+    )  # the reflexr:run_succeeded that fired the judge
     record = await run_record(reaction.workspace, run_id)
     return TriageInput(
         service=str(record.run.scope["service"]),
         errors=len(record.matched),
-        opened_incident=any(e.event_type == "incident.opened" for e in record.emitted),
+        opened_incident=any(e.event_type == "oncall:incident.opened" for e in record.emitted),
     )
 
 
@@ -239,8 +241,8 @@ async def judged_run(reaction: Reaction[AppDeps]) -> RunTarget:
 
 judge = EvaluatorAction(triage_judge, input=judged_input, target=judged_run)
 judge_triage = Rule(
-    name="judge-triage",
-    when=on(RunSucceeded).where(rule="error-spike").at_most(20, per=timedelta(hours=1)),
+    name="ops:judge-triage",
+    when=on(RunSucceeded).where(rule="ops:error-spike").at_most(20, per=timedelta(hours=1)),
     then=run(judge),
 )
 reactor = Reactor(workspaces, actions={"triage": triage, judge.name: judge}, deps=deps)
@@ -267,7 +269,7 @@ def triage_input(context: FeedbackContext[TriageQuality]) -> TriageInput:
     return TriageInput(
         service=str(record.run.scope["service"]),
         errors=len(record.matched),
-        opened_incident=any(e.event_type == "incident.opened" for e in record.emitted),
+        opened_incident=any(e.event_type == "oncall:incident.opened" for e in record.emitted),
     )
 
 
@@ -277,7 +279,7 @@ source = LogFeedbackSource(
 dataset = await collect("triage-quality", source)
 ```
 
-- The context holds the `feedback_given` envelope and the validated feedback, with the run and its events (`context.run`, a `RunRecord`) for feedback on a run or a firing, or the chain's envelopes (`context.chain`) for feedback on a chain. The builder may be async.
+- The context holds the `reflexr:feedback_given` envelope and the validated feedback, with the run and its events (`context.run`, a `RunRecord`) for feedback on a run or a firing, or the chain's envelopes (`context.chain`) for feedback on a chain. The builder may be async.
 - Example ids are the feedback's event ids, so they are stable across collections. A run's example carries the trace of its latest attempt, and every example's metadata names the tenant, workspace, target kind, `seq` and `given_by`, the participant who gave it.
 - `targets={"run"}` keeps feedback on some kinds of target only.
 - Evaluators' verdicts are left out: feedback an `EvaluatorActor` gave, such as an `EvaluatorAction`'s, is skipped, because training or calibrating a judge on evaluators' verdicts, its own among them, is circular. Pass `include_evaluators=True` to compare evaluators with each other or with people, and tell them apart by `given_by`.
@@ -297,7 +299,9 @@ class Outcome(BaseModel):
 
 
 def replayed(replay: Replay) -> Outcome:
-    return Outcome(opened_incident=any(e.event_type == "incident.opened" for e in replay.emitted))
+    return Outcome(
+        opened_incident=any(e.event_type == "oncall:incident.opened" for e in replay.emitted)
+    )
 
 
 task = replay_task(
@@ -323,11 +327,11 @@ Some measures need no judge, because the log already says what happened. `rule_o
 from reflexr.evals import rule_outcomes, time_to_resolution
 
 outcomes = await rule_outcomes(workspace)
-spike = outcomes["error-spike"]
+spike = outcomes["ops:error-spike"]
 print(spike.runs, spike.dead_letter_rate, spike.retry_rate, spike.intervention_rate)
 
 resolved = await time_to_resolution(
-    workspace, resolves=lambda envelope: envelope.event_type == "incident.resolved"
+    workspace, resolves=lambda envelope: envelope.event_type == "oncall:incident.resolved"
 )  # {correlation_id: timedelta}, for each chain that was resolved
 ```
 

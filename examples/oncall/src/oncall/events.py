@@ -10,7 +10,11 @@ from pydantic import Field
 from reflexr import Event
 
 
-class AlertFired(Event, name="alert.fired"):
+class OncallEvent(Event, abstract=True, event_namespace="oncall"):
+    """Every oncall event, in the ``oncall`` namespace."""
+
+
+class AlertFired(OncallEvent, name="alert.fired"):
     """Monitoring saw something wrong with a service."""
 
     service: str
@@ -20,20 +24,20 @@ class AlertFired(Event, name="alert.fired"):
     message: str
 
 
-class DeployCompleted(Event, name="deploy.completed"):
+class DeployCompleted(OncallEvent, name="deploy.completed"):
     """A new version of a service went live."""
 
     service: str
     version: str
 
 
-class Heartbeat(Event, name="service.heartbeat"):
+class Heartbeat(OncallEvent, name="service.heartbeat"):
     """A service is alive. Services send one every minute or so."""
 
     service: str
 
 
-class IncidentOpened(Event, name="incident.opened"):
+class IncidentOpened(OncallEvent, name="incident.opened"):
     """Triage decided that a service's alerts are an incident."""
 
     service: str
@@ -41,7 +45,7 @@ class IncidentOpened(Event, name="incident.opened"):
     summary: str
 
 
-class IncidentResolved(Event, name="incident.resolved"):
+class IncidentResolved(OncallEvent, name="incident.resolved"):
     """The runbook mitigated an incident and verified the service."""
 
     service: str

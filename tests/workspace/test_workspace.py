@@ -7,13 +7,25 @@ from typing import Any, Literal, cast
 import pytest
 from opentelemetry.trace import SpanKind
 
-from reflexr import AgentActor, Event, Feedback, RetryPolicy, Rule, SourceActor, UserActor, on, run
+from reflexr import (
+    AgentActor,
+    Event,
+    Feedback,
+    InvalidRule,
+    RetryPolicy,
+    Rule,
+    SourceActor,
+    UserActor,
+    on,
+    run,
+)
 from reflexr.core import (
     Causation,
     ChainTarget,
     DepthExceeded,
     Envelope,
     EvaluationError,
+    EventRegistry,
     FeedbackGiven,
     FiringTarget,
     Forbidden,
@@ -42,14 +54,25 @@ from reflexr.workspace import (
     Workspaces,
 )
 from tests.clock import START, FakeClock
-from tests.event_types import Deploy, ServiceError
+from tests.event_types import AppEvent, Deploy, ServiceError
 from tests.workspace.conftest import Build, Telemetry
 from tests.workspace.helpers import fired
 
 ACME = WorkspaceRef("acme", "prod")
 
 
-class Escalated(Event):
+OURS = EventRegistry()
+
+
+class OursEvent(Event, abstract=True, event_namespace="ours", registry=OURS):
+    """Another application's events, in a registry of its own."""
+
+
+class Ping(OursEvent):
+    pass
+
+
+class Escalated(AppEvent):
     """Registered, but not among the types the test workspaces accept."""
 
     service: str
@@ -134,13 +157,17 @@ async def test_a_chain_is_joined_by_its_first_events_id(workspace: Workspace) ->
 
 
 async def test_only_accepted_types_can_be_published(workspace: Workspace) -> None:
-    with pytest.raises(NotFound, match="event type escalated"):
+    with pytest.raises(NotFound, match="event type app:escalated"):
         await workspace.publish(Escalated(service="auth"))
-    with pytest.raises(NotFound, match=r"event type pager\.sent"):
-        await workspace.publish(load_event({"type": "pager.sent"}))
-    fact = RuleFired(rule="r", scope={}, scope_key="[]", firing_id="f", matched=(1,))
-    with pytest.raises(Forbidden, match="rule_fired events are recorded by reflexr"):
+    with pytest.raises(NotFound, match=r"event type app:pager\.sent"):
+        await workspace.publish(load_event({"type": "app:pager.sent"}))
+    with pytest.raises(ValidationFailed, match=r"did you mean 'app:deploy\.finished'"):
+        await workspace.publish(load_event({"type": "deploy.finished", "service": "auth"}))
+    fact = RuleFired(rule="app:r", scope={}, scope_key="[]", firing_id="f", matched=(1,))
+    with pytest.raises(Forbidden, match="reflexr:rule_fired events are recorded by reflexr"):
         await workspace.publish(fact)
+    with pytest.raises(ValidationFailed, match=r"did you mean 'app:deploy\.finished'"):
+        await workspace.read(types=["deploy.finished"])
     assert await workspace.head_seq() == 0
 
 
@@ -154,9 +181,22 @@ async def test_without_an_allowlist_every_registered_type_is_accepted(
         await workspace.publish(Tick(schedule="clock", at=START))
 
 
+async def test_a_registry_scopes_the_types_workspaces_accept(storage: Storage) -> None:
+    workspaces = Workspaces(storage, registry=OURS)
+    workspace = await workspaces.open("acme", "prod", actor=SourceActor(name="ci"))
+    assert (await workspace.publish(Ping())).envelope.event_type == "ours:ping"
+    with pytest.raises(NotFound, match=r"event type app:deploy\.finished"):
+        await workspace.publish(Deploy(service="auth"))
+    with pytest.raises(ValueError, match=r"app:deploy\.finished is not in the registry"):
+        Workspaces(storage, registry=OURS, emitted=[Deploy])
+    deploys = Rule(name="ours:deploys", when=on(Deploy), then=run("note"))
+    with pytest.raises(InvalidRule, match=r"no event type 'app:deploy\.finished'"):
+        Workspaces(storage, registry=OURS, rules=[deploys])
+
+
 async def test_a_runs_events_carry_its_causation_and_chain(workspace: Workspace) -> None:
     cause = (await workspace.publish(ServiceError(service="auth"))).envelope
-    agent = AgentActor(rule="triage", run_id="fir_1", name="triage")
+    agent = AgentActor(rule="app:triage", run_id="fir_1", name="triage")
     caused = workspace.as_actor(agent).caused_by(
         Causation(firing_id="fir_1", run_id="fir_1", depth=1), correlation_id=cause.id
     )
@@ -247,9 +287,9 @@ async def test_operators_can_skip_cancel_and_retry_runs(
     assert await workspace.run("fir_1") == retried
     events = [e.event for e in await workspace.read()]
     assert events == [
-        RunSkipped(run_id="fir_1", rule="triage", reason="duplicate incident"),
-        RunCancelled(run_id="fir_2", rule="triage"),
-        RunRequeued(run_id="fir_1", rule="triage"),
+        RunSkipped(run_id="fir_1", rule="app:triage", reason="duplicate incident"),
+        RunCancelled(run_id="fir_2", rule="app:triage"),
+        RunRequeued(run_id="fir_1", rule="app:triage"),
     ]
     envelopes = await workspace.read()
     assert [e.actor for e in envelopes] == [UserActor(id="ada")] * 3
@@ -277,13 +317,20 @@ async def test_reads_cover_runs_progress_and_dead_letters(
 ) -> None:
     running, _ = start(fired("fir_1"), now=START)
     paging = Rule(
-        name="paging", when=on(ServiceError), then=run("page"), retry=RetryPolicy(max_attempts=1)
+        name="app:paging",
+        when=on(ServiceError),
+        then=run("page"),
+        retry=RetryPolicy(max_attempts=1),
     )
-    dead, _ = fail(start(fired("fir_2", rule="paging"), now=START)[0], paging, now=START, error="x")
+    dead, _ = fail(
+        start(fired("fir_2", rule="app:paging"), now=START)[0], paging, now=START, error="x"
+    )
     async with storage.transaction(ACME) as transaction:
         await transaction.save_runs([running, dead])
     assert await workspace.runs() == [dead, running]
-    assert await workspace.runs(rule="triage", status="running", scope_key='["auth"]') == [running]
+    assert await workspace.runs(rule="app:triage", status="running", scope_key='["auth"]') == [
+        running
+    ]
     assert await workspace.runs(limit=1) == [dead]
     assert await workspace.dead_letters() == []
     assert await workspace.rule_progress() == {}
@@ -291,27 +338,31 @@ async def test_reads_cover_runs_progress_and_dead_letters(
 
 
 async def test_the_rule_statuses_list_every_registered_rule(build: Build, storage: Storage) -> None:
-    triage = Rule(name="triage", when=on(ServiceError), then=run("page"))
-    paused = Rule(name="paused", when=on(Deploy), then=run("page"), enabled=False)
+    triage = Rule(name="app:triage", when=on(ServiceError), then=run("page"))
+    paused = Rule(name="app:paused", when=on(Deploy), then=run("page"), enabled=False)
     workspace = await build([triage, paused]).open("acme", "prod", actor=UserActor(id="ada"))
     for _ in range(3):
         await workspace.publish(Deploy(service="auth"))
     async with storage.transaction(ACME) as transaction:
-        await transaction.save_progress("triage", RuleProgress(cursor=2, generation=1))
-        await transaction.save_progress("retired", RuleProgress(cursor=3))  # no longer registered
+        await transaction.save_progress("app:triage", RuleProgress(cursor=2, generation=1))
+        await transaction.save_progress(
+            "app:retired", RuleProgress(cursor=3)
+        )  # no longer registered
         await transaction.dead_letter(
             [
-                EvaluationError(rule="triage", seq=1, error="x"),
-                EvaluationError(rule="triage", seq=2, error="y"),
-                EvaluationError(rule="retired", seq=3, error="z"),
+                EvaluationError(rule="app:triage", seq=1, error="x"),
+                EvaluationError(rule="app:triage", seq=2, error="y"),
+                EvaluationError(rule="app:retired", seq=3, error="z"),
             ]
         )
-    added = Rule(name="added", when=on(Deploy), then=run("page"))  # registered after the log began
+    added = Rule(
+        name="app:added", when=on(Deploy), then=run("page")
+    )  # registered after the log began
     later = await build([triage, paused, added]).open("acme", "prod", actor=UserActor(id="ada"))
     assert await later.rule_statuses() == [
-        RuleStatus(rule="triage", enabled=True, cursor=2, lag=1, generation=1, dead_letters=2),
-        RuleStatus(rule="paused", enabled=False, cursor=0, lag=3, generation=0, dead_letters=0),
-        RuleStatus(rule="added", enabled=True, cursor=0, lag=3, generation=0, dead_letters=0),
+        RuleStatus(rule="app:triage", enabled=True, cursor=2, lag=1, generation=1, dead_letters=2),
+        RuleStatus(rule="app:paused", enabled=False, cursor=0, lag=3, generation=0, dead_letters=0),
+        RuleStatus(rule="app:added", enabled=True, cursor=0, lag=3, generation=0, dead_letters=0),
     ]
 
 
@@ -353,9 +404,9 @@ async def test_reading_passes_the_window_filter_and_tail_to_storage(
     for service in ("auth", "billing", "search"):
         await workspace.publish(Deploy(service=service))
         await workspace.publish(ServiceError(service=service))
-    tail = await workspace.read(types=["deploy.finished"], last=2)
+    tail = await workspace.read(types=["app:deploy.finished"], last=2)
     assert [e.seq for e in tail] == [3, 5]
-    earlier = await workspace.read(types=["deploy.finished"], last=2, before_seq=tail[0].seq)
+    earlier = await workspace.read(types=["app:deploy.finished"], last=2, before_seq=tail[0].seq)
     assert [e.seq for e in earlier] == [1]
     assert [e.seq for e in await workspace.read(after_seq=1, before_seq=4, limit=1)] == [2]
 
@@ -393,7 +444,7 @@ async def test_publishing_is_traced_with_its_trace_context(
 ) -> None:
     envelope = (await workspace.publish(ServiceError(service="auth"), id="e1")).envelope
     [span] = telemetry.spans.get_finished_spans()
-    assert span.name == "reflexr.publish service.error"
+    assert span.name == "reflexr.publish app:service.error"
     assert span.kind == SpanKind.PRODUCER
     context = span.get_span_context()
     assert context is not None
@@ -405,7 +456,7 @@ async def test_publishing_is_traced_with_its_trace_context(
         a.ACTOR_KIND: "user",
         a.USER_ID: "ada",
         a.EVENT_COUNT: 1,
-        a.EVENT_TYPE: "service.error",
+        a.EVENT_TYPE: "app:service.error",
         a.EVENT_ID: "e1",
         a.EVENT_SEQ: 1,
         a.DUPLICATE: False,
@@ -420,7 +471,7 @@ async def test_publishing_counts_events_by_type(workspace: Workspace, telemetry:
     await workspace.publish(ServiceError(service="auth"), id="e1")
     await workspace.publish(ServiceError(service="auth"), id="e1")
     points = sorted(telemetry.points("reflexr.events.published"), key=lambda p: str(p[0]))
-    common = {a.TENANT_ID: "acme", a.WORKSPACE_ID: "prod", a.EVENT_TYPE: "service.error"}
+    common = {a.TENANT_ID: "acme", a.WORKSPACE_ID: "prod", a.EVENT_TYPE: "app:service.error"}
     assert points == [
         ({**common, a.ACTOR_KIND: "user", a.DUPLICATE: False}, 1),
         ({**common, a.ACTOR_KIND: "user", a.DUPLICATE: True}, 1),
@@ -436,11 +487,11 @@ async def test_feedback_and_run_operations_are_traced_and_counted(
     assert telemetry.span_names() == ["reflexr.feedback run_quality", "reflexr.skip_run"]
     feedback_span, skip_span = telemetry.spans.get_finished_spans()
     assert (feedback_span.attributes or {})[a.SESSION_ID] == "evt_1"
-    assert (skip_span.attributes or {})[a.RULE] == "triage"
+    assert (skip_span.attributes or {})[a.RULE] == "app:triage"
     [(feedback, _)] = telemetry.points("reflexr.feedback")
     assert (feedback[a.FEEDBACK_TYPE], feedback[a.FEEDBACK_TARGET]) == ("run_quality", "run")
     [(runs, count)] = telemetry.points("reflexr.runs")
-    assert (runs[a.RULE], runs[a.RUN_STATUS], count) == ("triage", "skipped", 1)
+    assert (runs[a.RULE], runs[a.RUN_STATUS], count) == ("app:triage", "skipped", 1)
 
 
 async def test_by_default_time_is_utc_and_nothing_is_traced() -> None:
@@ -452,13 +503,13 @@ async def test_by_default_time_is_utc_and_nothing_is_traced() -> None:
 
 
 async def test_events_only_runs_may_publish_are_refused_to_clients(storage: Storage) -> None:
-    incident = Rule(name="incidents", when=on(Escalated), then=run("note"))
+    incident = Rule(name="app:incidents", when=on(Escalated), then=run("note"))
     workspaces = Workspaces(storage, events=[Deploy], emitted=[Escalated], rules=[incident])
     client = await workspaces.open("acme", "prod", actor=UserActor(id="ada"))
     with pytest.raises(Forbidden, match="escalated events are published by runs, not clients"):
         await client.publish(Escalated(service="auth"))
     root = (await client.publish(Deploy(service="auth"))).envelope
-    triage = client.as_actor(AgentActor(rule="triage", run_id="fir_1", name="triage"))
+    triage = client.as_actor(AgentActor(rule="app:triage", run_id="fir_1", name="triage"))
     run_handle = triage.caused_by(
         Causation(firing_id="fir_1", run_id="fir_1", depth=1), correlation_id=root.id
     )

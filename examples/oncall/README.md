@@ -12,7 +12,7 @@ It is a small, complete application built only on reflexr's public API:
 |---|---|---|
 | Events | [`events.py`](src/oncall/events.py) | Five `Event` types: three that producers publish, two that the workflows emit |
 | Rules | [`rules.py`](src/oncall/rules.py) | A count within a window, an event, and an absence, each scoped by service; a `Schedule` whose ticks keep time moving |
-| Triage agent | [`triage.py`](src/oncall/triage.py) | A pydantic-ai `Agent` over `Reaction[OncallDeps]` with the `EventContext` capability, allowed to emit `incident.opened`, and a structured verdict |
+| Triage agent | [`triage.py`](src/oncall/triage.py) | A pydantic-ai `Agent` over `Reaction[OncallDeps]` with the `EventContext` capability, allowed to emit `oncall:incident.opened`, and a structured verdict |
 | Runbook graph | [`runbook.py`](src/oncall/runbook.py) | A pydantic-graph `GraphBuilder` graph with a decision, checkpointed after every step, that reads the log and emits through the `Reaction` |
 | Paging | [`actions.py`](src/oncall/actions.py) | A plain async function, idempotent by its run id |
 | Services | [`services.py`](src/oncall/services.py) | The pager and deployer the workflows act on: in-memory fakes, given to every action as `reaction.deps` |
@@ -23,15 +23,15 @@ It is a small, complete application built only on reflexr's public API:
 
 ```mermaid
 graph LR
-    alert[/alert.fired/] --> triage{{"triage<br/>3 alerts of severity 7+<br/>for a service in 5 min"}}
+    alert[/"oncall:alert.fired"/] --> triage{{"triage<br/>3 alerts of severity 7+<br/>for a service in 5 min"}}
     triage --> agent["triage agent<br/>pydantic-ai"]
-    agent -- emit_event --> opened[/incident.opened/]
+    agent -- emit_event --> opened[/"oncall:incident.opened"/]
     opened --> runbook{{"runbook<br/>each incident,<br/>per service"}}
     runbook --> graph["runbook graph<br/>pydantic-graph"]
-    deploy[/deploy.completed/] -. read from the log .-> graph
-    graph --> resolved[/incident.resolved/]
-    heartbeat[/service.heartbeat/] --> silence{{"silence<br/>no heartbeat from<br/>a service for 2 min"}}
-    tick[/"tick, every 30 s"/] -. moves time .-> silence
+    deploy[/"oncall:deploy.completed"/] -. read from the log .-> graph
+    graph --> resolved[/"oncall:incident.resolved"/]
+    heartbeat[/"oncall:service.heartbeat"/] --> silence{{"silence<br/>no heartbeat from<br/>a service for 2 min"}}
+    tick[/"reflexr:tick, every 30 s"/] -. moves time .-> silence
     silence --> page["page<br/>function"]
     page --> alert
 ```
@@ -95,12 +95,12 @@ Watching prod, 0 events so far.
    3 09:00:09 alert api sev 8: 5xx rate above 5% · monitor
    4 09:00:12 alert api sev 9: p99 latency above 2s · monitor
    5 09:00:15 alert api sev 8: 5xx rate above 5% · monitor
-   6 09:00:15 rule triage fired for service=api on seq 3, 4, 5 · reactor
-   7 09:00:15 run fir_15e959a4fcfa3a8f of triage started, attempt 1 · reactor
+   6 09:00:15 rule oncall:triage fired for service=api on seq 3, 4, 5 · reactor
+   7 09:00:15 run fir_15e959a4fcfa3a8f of oncall:triage started, attempt 1 · reactor
    8 09:00:19 INCIDENT OPENED api sev 8: api v2 is failing 5% of requests · triage
-   9 09:00:20 run fir_15e959a4fcfa3a8f of triage succeeded · reactor
-  10 09:00:20 rule runbook fired for service=api on seq 8 · reactor
-  11 09:00:21 run fir_5e173bcfb934d8d0 of runbook started, attempt 1 · reactor
+   9 09:00:20 run fir_15e959a4fcfa3a8f of oncall:triage succeeded · reactor
+  10 09:00:20 rule oncall:runbook fired for service=api on seq 8 · reactor
+  11 09:00:21 run fir_5e173bcfb934d8d0 of oncall:runbook started, attempt 1 · reactor
   12 09:00:21 run fir_5e173bcfb934d8d0 finished step __start__ · runbook
   13 09:00:21 run fir_5e173bcfb934d8d0 finished step diagnose · runbook
   14 09:00:21 run fir_5e173bcfb934d8d0 finished step decide · runbook
@@ -166,9 +166,9 @@ docker compose -f compose.yaml -f compose.stackr.yaml --profile app up -d --buil
 
 | Command | Does |
 |---|---|
-| `oncall alert SERVICE --severity 1-10 --message TEXT` | Publishes `alert.fired`, as monitoring would |
-| `oncall deploy SERVICE --version VERSION` | Publishes `deploy.completed`, as CI would |
-| `oncall heartbeat SERVICE` | Publishes `service.heartbeat` |
+| `oncall alert SERVICE --severity 1-10 --message TEXT` | Publishes `oncall:alert.fired`, as monitoring would |
+| `oncall deploy SERVICE --version VERSION` | Publishes `oncall:deploy.completed`, as CI would |
+| `oncall heartbeat SERVICE` | Publishes `oncall:service.heartbeat` |
 | `oncall watch [--after SEQ] [--until TYPE]` | Replays the log after `SEQ`, then follows it live; `--until` stops after an event of that type, for scripts |
 | `oncall runs [--rule R] [--status S]` | Lists runs, newest first, with where and why a stuck one stopped |
 | `oncall retry RUN_ID` | Makes a run runnable now |
@@ -186,7 +186,7 @@ Every command takes `--url` (default `http://127.0.0.1:8000`), `--workspace` (de
   ```sh
   curl -H 'x-user: alice' -H 'content-type: application/json' \
     localhost:8000/v1/workspaces/prod/events \
-    -d '{"event": {"type": "incident.opened", "service": "api", "severity": 7, "summary": "checkout is slow"}}'
+    -d '{"event": {"type": "oncall:incident.opened", "service": "api", "severity": 7, "summary": "checkout is slow"}}'
   ```
 
   See the [protocol](../../docs/protocol.md) for commands and reads.

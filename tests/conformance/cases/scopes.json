@@ -8,7 +8,7 @@
           "filter": {
             "kind": "on",
             "types": [
-              "service.error"
+              "app:service.error"
             ]
           },
           "pattern": {
@@ -28,7 +28,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -36,7 +36,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "billing"
           }
         },
@@ -44,7 +44,7 @@
           "seq": 3,
           "at": 2,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -52,7 +52,7 @@
           "seq": 4,
           "at": 3,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "billing"
           }
         }
@@ -90,8 +90,8 @@
           "filter": {
             "kind": "on",
             "types": [
-              "service.error",
-              "heartbeat"
+              "app:service.error",
+              "app:heartbeat"
             ]
           }
         },
@@ -106,7 +106,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "heartbeat",
+            "type": "app:heartbeat",
             "service": "auth"
           }
         },
@@ -114,7 +114,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         }
@@ -146,7 +146,7 @@
           "filter": {
             "kind": "on",
             "types": [
-              "service.error"
+              "app:service.error"
             ]
           },
           "pattern": {
@@ -167,7 +167,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -175,7 +175,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "region": "us"
           }
@@ -184,7 +184,7 @@
           "seq": 3,
           "at": 2,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         }
@@ -213,7 +213,7 @@
           "filter": {
             "kind": "on",
             "types": [
-              "service.error"
+              "app:service.error"
             ]
           },
           "pattern": {
@@ -228,7 +228,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -236,7 +236,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "billing"
           }
         }

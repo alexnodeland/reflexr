@@ -15,7 +15,7 @@ Rules run workflows, and workflows publish events that rules watch, so a mistake
 
 ## No self-reaction
 
-A rule never sees reflexr's facts about itself: its own `rule_fired`, `rule_errored`, `rule_reset` and run events. They still move its clock, since every envelope does, but they never match its filter. So a rule that watches `run_succeeded`, for example to judge finished runs, cannot fire on its own runs' success, only on other rules'.
+A rule never sees reflexr's facts about itself: its own `reflexr:rule_fired`, `reflexr:rule_errored`, `reflexr:rule_reset` and run events. They still move its clock, since every envelope does, but they never match its filter. So a rule that watches `reflexr:run_succeeded`, for example to judge finished runs, cannot fire on its own runs' success, only on other rules'.
 
 This does not stop two rules that watch each other's facts, or a rule whose action publishes the kind of event it watches. Causation depth does.
 
@@ -26,7 +26,7 @@ Every event records the causal chain it belongs to, and events that runs publish
 Here a rule's action publishes the very kind of event its rule watches, with the limit lowered to 3:
 
 ```python
-echo = Rule(name="echo", when=on(ServiceError), scope=by(F.service), then=run("echo"))
+echo = Rule(name="ops:echo", when=on(ServiceError), scope=by(F.service), then=run("echo"))
 
 
 async def echo_action(reaction: Reaction[None]) -> None:
@@ -45,23 +45,23 @@ for envelope in await monitor.read():
 ```
 
 ```text
-1 0 source service.error
-2 1 system rule_fired
-3 1 system run_started
-4 1 agent service.error
-5 1 system run_succeeded
-6 2 system rule_fired
-7 2 system run_started
-8 2 agent service.error
-9 2 system run_succeeded
-10 3 system rule_fired
-11 3 system run_started
-12 3 agent service.error
-13 3 system run_succeeded
-14 3 system rule_errored
+1 0 source ops:service.error
+2 1 system reflexr:rule_fired
+3 1 system reflexr:run_started
+4 1 agent ops:service.error
+5 1 system reflexr:run_succeeded
+6 2 system reflexr:rule_fired
+7 2 system reflexr:run_started
+8 2 agent ops:service.error
+9 2 system reflexr:run_succeeded
+10 3 system reflexr:rule_fired
+11 3 system reflexr:run_started
+12 3 agent ops:service.error
+13 3 system reflexr:run_succeeded
+14 3 system reflexr:rule_errored
 ```
 
-The loop ran three times and stopped. The fourth firing would have been at depth 4, so the evaluator refused it: it recorded `rule_errored` and dead-lettered the envelope for that rule, with the error "the firing would be at causation depth 4, beyond the limit of 3" in `workspace.dead_letters()` and the `reflexr.rule.errors` metric. The same bound applies when two rules trigger each other through `rule_fired` or `run_succeeded`, since those facts are one step deeper too ([ADR-0026](../adr/0026-the-reactors-evaluation.md)). An error about another rule's error is dead-lettered without becoming a new fact, so errors cannot feed on each other.
+The loop ran three times and stopped. The fourth firing would have been at depth 4, so the evaluator refused it: it recorded `reflexr:rule_errored` and dead-lettered the envelope for that rule, with the error "the firing would be at causation depth 4, beyond the limit of 3" in `workspace.dead_letters()` and the `reflexr.rule.errors` metric. The same bound applies when two rules trigger each other through `reflexr:rule_fired` or `reflexr:run_succeeded`, since those facts are one step deeper too ([ADR-0026](../adr/0026-the-reactors-evaluation.md)). An error about another rule's error is dead-lettered without becoming a new fact, so errors cannot feed on each other.
 
 Publishing checks the depth as well: a handle whose events would be deeper than the limit refuses to publish with `DepthExceeded` (`depth_exceeded` on the wire). With the reactor, refusing the firing comes first, so this check is a backstop, for handles you derive yourself with `workspace.caused_by(...)`.
 
@@ -73,7 +73,7 @@ A throttle caps how often a rule fires per scope. It is the last stage of the co
 
 ```python
 error_spike = Rule(
-    name="error-spike",
+    name="ops:error-spike",
     when=on(ServiceError)
     .where(F.severity >= 7)
     .count(at_least=3, within=timedelta(minutes=1))
@@ -92,7 +92,7 @@ Throttles are the main spend control for agent actions: a rule that runs an agen
 An agent can publish only the event types its `EventContext` names. With none, it has no tool to publish at all:
 
 ```python
-EventContext(emit=[IncidentOpened])  # emit_event accepts incident.opened, and nothing else
+EventContext(emit=[IncidentOpened])  # emit_event accepts ops:incident.opened, and nothing else
 EventContext()  # read_events only
 ```
 
@@ -106,7 +106,7 @@ A call to emit another type, or fields that do not validate, is refused with a m
 triage = AgentAction(triage_agent, name="triage", usage_limits=UsageLimits(request_limit=5))
 
 error_spike = Rule(
-    name="error-spike",
+    name="ops:error-spike",
     when=on(ServiceError).where(F.severity >= 7).count(at_least=3, within=timedelta(minutes=1)),
     scope=by(F.service),
     then=run(triage),

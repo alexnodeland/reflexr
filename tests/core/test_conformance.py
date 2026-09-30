@@ -69,7 +69,7 @@ def envelope(item: dict[str, Any]) -> Envelope:
 
 @pytest.mark.parametrize("case", list(_cases()))
 def test_conformance(case: dict[str, Any]) -> None:
-    rule = Rule.model_validate({"name": "rule", "then": {"action": "act"}, **case["rule"]})
+    rule = Rule.model_validate({"name": "app:rule", "then": {"action": "act"}, **case["rule"]})
     envelopes = [envelope(item) for item in case["envelopes"]]
     progress = begin(rule, head_seq=0).model_copy(update=case.get("progress", {}))
     limit: int | None = case.get("max_depth")

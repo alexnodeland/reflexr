@@ -28,7 +28,7 @@ class FeedbackContext[VerdictT: Feedback]:
     """One piece of feedback, with what it is about.
 
     Attributes:
-        envelope: The ``feedback_given`` envelope: who gave it, and when.
+        envelope: The ``reflexr:feedback_given`` envelope: who gave it, and when.
         feedback: The feedback, validated as its type.
         run: The run and its events, for feedback on a run or a firing.
         chain: The causal chain's envelopes, for feedback on a chain.

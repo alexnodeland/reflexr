@@ -2,7 +2,7 @@
 
 Everything in reflexr runs in one process without a network: in-memory storage implements the whole storage protocol, time can be injected, the reactor can be driven until it settles, and pydantic-ai lets a scripted model stand in for a real one. So an application's tests can exercise its real rules, actions and surfaces, deterministically. reflexr's own tests work this way; this page shows the patterns.
 
-The examples use [pytest-asyncio](https://pytest-asyncio.readthedocs.io) with `asyncio_mode = "auto"`, so async tests and fixtures need no decorators. They test an application whose rules and actions live in a module of its own, here `oncall`: the incident-response rules `error-spike`, `heartbeat-lost` and `deploy-regression`, their actions `triage`, `page` and `runbook`, and a `build_workspaces(storage, clock=...)` that builds the `Workspaces`.
+The examples use [pytest-asyncio](https://pytest-asyncio.readthedocs.io) with `asyncio_mode = "auto"`, so async tests and fixtures need no decorators. They test an application whose rules and actions live in a module of its own, here `oncall`: the incident-response rules `ops:error-spike`, `ops:heartbeat-lost` and `ops:deploy-regression`, their actions `triage`, `page` and `runbook`, and a `build_workspaces(storage, clock=...)` that builds the `Workspaces`.
 
 ## Workspaces in memory
 
@@ -47,7 +47,7 @@ async def test_publishing_is_idempotent(monitor: Workspace) -> None:
     again = await monitor.publish(ServiceError(service="auth", severity=8), id="alert-7")
     assert again.duplicate
     assert again.envelope == first.envelope
-    assert [e.event_type for e in await monitor.read()] == ["service.error"]
+    assert [e.event_type for e in await monitor.read()] == ["ops:service.error"]
 ```
 
 Reads such as `monitor.runs(rule=...)`, `monitor.run(run_id)` and `monitor.dead_letters()` check the resulting state.
@@ -149,11 +149,11 @@ async def test_a_failing_page_is_retried(
     await reactor.settle()
     clock.advance(minutes=6)
     await reactor.settle()
-    [waiting] = await monitor.runs(rule="heartbeat-lost")
+    [waiting] = await monitor.runs(rule="ops:heartbeat-lost")
     assert (waiting.status, waiting.error) == ("retrying", "RuntimeError: the pager is down")
     clock.advance(seconds=1)  # the default retry policy waits a second
     await reactor.settle()
-    [done] = await monitor.runs(rule="heartbeat-lost")
+    [done] = await monitor.runs(rule="ops:heartbeat-lost")
     assert (done.status, done.attempts) == ("succeeded", 2)
 ```
 
@@ -180,7 +180,9 @@ def triage_script(messages: list[ModelMessage], info: AgentInfo) -> ModelRespons
     if len(requests) == 1:  # the first request: open an incident
         incident = {"service": "auth", "summary": "token checks failing"}
         return ModelResponse(
-            parts=[ToolCallPart("emit_event", {"type": "incident.opened", "fields": incident})]
+            parts=[
+                ToolCallPart("emit_event", {"type": "oncall:incident.opened", "fields": incident})
+            ]
         )
     return ModelResponse(  # then answer with the structured output
         parts=[ToolCallPart("final_result", {"severity": "high", "summary": "token checks"})]
@@ -194,7 +196,7 @@ async def test_the_triage_agent_opens_an_incident(
         await monitor.publish(ServiceError(service="auth", severity=8))
     with triage_agent.override(model=function_model(triage_script)):
         await reactor.settle()
-    [done] = await monitor.runs(rule="error-spike")
+    [done] = await monitor.runs(rule="ops:error-spike")
     assert done.output == {"severity": "high", "summary": "token checks"}
     [opened] = [e for e in await monitor.read() if isinstance(e.event, IncidentOpened)]
     assert opened.actor.kind == "agent"
@@ -227,17 +229,17 @@ async def test_the_runbook_resumes_after_the_step_that_failed(
     await monitor.publish(Deploy(service="auth", version="v42"))
     await monitor.publish(ServiceError(service="auth", severity=8))
     await reactor.settle()
-    [waiting] = await monitor.runs(rule="deploy-regression")
+    [waiting] = await monitor.runs(rule="ops:deploy-regression")
     assert (waiting.status, waiting.step) == ("retrying", "diagnose")
     clock.advance(seconds=30)
     await reactor.settle()
-    [done] = await monitor.runs(rule="deploy-regression")
+    [done] = await monitor.runs(rule="ops:deploy-regression")
     assert done.output == "diagnosed auth; paged auth"  # diagnose ran once
     steps = [e.event.step for e in await monitor.read() if isinstance(e.event, RunProgressed)]
     assert steps == ["__start__", "diagnose", "mitigate", "__end__"]
 ```
 
-`run.step` is the last step saved, and the `run_progressed` events list every boundary saved across attempts ([Graphs](actions.md#graphs)).
+`run.step` is the last step saved, and the `reflexr:run_progressed` events list every boundary saved across attempts ([Graphs](actions.md#graphs)).
 
 ## The web surfaces
 
@@ -268,7 +270,7 @@ def client(workspaces: Workspaces) -> Iterator[TestClient]:
 
 
 def test_a_client_publishes_and_follows_the_log(client: TestClient) -> None:
-    error = {"type": "service.error", "service": "auth", "severity": 8}
+    error = {"type": "ops:service.error", "service": "auth", "severity": 8}
     published = client.post("/v1/workspaces/prod/events", json={"event": error, "id": "alert-7"})
     assert published.json() == [
         {"type": "published", "seq": 1, "id": "alert-7", "duplicate": False}
@@ -279,7 +281,7 @@ def test_a_client_publishes_and_follows_the_log(client: TestClient) -> None:
     ) as socket:
         socket.send_json({"type": "hello", "protocol": "reflexr.v1", "resume_after_seq": 0})
         assert socket.receive_json()["type"] == "welcome"
-        assert socket.receive_json()["event"]["type"] == "service.error"
+        assert socket.receive_json()["event"]["type"] == "ops:service.error"
         assert socket.receive_json() == {"type": "replay_complete", "up_to_seq": 1}
 ```
 
@@ -305,7 +307,7 @@ async def test_an_external_agent_publishes_over_mcp(workspaces: Workspaces) -> N
         async with Client(server.server) as client:
             result = await client.call_tool(
                 "publish_event",
-                {"workspace_id": "prod", "event": {"type": "heartbeat", "service": "auth"}},
+                {"workspace_id": "prod", "event": {"type": "ops:heartbeat", "service": "auth"}},
             )
             [content] = result.content
             assert isinstance(content, TextContent)

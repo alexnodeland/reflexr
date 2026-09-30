@@ -1,23 +1,27 @@
-"""Events, their registry, reflexr's own events, and envelopes.
+"""Events, their namespaces and registries, reflexr's own events, and envelopes.
 
-An event type is a Pydantic model that subclasses :class:`Event`. Defining the class registers it
-under a name derived from the class name, or the ``name=`` given explicitly::
+An event type is a Pydantic model that subclasses :class:`Event`, through a base that declares
+its owner's namespace. Defining the class registers it under the namespace and a local name,
+derived from the class name or given as ``name=``::
 
-    class ServiceError(Event, name="service.error"):
+    class OncallEvent(Event, abstract=True, event_namespace="oncall"): ...
+
+
+    class AlertFired(OncallEvent, name="alert.fired"):  # oncall:alert.fired
         service: str
         severity: int
 
-On the wire, and in storage, an event is its fields plus ``"type"``: the registered name. Stored
+On the wire, and in storage, an event is its fields plus ``"type"``: the qualified name. Stored
 events are wrapped in an :class:`Envelope` with their position in the workspace's log.
 """
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from functools import cached_property
-from types import MappingProxyType
 from typing import Annotated, Any, ClassVar, Literal, cast
 
 from pydantic import (
+    AfterValidator,
     AwareDatetime,
     BaseModel,
     ConfigDict,
@@ -31,45 +35,139 @@ from pydantic import (
 )
 
 from reflexr.core.actors import Actor
-from reflexr.core.errors import NotFound, ValidationFailed
+from reflexr.core.errors import ValidationFailed
 from reflexr.core.feedback import FeedbackTarget
 from reflexr.core.ids import EventId, FiringId, RuleName, RunId, ScopeKey, WorkspaceId
 
-_registry: dict[str, type["Event"]] = {}
+_NAMESPACE = r"[a-z][a-z0-9_]*"
+_LOCAL = r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*"
+_EVENT_NAME = rf"^{_NAMESPACE}:{_LOCAL}$"
+"""A qualified event type name: a namespace, a ``:`` and a local name, such as
+``oncall:alert.fired``."""
+
+_REFLEXR = "reflexr"
+
+_types: dict[str, type["Event"]] = {}
+"""Every event type in the process, by name. There is one table, so a name parses one way."""
+
+_namespaces: dict[str, type["Event"]] = {}
+"""Every namespace in the process, with the base that declared it."""
+
+
+class EventRegistry(Mapping[str, type["Event"]]):
+    """A set of namespaces, read as the event types in them, by name.
+
+    A registry scopes which types a ``Workspaces`` accepts, so applications in one process stay
+    apart. It is a view of the process's one table of types: a base's ``registry=`` puts its
+    namespace in a registry, and :meth:`add` includes another's. reflexr's own namespace is in
+    every registry.
+    """
+
+    def __init__(self) -> None:
+        self._included = {_REFLEXR}
+
+    def add(self, *bases: type["Event"]) -> None:
+        """Include the namespace each base declared, and so every type in it.
+
+        Raises:
+            TypeError: If a base declares no namespace.
+        """
+        for base in bases:
+            namespace = base.__dict__.get("event_namespace")
+            if not isinstance(namespace, str):
+                raise TypeError(
+                    f"{base.__qualname__} declares no namespace; "
+                    "pass the base that declares one with event_namespace=..."
+                )
+            self._included.add(namespace)
+
+    def __getitem__(self, name: str) -> type["Event"]:
+        event_type = _types[name]
+        if event_type.event_namespace not in self._included:
+            raise KeyError(name)
+        return event_type
+
+    def __iter__(self) -> Iterator[str]:
+        return (name for name, t in _types.items() if t.event_namespace in self._included)
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+DEFAULT_REGISTRY = EventRegistry()
+"""The registry of every namespace whose base names no other one."""
 
 
 def _snake_case(name: str) -> str:
     return re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", "_", name).lower()
 
 
-def _register(event_type: "type[Event]") -> None:
-    existing = _registry.get(event_type.event_type)
+def _qualified(cls: type) -> str:
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
+def _declare(base: "type[Event]", namespace: str, registry: EventRegistry) -> None:
+    if re.fullmatch(_NAMESPACE, namespace) is None:
+        raise TypeError(
+            f"{namespace!r} is not a namespace: lowercase letters, digits and underscores, "
+            "starting with a letter"
+        )
+    existing = _namespaces.get(namespace)
+    if existing is not None and _qualified(existing) != _qualified(base):
+        raise TypeError(f"namespace {namespace!r} is already declared by {_qualified(existing)}")
+    _namespaces[namespace] = base
+    base.event_namespace = namespace
+    registry.add(base)
+
+
+def _register(event_type: "type[Event]", name: str | None) -> None:
+    namespace = event_type.event_namespace
+    if namespace is None:
+        raise TypeError(
+            f"{event_type.__name__} has no namespace; subclass a base that declares one, such as "
+            'class OncallEvent(Event, abstract=True, event_namespace="oncall")'
+        )
+    local = name or _snake_case(event_type.__name__)
+    if re.fullmatch(_LOCAL, local) is None:
+        raise TypeError(
+            f"{event_type.__name__}'s name {local!r} is not a local name: lowercase words joined "
+            "by dots, without the namespace, which comes from its base"
+        )
+    event_type.event_type = f"{namespace}:{local}"
+    existing = _types.get(event_type.event_type)
     if existing is not None and _qualified(existing) != _qualified(event_type):
         raise TypeError(
             f"event type name {event_type.event_type!r} is already registered by "
             f"{_qualified(existing)}; pass name=... to choose another"
         )
-    _registry[event_type.event_type] = event_type
-
-
-def _qualified(event_type: "type[Event]") -> str:
-    return f"{event_type.__module__}.{event_type.__qualname__}"
+    _types[event_type.event_type] = event_type
 
 
 class Event(BaseModel):
     """Base class for event types.
 
-    Subclass it with ordinary Pydantic fields. Events are facts, so they are immutable, and
-    unknown fields are rejected so that a producer's typo fails loudly.
+    Subclass it through an abstract base that declares a namespace with ``event_namespace=``,
+    and give it ordinary Pydantic fields. Events are facts, so they are immutable, and unknown
+    fields are rejected so that a producer's typo fails loudly.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     event_type: ClassVar[str]
-    """The registered type name, derived from the class name unless given as ``name=``."""
+    """The qualified name: the namespace, a ``:``, and the local name, derived from the class
+    name unless given as ``name=``."""
+
+    event_namespace: ClassVar[str | None] = None
+    """The namespace, from the base that declared it."""
 
     def __init_subclass__(
-        cls, *, name: str | None = None, abstract: bool = False, **kwargs: Any
+        cls,
+        *,
+        name: str | None = None,
+        abstract: bool = False,
+        event_namespace: str | None = None,
+        registry: EventRegistry | None = None,
+        **kwargs: Any,
     ) -> None:
         # The class arguments are consumed in __pydantic_init_subclass__, which runs once the
         # fields exist; they must not reach object.__init_subclass__.
@@ -77,12 +175,23 @@ class Event(BaseModel):
 
     @classmethod
     def __pydantic_init_subclass__(
-        cls, *, name: str | None = None, abstract: bool = False, **kwargs: Any
+        cls,
+        *,
+        name: str | None = None,
+        abstract: bool = False,
+        event_namespace: str | None = None,
+        registry: EventRegistry | None = None,
+        **kwargs: Any,
     ) -> None:
         super().__pydantic_init_subclass__(**kwargs)
+        if event_namespace is not None:
+            if not abstract:
+                raise TypeError(f"{cls.__name__} declares a namespace, so it must be abstract=True")
+            _declare(cls, event_namespace, DEFAULT_REGISTRY if registry is None else registry)
+        elif registry is not None:
+            raise TypeError(f"{cls.__name__} passes registry= without declaring a namespace")
         if not abstract:
-            cls.event_type = name or _snake_case(cls.__name__)
-            _register(cls)
+            _register(cls, name)
 
 
 class UnknownEvent(Event, abstract=True):
@@ -98,21 +207,40 @@ class UnknownEvent(Event, abstract=True):
     """The type name the event was stored with."""
 
 
-def event_types() -> Mapping[str, type[Event]]:
-    """Return a read-only view of every registered event type, by name."""
-    return MappingProxyType(_registry)
-
-
-def get_event_type(name: str) -> type[Event]:
-    """Return the event type registered under ``name``.
+def check_event_name(name: str) -> str:
+    """Return ``name`` if it is a qualified event type name.
 
     Raises:
-        NotFound: If no type is registered under that name.
+        ValueError: If it isn't. A name with no namespace is told the qualified names of the
+            types with that local name, in whatever registry.
     """
-    try:
-        return _registry[name]
-    except KeyError:
-        raise NotFound("event type", name) from None
+    if re.fullmatch(_EVENT_NAME, name) is not None:
+        return name
+    if ":" not in name:
+        found = sorted(t for t in _types if t.partition(":")[2] == name)
+        if len(found) == 1:
+            raise ValueError(f"event type {name!r} has no namespace; did you mean {found[0]!r}?")
+        if found:
+            raise ValueError(
+                f"event type {name!r} has no namespace; did you mean one of "
+                f"{', '.join(repr(t) for t in found)}?"
+            )
+        raise ValueError(
+            f"event type {name!r} has no namespace; a name is a namespace, a ':' and a local "
+            "name, such as 'oncall:alert.fired'"
+        )
+    raise ValueError(
+        f"{name!r} is not an event type name: a namespace, a ':' and a local name, in "
+        "lowercase, such as 'oncall:alert.fired'"
+    )
+
+
+EventName = Annotated[
+    str,
+    AfterValidator(check_event_name),
+    WithJsonSchema({"type": "string", "pattern": _EVENT_NAME}),
+]
+"""A qualified event type name, checked with a hint when it has no namespace."""
 
 
 def type_of(event: Event) -> str:
@@ -146,7 +274,7 @@ def _split(data: Mapping[str, Any]) -> tuple[str | None, dict[str, Any]]:
 
 
 def _load(name: str, fields: dict[str, Any]) -> Event:
-    event_type = _registry.get(name)
+    event_type = _types.get(name)
     if event_type is None:
         fields.pop("unknown_type", None)
         return UnknownEvent(unknown_type=name, **fields)
@@ -203,7 +331,11 @@ AnyEvent = Annotated[
 # ─── reflexr's own events ────────────────────────────────────────────────────
 
 
-class RuleFired(Event, name="rule_fired"):
+class _ReflexrEvent(Event, abstract=True, event_namespace=_REFLEXR):
+    """reflexr's own events, in the ``reflexr`` namespace, which every registry includes."""
+
+
+class RuleFired(_ReflexrEvent, name="rule_fired"):
     """A rule's condition held for one scope; a run of its action was created."""
 
     rule: RuleName
@@ -214,7 +346,7 @@ class RuleFired(Event, name="rule_fired"):
     """The ``seq`` of every envelope that made the condition hold."""
 
 
-class RuleErrored(Event, name="rule_errored"):
+class RuleErrored(_ReflexrEvent, name="rule_errored"):
     """A rule could not evaluate one envelope; it is dead-lettered for that rule alone."""
 
     rule: RuleName
@@ -222,7 +354,7 @@ class RuleErrored(Event, name="rule_errored"):
     error: str
 
 
-class RuleReset(Event, name="rule_reset"):
+class RuleReset(_ReflexrEvent, name="rule_reset"):
     """A rule's state was reset, because its definition changed or it was replayed."""
 
     rule: RuleName
@@ -233,19 +365,19 @@ class RuleReset(Event, name="rule_reset"):
     """Envelopes up to this ``seq`` rebuild the rule's state without recording firings."""
 
 
-class RunStarted(Event, name="run_started"):
+class RunStarted(_ReflexrEvent, name="run_started"):
     """An attempt of a run began."""
 
     run_id: RunId
     rule: RuleName
     scope: dict[str, JsonValue] = {}
-    """The values of the rule's scope fields, as on ``rule_fired``."""
+    """The values of the rule's scope fields, as on ``reflexr:rule_fired``."""
 
     scope_key: ScopeKey
     attempt: int
 
 
-class RunProgressed(Event, name="run_progressed"):
+class RunProgressed(_ReflexrEvent, name="run_progressed"):
     """A graph run completed a step and saved a checkpoint."""
 
     run_id: RunId
@@ -253,7 +385,7 @@ class RunProgressed(Event, name="run_progressed"):
     step: str
 
 
-class RunRetrying(Event, name="run_retrying"):
+class RunRetrying(_ReflexrEvent, name="run_retrying"):
     """An attempt failed, and the run will be tried again."""
 
     run_id: RunId
@@ -265,7 +397,7 @@ class RunRetrying(Event, name="run_retrying"):
     """A stable code for why the attempt failed, when the action gave one."""
 
 
-class RunSucceeded(Event, name="run_succeeded"):
+class RunSucceeded(_ReflexrEvent, name="run_succeeded"):
     """A run finished."""
 
     run_id: RunId
@@ -273,7 +405,7 @@ class RunSucceeded(Event, name="run_succeeded"):
     output: JsonValue = None
 
 
-class RunDeadLettered(Event, name="run_dead_lettered"):
+class RunDeadLettered(_ReflexrEvent, name="run_dead_lettered"):
     """A run exhausted its retries, or failed in a way retrying cannot fix."""
 
     run_id: RunId
@@ -284,7 +416,7 @@ class RunDeadLettered(Event, name="run_dead_lettered"):
     """A stable code for why the last attempt failed, when the action gave one."""
 
 
-class RunCancelled(Event, name="run_cancelled"):
+class RunCancelled(_ReflexrEvent, name="run_cancelled"):
     """A run was cancelled."""
 
     run_id: RunId
@@ -292,14 +424,14 @@ class RunCancelled(Event, name="run_cancelled"):
     reason: str | None = None
 
 
-class RunRequeued(Event, name="run_requeued"):
+class RunRequeued(_ReflexrEvent, name="run_requeued"):
     """Someone made a run runnable again. The envelope's actor records who."""
 
     run_id: RunId
     rule: RuleName
 
 
-class RunSkipped(Event, name="run_skipped"):
+class RunSkipped(_ReflexrEvent, name="run_skipped"):
     """A run was skipped without completing, unblocking its scope."""
 
     run_id: RunId
@@ -307,7 +439,7 @@ class RunSkipped(Event, name="run_skipped"):
     reason: str | None = None
 
 
-class FeedbackGiven(Event, name="feedback_given"):
+class FeedbackGiven(_ReflexrEvent, name="feedback_given"):
     """A person or an evaluator judged a run, a firing or a causal chain."""
 
     feedback_type: str
@@ -316,7 +448,7 @@ class FeedbackGiven(Event, name="feedback_given"):
     """The feedback's fields, as validated against its registered type."""
 
 
-class Tick(Event, name="tick"):
+class Tick(_ReflexrEvent, name="tick"):
     """A schedule's tick. Ticks also move rules' clocks forward in quiet workspaces."""
 
     schedule: str

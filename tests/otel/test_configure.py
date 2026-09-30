@@ -130,7 +130,7 @@ def test_views_apply_the_level_of_detail(detail: Any, kept: set[str], captured: 
             1,
             tenant_id="t1",
             workspace_id="w1",
-            attributes={EVENT_TYPE: "deploy.finished"},
+            attributes={EVENT_TYPE: "app:deploy.finished"},
         )
         [point] = captured.points("reflexr.events.published")
     assert set(point) == kept | {EVENT_TYPE}

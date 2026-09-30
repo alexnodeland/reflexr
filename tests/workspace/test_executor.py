@@ -80,7 +80,7 @@ async def blocked(reaction: Reaction[Deps]) -> None:
 
 def rule(**changes: object) -> Rule:
     fields: dict[str, object] = {
-        "name": "page",
+        "name": "app:page",
         "when": on(Deploy),
         "scope": by(F.service),
         "then": run("respond"),
@@ -122,7 +122,7 @@ async def test_a_run_succeeds_with_its_output_and_facts(build: Build) -> None:
     assert (done.status, done.attempts, done.output) == ("succeeded", 1, {"paged": "auth"})
     [reaction] = deps.calls
     assert (reaction.run_id, reaction.attempt, reaction.events) == (done.id, 1, (deploy,))
-    assert reaction.rule.name == "page"
+    assert reaction.rule.name == "app:page"
     facts = [e for e in await workspace.read() if isinstance(e.event, RunStarted | RunSucceeded)]
     assert [type(e.event) for e in facts] == [RunStarted, RunSucceeded]
     assert {(e.actor, e.correlation_id, e.depth) for e in facts} == {(REACTOR, deploy.id, 1)}
@@ -163,7 +163,7 @@ async def test_a_retried_run_does_not_emit_twice(build: Build, clock: FakeClock)
     [done] = await workspace.runs()
     assert done.status == "succeeded"
     [emitted] = [e for e in await workspace.read() if isinstance(e.event, ServiceError)]
-    assert emitted.actor == AgentActor(rule="page", run_id=done.id, name="announce")
+    assert emitted.actor == AgentActor(rule="app:page", run_id=done.id, name="announce")
     assert (emitted.causation, emitted.correlation_id) == (done.causation, done.correlation_id)
 
 
@@ -213,7 +213,7 @@ async def test_each_pass_claims_one_run_per_scope_however_deep_the_backlog(
 
     def claims() -> int:
         spans = telemetry.spans.get_finished_spans()
-        return sum(span.name == "invoke_workflow page" for span in spans)
+        return sum(span.name == "invoke_workflow app:page" for span in spans)
 
     passes: list[int] = []
     while attempts := await executor.execute():
@@ -237,9 +237,9 @@ async def test_timeouts_and_bad_outputs_fail_the_attempt(build: Build) -> None:
         return object()
 
     rules = [
-        rule(name="slow", then=run("slow"), timeout=timedelta(milliseconds=10)),
-        rule(name="model", then=run("model")),
-        rule(name="bad", then=run("bad")),
+        rule(name="app:slow", then=run("slow"), timeout=timedelta(milliseconds=10)),
+        rule(name="app:model", then=run("model")),
+        rule(name="app:bad", then=run("bad")),
     ]
     workspaces = build(rules)
     workspace = await open_(workspaces)
@@ -248,9 +248,9 @@ async def test_timeouts_and_bad_outputs_fail_the_attempt(build: Build) -> None:
     await Reactor(workspaces, actions=actions).settle()
     results = {r.rule: (r.status, r.error, r.output) for r in await workspace.runs()}
     assert results == {
-        "slow": ("retrying", "the action timed out after 0:00:00.010000", None),
-        "model": ("succeeded", None, {"service": "auth"}),
-        "bad": ("retrying", "the action returned a value that is not JSON", None),
+        "app:slow": ("retrying", "the action timed out after 0:00:00.010000", None),
+        "app:model": ("succeeded", None, {"service": "auth"}),
+        "app:bad": ("retrying", "the action returned a value that is not JSON", None),
     }
 
 
@@ -458,7 +458,7 @@ async def test_runs_changed_since_they_were_found_due_are_skipped(clock: FakeClo
     storage = StaleDue(clock=clock)
     blocking = rule(on_dead_letter="block", retry=RetryPolicy(max_attempts=1))
     workspaces = Workspaces(storage, rules=[blocking], clock=clock)
-    first, second = fired("r1", rule="page"), fired("r2", rule="page", seq=2)
+    first, second = fired("r1", rule="app:page"), fired("r2", rule="app:page", seq=2)
     orphan = fired("r3", rule="gone").model_copy(update={"status": "succeeded"})
     dead, _ = fail(start(first, now=START)[0], blocking, now=START, error="x")
     async with storage.transaction(ACME) as transaction:
@@ -470,7 +470,7 @@ async def test_runs_changed_since_they_were_found_due_are_skipped(clock: FakeClo
 
 
 async def test_runs_of_a_disabled_rule_wait_without_holding_others_up(build: Build) -> None:
-    errors = rule(name="errors", when=on(ServiceError))
+    errors = rule(name="app:errors", when=on(ServiceError))
     workspaces = build([rule(), errors])
     workspace = await open_(workspaces)
     await workspace.publish(Deploy(service="auth"))
@@ -481,17 +481,17 @@ async def test_runs_of_a_disabled_rule_wait_without_holding_others_up(build: Bui
     assert await paused.execute(limit=1) == 1  # the older run's rule is disabled, so it waits
     assert await paused.execute() == 0
     assert {r.rule: r.status for r in await workspace.runs()} == {
-        "page": "pending",
-        "errors": "succeeded",
+        "app:page": "pending",
+        "app:errors": "succeeded",
     }
     assert await reactor(workspaces, deps).execute() == 1  # enabled again, it runs
-    assert [r.status for r in await workspace.runs(rule="page")] == ["succeeded"]
+    assert [r.status for r in await workspace.runs(rule="app:page")] == ["succeeded"]
 
 
 async def test_a_disabled_rules_run_found_due_is_left_waiting(clock: FakeClock) -> None:
     storage = StaleDue(clock=clock)  # a storage that does not leave disabled rules' runs out
     workspaces = Workspaces(storage, rules=[rule(enabled=False)], clock=clock)
-    waiting = fired("r1", rule="page")
+    waiting = fired("r1", rule="app:page")
     async with storage.transaction(ACME) as transaction:
         await transaction.save_runs([waiting])
     storage.stale = [(ACME, waiting)]
@@ -503,14 +503,14 @@ async def test_runs_of_rules_no_longer_registered_are_cancelled(
     build: Build, storage: Storage
 ) -> None:
     async with storage.transaction(ACME) as transaction:
-        await transaction.save_runs([fired("r1", rule="retired")])
+        await transaction.save_runs([fired("r1", rule="app:retired")])
     workspaces = build([rule()])
     assert await reactor(workspaces, Deps()).execute() == 0
     orphan = await storage.run(ACME, "r1")
     assert orphan is not None
     assert (orphan.status, (await storage.read(ACME))[-1].event) == (
         "cancelled",
-        RunCancelled(run_id="r1", rule="retired", reason="its rule is no longer registered"),
+        RunCancelled(run_id="r1", rule="app:retired", reason="its rule is no longer registered"),
     )
 
 
@@ -559,7 +559,9 @@ async def test_attempts_are_traced_and_linked_to_their_causes(
     await executor.settle()
     clock.advance(1)
     await executor.settle()
-    spans = [s for s in telemetry.spans.get_finished_spans() if s.name == "invoke_workflow page"]
+    spans = [
+        s for s in telemetry.spans.get_finished_spans() if s.name == "invoke_workflow app:page"
+    ]
     assert len(spans) == 2
     failed, succeeded = spans
     assert failed.status.status_code == StatusCode.ERROR
@@ -689,16 +691,23 @@ async def test_typed_failures_record_their_reason_and_permanent_ones_skip_retrie
         raise RunFailure("blocked by pii-mask", reason="guardrail_blocked", permanent=True)
 
     rules = [
-        rule(name="throttled", then=run("throttled")),
-        rule(name="blocked", then=run("blocked")),
+        rule(name="app:throttled", then=run("throttled")),
+        rule(name="app:blocked", then=run("blocked")),
     ]
     workspaces = build(rules)
     workspace = await open_(workspaces)
     await workspace.publish(Deploy(service="auth"))
     await Reactor(workspaces, actions={"throttled": throttled, "blocked": blocked}).settle()
     runs = {r.rule: r for r in await workspace.runs()}
-    assert (runs["throttled"].status, runs["throttled"].reason) == ("retrying", "rate_limit")
-    assert (runs["blocked"].status, runs["blocked"].attempts, runs["blocked"].reason) == (
+    assert (runs["app:throttled"].status, runs["app:throttled"].reason) == (
+        "retrying",
+        "rate_limit",
+    )
+    assert (
+        runs["app:blocked"].status,
+        runs["app:blocked"].attempts,
+        runs["app:blocked"].reason,
+    ) == (
         "dead",
         1,
         "guardrail_blocked",

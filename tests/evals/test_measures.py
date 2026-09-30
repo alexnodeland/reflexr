@@ -9,7 +9,7 @@ from tests.clock import FakeClock
 from tests.event_types import Deploy, ServiceError
 
 page = Rule(
-    name="page",
+    name="app:page",
     when=on(ServiceError),
     scope=by(F.service),
     then=run("page"),
@@ -39,20 +39,20 @@ async def test_rule_outcomes_and_time_to_resolution() -> None:
     [billing] = await monitor.runs(scope_key='["billing"]')
     await operator.retry_run(billing.id)
     assert await rule_outcomes(monitor) == {
-        "page": RuleOutcomes(
-            rule="page", runs=3, succeeded=1, dead_lettered=2, retried=2, intervened=2
+        "app:page": RuleOutcomes(
+            rule="app:page", runs=3, succeeded=1, dead_lettered=2, retried=2, intervened=2
         )
     }
-    outcomes = (await rule_outcomes(monitor))["page"]
+    outcomes = (await rule_outcomes(monitor))["app:page"]
     assert (outcomes.dead_letter_rate, outcomes.retry_rate, outcomes.intervention_rate) == (
         2 / 3,
         2 / 3,
         2 / 3,
     )
-    empty = RuleOutcomes(rule="quiet")
+    empty = RuleOutcomes(rule="app:quiet")
     assert (empty.dead_letter_rate, empty.retry_rate, empty.intervention_rate) == (0, 0, 0)
     resolved = await time_to_resolution(
-        monitor, resolves=lambda envelope: envelope.event_type == "deploy.finished"
+        monitor, resolves=lambda envelope: envelope.event_type == "app:deploy.finished"
     )
     [auth_chain] = [e.correlation_id for e in await monitor.read(limit=1)]
     assert resolved == {auth_chain: timedelta(0)}

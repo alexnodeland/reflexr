@@ -96,7 +96,7 @@ The server's instructions tell the client what it is talking to: event logs, one
 | `list_dead_letters(workspace_id, rule=None)` | The envelopes rules could not evaluate, as JSON lines |
 | `give_feedback(workspace_id, feedback_type, target, value=None)` | Typed feedback on a run, a firing or a chain ([Feedback and evaluation](evaluation.md#giving-feedback)) |
 
-Commands answer with their outcome as JSON, such as `{"type":"published","seq":1,"id":"alert-7","duplicate":false}`. A rejection is a tool error carrying its message: retrying a run that succeeded answers `Error executing tool retry_run: cannot retry run fir_ce4679d4c7453919, which is succeeded`, and publishing one of reflexr's own events answers `run_succeeded events are recorded by reflexr, not published`.
+Commands answer with their outcome as JSON, such as `{"type":"published","seq":1,"id":"alert-7","duplicate":false}`. A rejection is a tool error carrying its message: retrying a run that succeeded answers `Error executing tool retry_run: cannot retry run fir_ce4679d4c7453919, which is succeeded`, and publishing one of reflexr's own events answers `reflexr:run_succeeded events are recorded by reflexr, not published`.
 
 Events a client publishes are attributed to its `ExternalAgentActor`, so people, the reactor and other clients see who did what:
 
@@ -110,7 +110,7 @@ The same rules apply as everywhere else: the `Workspaces` event allowlist decide
 
 Each run is a resource at `reflexr://{tenant_id}/{workspace_id}/runs/{run_id}`, whose content is the run's current JSON. `run_uri(tenant_id, workspace_id, run_id)` builds the URI. A client may read, and subscribe to, the runs of its own tenant only, in the workspaces `authorize` allows: reading another tenant's run fails with `runs of tenant acme are not available`, and so does a `subscriptions/listen` request that names one, with `INVALID_PARAMS`. The MCP SDK serves `subscriptions/listen` itself, so `ReflexrMcp` checks each run URI a listen request names, when the stream opens, as a read of it is checked; a request that names no run is not checked, and `resolve` is not called for it.
 
-Once a client has used a workspace through a tool, the server follows that workspace's log, and every fact about a run from then on (`run_started`, `run_progressed`, `run_retrying`, `run_succeeded` and the rest) is published as a resource-updated notification for the run's URI. A client that listens for a run's URI learns when to read it again, which suits an agent that published an alert and wants to watch the triage it caused.
+Once a client has used a workspace through a tool, the server follows that workspace's log, and every fact about a run from then on (`reflexr:run_started`, `reflexr:run_progressed`, `reflexr:run_retrying`, `reflexr:run_succeeded` and the rest) is published as a resource-updated notification for the run's URI. A client that listens for a run's URI learns when to read it again, which suits an agent that published an alert and wants to watch the triage it caused.
 
 ## Trying it
 
@@ -129,11 +129,11 @@ async with Client(mcp.server) as client:
             "publish_event",
             {
                 "workspace_id": "prod",
-                "event": {"type": "service.error", "service": "auth", "severity": 8},
+                "event": {"type": "ops:service.error", "service": "auth", "severity": 8},
                 "id": f"alert-{n}",
             },
         )
-    await reactor.evaluate()  # error-spike fires: a pending run
+    await reactor.evaluate()  # ops:error-spike fires: a pending run
 
     runs = await client.call_tool("list_runs", {"workspace_id": "prod"})
     run_id = json.loads(runs.content[0].text.splitlines()[0])["id"]

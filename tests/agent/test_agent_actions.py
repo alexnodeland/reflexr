@@ -12,15 +12,15 @@ from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import UsageLimits
 
-from reflexr import AgentActor, Event, F, Rule, SourceActor, by, on, run
+from reflexr import AgentActor, F, Rule, SourceActor, by, on, run
 from reflexr.agent import AgentAction, EventContext, firing_text
 from reflexr.telemetry import attributes as a
 from reflexr.workspace import InMemoryStorage, Reaction, Reactor, Workspace, Workspaces
 from tests.agent.conftest import Script, call, say
-from tests.event_types import Deploy, ServiceError
+from tests.event_types import AppEvent, Deploy, ServiceError
 
 triage_rule = Rule(
-    name="triage",
+    name="app:triage",
     description="Errors after a deploy.",
     when=on(ServiceError),
     scope=by(F.service),
@@ -28,7 +28,7 @@ triage_rule = Rule(
 )
 
 
-class Escalated(Event, name="incident.escalated"):
+class Escalated(AppEvent, name="incident.escalated"):
     service: str
     severity: int
 
@@ -60,11 +60,11 @@ def agent(script: Script, *capabilities: Any, output_type: Any = str) -> Agent[R
 
 async def test_an_agent_reads_the_log_emits_events_and_answers() -> None:
     script = Script(
-        call("read_events", types=["deploy.finished"]),
+        call("read_events", types=["app:deploy.finished"]),
         call(
             "emit_event",
             "call_2",
-            type="incident.escalated",
+            type="app:incident.escalated",
             fields={"service": "auth", "severity": 8},
         ),
         say("Escalated: the deploy broke token checks."),
@@ -72,20 +72,20 @@ async def test_an_agent_reads_the_log_emits_events_and_answers() -> None:
     action = AgentAction(agent(script, EventContext(emit=[Escalated])))
     workspace, reactor = await setup(action)
     await reactor.settle()
-    [done] = await workspace.runs(rule="triage")
+    [done] = await workspace.runs(rule="app:triage")
     assert (done.status, done.output) == ("succeeded", "Escalated: the deploy broke token checks.")
     [prompt] = script.sent(0)
-    assert prompt.startswith('Rule "triage" fired for {"service": "auth"}. This is attempt 1.')
+    assert prompt.startswith('Rule "app:triage" fired for {"service": "auth"}. This is attempt 1.')
     assert "Errors after a deploy." in prompt
-    assert '<event seq="2" type="service.error"' in prompt
-    assert "emit_event: incident.escalated" in script.instructions(0)
+    assert '<event seq="2" type="app:service.error"' in prompt
+    assert "emit_event: app:incident.escalated" in script.instructions(0)
     assert script.tools[0] == ["read_events", "emit_event"]
     [deploys] = script.sent(1)
-    assert '<event seq="1" type="deploy.finished"' in deploys
-    assert script.sent(2) == ["Published incident.escalated at seq 5."]
+    assert '<event seq="1" type="app:deploy.finished"' in deploys
+    assert script.sent(2) == ["Published app:incident.escalated at seq 5."]
     escalation = (await workspace.read())[4]
     assert escalation.event == Escalated(service="auth", severity=8)
-    assert escalation.actor == AgentActor(rule="triage", run_id=done.id, name="triage")
+    assert escalation.actor == AgentActor(rule="app:triage", run_id=done.id, name="triage")
     assert (escalation.causation, escalation.correlation_id) == (
         done.causation,
         done.correlation_id,
@@ -94,16 +94,16 @@ async def test_an_agent_reads_the_log_emits_events_and_answers() -> None:
 
 async def test_emitting_is_limited_to_allowed_and_valid_events() -> None:
     script = Script(
-        call("emit_event", type="deploy.finished", fields={"service": "auth"}),
-        call("emit_event", "call_2", type="incident.escalated", fields={"service": "auth"}),
+        call("emit_event", type="app:deploy.finished", fields={"service": "auth"}),
+        call("emit_event", "call_2", type="app:incident.escalated", fields={"service": "auth"}),
         say("Could not escalate."),
     )
     workspace, reactor = await setup(AgentAction(agent(script, EventContext(emit=[Escalated]))))
     await reactor.settle()
     [refused] = script.sent(1)
-    assert "You may not emit 'deploy.finished'; allowed: incident.escalated." in refused
+    assert "You may not emit 'app:deploy.finished'; allowed: app:incident.escalated." in refused
     [invalid] = script.sent(2)
-    assert "The fields do not match incident.escalated" in invalid
+    assert "The fields do not match app:incident.escalated" in invalid
     assert not [e for e in await workspace.read() if isinstance(e.event, Escalated)]
 
 
@@ -118,7 +118,7 @@ async def test_without_emit_types_an_agent_can_only_read() -> None:
 
 async def test_an_agent_reads_the_log_from_its_end_and_backwards() -> None:
     script = Script(
-        call("read_events", last=1, types=["deploy.finished", "service.error"]),
+        call("read_events", last=1, types=["app:deploy.finished", "app:service.error"]),
         call("read_events", "call_2", last=5, before_seq=2),
         call("read_events", "call_3", limit=1, last=1),
         say("Read back to the deploy."),
@@ -126,9 +126,9 @@ async def test_an_agent_reads_the_log_from_its_end_and_backwards() -> None:
     _, reactor = await setup(AgentAction(agent(script, EventContext(read_limit=1))))
     await reactor.settle()
     [latest] = script.sent(1)
-    assert latest.startswith('<event seq="2" type="service.error"')
+    assert latest.startswith('<event seq="2" type="app:service.error"')
     [earlier] = script.sent(2)
-    assert earlier.startswith('<event seq="1" type="deploy.finished"'), "capped at read_limit"
+    assert earlier.startswith('<event seq="1" type="app:deploy.finished"'), "capped at read_limit"
     [refused] = script.sent(3)
     assert "give limit or last, not both" in refused
 
@@ -143,7 +143,7 @@ async def test_structured_outputs_and_custom_prompts() -> None:
     )
     workspace, reactor = await setup(action)
     await reactor.settle()
-    [done] = await workspace.runs(rule="triage")
+    [done] = await workspace.runs(rule="app:triage")
     assert done.output == {"severity": 8, "summary": "token checks fail"}
     assert script.sent(0) == ["Triage auth."]
     fixed = Script(say("ok"))
@@ -170,17 +170,17 @@ async def test_the_agent_span_joins_the_chain_with_reflexr_attribution() -> None
         AgentAction(agent(script, EventContext(), instrumented)), tracer_provider=provider
     )
     await reactor.settle()
-    [done] = await workspace.runs(rule="triage")
+    [done] = await workspace.runs(rule="app:triage")
     [agent_span] = [s for s in spans.get_finished_spans() if s.name.startswith("invoke_agent")]
     attributes = dict(agent_span.attributes or {})
     assert attributes[a.CONVERSATION_ID] == done.correlation_id
     assert (attributes[a.RULE], attributes[a.RUN_ID], attributes[a.ATTEMPT]) == (
-        "triage",
+        "app:triage",
         done.id,
         1,
     )
     assert attributes[a.TENANT_ID] == "acme"
-    [workflow] = [s for s in spans.get_finished_spans() if s.name == "invoke_workflow triage"]
+    [workflow] = [s for s in spans.get_finished_spans() if s.name == "invoke_workflow app:triage"]
     parent = agent_span.parent
     assert parent is not None
     context = workflow.get_span_context()
@@ -190,7 +190,7 @@ async def test_the_agent_span_joins_the_chain_with_reflexr_attribution() -> None
 
 
 async def test_firings_render_without_a_scope_or_description() -> None:
-    plain = Rule(name="deploys", when=on(Deploy), then=run("note"))
+    plain = Rule(name="app:deploys", when=on(Deploy), then=run("note"))
     captured: list[str] = []
 
     async def note(reaction: Reaction[None]) -> None:
@@ -201,5 +201,5 @@ async def test_firings_render_without_a_scope_or_description() -> None:
     await workspace.publish(Deploy(service="authentication-service"))
     await Reactor(workspaces, actions={"note": note}).settle()
     [text] = captured
-    assert text.startswith('Rule "deploys" fired. This is attempt 1.\nThe events')
+    assert text.startswith('Rule "app:deploys" fired. This is attempt 1.\nThe events')
     assert '{"service…</event>' in text

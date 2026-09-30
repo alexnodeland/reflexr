@@ -43,13 +43,17 @@ from reflexr import Event, F, Rule, SourceActor, by, on, run
 from reflexr.workspace import InMemoryStorage, Reaction, Reactor, Workspaces
 
 
-class ServiceError(Event, name="service.error"):  # an event type: a Pydantic model
+class OpsEvent(Event, abstract=True, event_namespace="ops"):  # the application's namespace
+    pass
+
+
+class ServiceError(OpsEvent, name="service.error"):  # an event type, ops:service.error
     service: str
     severity: int
 
 
 error_spike = Rule(  # a rule: typed, serializable data
-    name="error-spike",
+    name="ops:error-spike",
     when=on(ServiceError).where(F.severity >= 7).count(at_least=3, within=timedelta(minutes=1)),
     scope=by(F.service),
     then=run("page"),
@@ -80,13 +84,13 @@ asyncio.run(main())
 The workspace's log tells the whole story, in order: the three severe errors and the mild one, the rule firing on the severe three, and the run of its action:
 
 ```text
-1 source service.error
-2 source service.error
-3 source service.error
-4 source service.error
-5 system rule_fired
-6 system run_started
-7 system run_succeeded
+1 source ops:service.error
+2 source ops:service.error
+3 source ops:service.error
+4 source ops:service.error
+5 system reflexr:rule_fired
+6 system reflexr:run_started
+7 system reflexr:run_succeeded
 ```
 
 [Getting started](getting-started.md) builds on this step by step, with an agent that triages and opens an incident, and a server.

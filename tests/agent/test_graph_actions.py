@@ -111,7 +111,7 @@ async def setup(
     provider: TracerProvider | None = None,
 ) -> Setup:
     rule = Rule(
-        name="deploys",
+        name="app:deploys",
         when=on(Deploy),
         scope=by(F.service),
         then=run(action.name),
@@ -186,7 +186,7 @@ async def test_a_finished_graph_is_not_run_again(clock: FakeClock) -> None:
     reaction = Reaction(
         workspace=workspace,
         run=pending.model_copy(update={"checkpoint": finished}),
-        rule=Rule(name="deploys", when=on(Deploy), then=run("runbook")),
+        rule=Rule(name="app:deploys", when=on(Deploy), then=run("runbook")),
         events=(),
         deps=deps,
     )
@@ -227,7 +227,7 @@ async def test_checkpoints_this_graph_cannot_resume_start_over(
     await it.reactor.settle()
     assert deps.ran == ["diagnose", "mitigate", "report"]
     # The attempt's span says why; the first attempt of a run has no checkpoint to discard.
-    [attempt] = [s for s in spans.get_finished_spans() if s.name == "invoke_workflow deploys"]
+    [attempt] = [s for s in spans.get_finished_spans() if s.name == "invoke_workflow app:deploys"]
     assert [dict(e.attributes or {}) for e in attempt.events if e.name == DISCARDED] == [
         {"reflexr.checkpoint.reason": reason}
     ]

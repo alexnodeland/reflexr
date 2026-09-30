@@ -1,8 +1,15 @@
-"""Event types used across the tests. Importing this module registers them."""
+"""Event types used across the tests, in the ``app`` namespace.
+
+Importing this module registers them.
+"""
 
 from pydantic import BaseModel, Field
 
 from reflexr import Event
+
+
+class AppEvent(Event, abstract=True, event_namespace="app"):
+    """The tests' events, in the ``app`` namespace."""
 
 
 class Labels(BaseModel):
@@ -10,7 +17,7 @@ class Labels(BaseModel):
     team: str | None = None
 
 
-class ServiceError(Event, name="service.error"):
+class ServiceError(AppEvent, name="service.error"):
     service: str
     severity: int = 5
     message: str = ""
@@ -22,16 +29,16 @@ class ServiceError(Event, name="service.error"):
     extra: dict[str, object] = Field(default_factory=dict[str, object])
 
 
-class Deploy(Event, name="deploy.finished"):
+class Deploy(AppEvent, name="deploy.finished"):
     service: str
     version: str = "1"
 
 
-class Heartbeat(Event, name="heartbeat"):
+class Heartbeat(AppEvent, name="heartbeat"):
     service: str
 
 
-class Flag(Event):
-    """Registered under a derived name: ``flag``."""
+class Flag(AppEvent):
+    """Registered under a derived name: ``app:flag``."""
 
     on: bool = True

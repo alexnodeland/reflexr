@@ -32,8 +32,8 @@ def triage(service: str = "api", severity: int = 8, summary: str = "api is faili
     """The steps of a triage that opens an incident, then answers with its verdict."""
     incident = {"service": service, "severity": severity, "summary": summary}
     return [
-        call("read_events", types=["deploy.completed"]),
-        call("emit_event", type="incident.opened", fields=incident),
+        call("read_events", types=["oncall:deploy.completed"]),
+        call("emit_event", type="oncall:incident.opened", fields=incident),
         call("final_result", severity=severity, summary=summary),
     ]
 

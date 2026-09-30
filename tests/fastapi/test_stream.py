@@ -11,8 +11,8 @@ from starlette.websockets import WebSocketDisconnect
 from tests.fastapi.conftest import build
 
 STREAM = "/v1/workspaces/prod/stream"
-ERROR = {"type": "service.error", "service": "auth"}
-DEPLOY = {"type": "deploy.finished", "service": "auth"}
+ERROR = {"type": "app:service.error", "service": "auth"}
+DEPLOY = {"type": "app:deploy.finished", "service": "auth"}
 
 
 @pytest.fixture
@@ -48,7 +48,7 @@ def test_hello_welcome_replay_then_live(client: TestClient) -> None:
     publish(client, DEPLOY)
     with client.websocket_connect(STREAM, subprotocols=["reflexr.v1"]) as ws:
         assert ws.accepted_subprotocol == "reflexr.v1"
-        ws.send_json(hello(types=["service.error"]))
+        ws.send_json(hello(types=["app:service.error"]))
         welcome = ws.receive_json()
         assert (welcome["type"], welcome["head_seq"], welcome["reset"]) == ("welcome", 2, False)
         replayed = until(ws, "replay_complete")
@@ -57,7 +57,11 @@ def test_hello_welcome_replay_then_live(client: TestClient) -> None:
         publish(client, DEPLOY)  # not received
         publish(client, ERROR)
         live = ws.receive_json()
-        assert (live["type"], live["seq"], live["event"]["type"]) == ("event", 4, "service.error")
+        assert (live["type"], live["seq"], live["event"]["type"]) == (
+            "event",
+            4,
+            "app:service.error",
+        )
 
 
 def test_an_up_to_date_client_gets_replay_complete_at_once(client: TestClient) -> None:
@@ -73,7 +77,7 @@ def test_a_client_from_the_head_replays_nothing_and_follows_live(client: TestCli
     publish(client, ERROR)
     publish(client, DEPLOY)
     with client.websocket_connect(STREAM) as ws:
-        ws.send_json(hello(from_head=True, types=["service.error"]))
+        ws.send_json(hello(from_head=True, types=["app:service.error"]))
         welcome = ws.receive_json()
         assert (welcome["head_seq"], welcome["reset"]) == (2, False)
         assert ws.receive_json() == {"type": "replay_complete", "up_to_seq": 2}
@@ -114,7 +118,14 @@ def test_refused_connections_are_closed_with_a_reason(
         assert closed.value.code == code
 
 
-@pytest.mark.parametrize("first", [{"type": "command"}, hello() | {"protocol": "reflexr.v0"}])
+@pytest.mark.parametrize(
+    "first",
+    [
+        {"type": "command"},
+        hello() | {"protocol": "reflexr.v0"},
+        hello() | {"types": ["rule_fired"]},  # a type needs its namespace: reflexr:rule_fired
+    ],
+)
 def test_a_bad_first_frame_closes_the_connection(client: TestClient, first: dict[str, Any]) -> None:
     with client.websocket_connect(STREAM) as ws:
         ws.send_json(first)

@@ -46,15 +46,15 @@ Every operation a client can perform is a command, and every command is attribut
 
 ## What clients can publish
 
-- **The event allowlist.** `Workspaces(storage, events=[ServiceError, Deploy, Heartbeat])` accepts those types only. Publishing any other type is rejected with `not_found`, even a type registered elsewhere in the process, so clients cannot publish arbitrary types. Without `events`, every registered type is accepted; pass the list in production.
+- **The event allowlist.** `Workspaces(storage, events=[ServiceError, Deploy, Heartbeat])` accepts those types only. Publishing any other type is rejected with `not_found`, even a type registered elsewhere in the process, so clients cannot publish arbitrary types. Without `events`, every type in the workspaces' registry is accepted; pass the list in production.
 - **Run-only events.** `Workspaces(emitted=[IncidentOpened])` names types that only runs may publish. A client, over REST, the WebSocket, MCP or a handle of your own that no run caused, is refused with `forbidden`, so an incident, a verdict or anything else your workflows produce cannot be forged from outside.
-- **reflexr's own events are never published.** `rule_fired`, `run_succeeded`, `feedback_given`, `tick` and the rest are recorded by reflexr alone, and publishing one is rejected with `forbidden`, so no client can forge a firing, a run's outcome or a schedule's tick.
+- **reflexr's own events are never published.** `reflexr:rule_fired`, `reflexr:run_succeeded`, `reflexr:feedback_given`, `reflexr:tick` and the rest are recorded by reflexr alone, and publishing one is rejected with `forbidden`, so no client can forge a firing, a run's outcome or a schedule's tick.
 - **Events are validated.** An event must match its type's schema, and unknown fields are rejected, so a producer's typo fails loudly rather than never matching a rule.
 - **Ids make publishing idempotent,** within a workspace. A replayed request with the same id appends nothing.
 
 ```text
 not_found: event type debug.dump does not exist
-forbidden: run_succeeded events are recorded by reflexr, not published
+forbidden: reflexr:run_succeeded events are recorded by reflexr, not published
 ```
 
 ## Keeping agents in bounds
@@ -78,7 +78,7 @@ Events that set off workflows can loop and can spend. The library bounds both, a
 | Runs executing at once, per reactor | `Reactor(concurrency=...)` | 10 |
 | Requests and tokens per agent attempt | `AgentAction(usage_limits=UsageLimits(...))` | None |
 
-A rule whose action triggers itself stops at the depth limit: with `max_depth=3`, a rule that answers each `incident.opened` by emitting another fires three times, and the firing that would go deeper is refused and dead-lettered for that rule, with the reason `the firing would be at causation depth 4, beyond the limit of 3`. A run's handle that tries to publish beyond the limit is rejected with `depth_exceeded`.
+A rule whose action triggers itself stops at the depth limit: with `max_depth=3`, a rule that answers each `oncall:incident.opened` by emitting another fires three times, and the firing that would go deeper is refused and dead-lettered for that rule, with the reason `the firing would be at causation depth 4, beyond the limit of 3`. A run's handle that tries to publish beyond the limit is rejected with `depth_exceeded`.
 
 The WebSocket closes connections that do not say `hello` within `hello_timeout` (10 seconds), and disconnects clients whose outbox exceeds `outbox_size` frames (1,000) instead of buffering without bound; a disconnected client resumes from the log without losing anything. The library does not limit request sizes, publishing rates or the number of workspaces a tenant creates, and a workspace comes into being the first time something is published to it. Enforce those in your application or at your proxy.
 

@@ -40,19 +40,23 @@ Combine extras with commas, as in `"reflexr[fastapi,postgres] @ git+https://gith
 
 ## 1. Define event types
 
-An event type is a Pydantic model that subclasses `Event`. Defining the class registers it under the name you give, which is its `type` on the wire.
+An event type is a Pydantic model that subclasses `Event`, through a base that declares your application's namespace. Defining the class registers it under the namespace and the name you give, `ops:service.error`, which is its `type` on the wire.
 
 ```python
 from reflexr import Event
 
 
-class ServiceError(Event, name="service.error"):
+class OpsEvent(Event, abstract=True, event_namespace="ops"):
+    """Every event of this application, in the ops namespace."""
+
+
+class ServiceError(OpsEvent, name="service.error"):
     service: str
     severity: int
     message: str = ""
 
 
-class IncidentOpened(Event, name="incident.opened"):
+class IncidentOpened(OpsEvent, name="incident.opened"):
     service: str
     summary: str
 ```
@@ -69,7 +73,7 @@ from datetime import timedelta
 from reflexr import F, Rule, by, on, run
 
 error_spike = Rule(
-    name="error-spike",
+    name="ops:error-spike",
     description="Three severe errors from one service within a minute.",
     when=on(ServiceError)
     .where(F.severity >= 7)
@@ -145,18 +149,18 @@ asyncio.run(main())
 The rule counted the three severe errors from `auth`, ignored the mild one and `billing`'s single error, fired once, and ran `page`:
 
 ```text
-Paging the on-call engineer about auth, run fir_59dd6d39e0f9af54
-1 source service.error
-2 source service.error
-3 source service.error
-4 source service.error
-5 source service.error
-6 system rule_fired
-7 system run_started
-8 system run_succeeded
+Paging the on-call engineer about auth, run fir_ab3ca94a62712916
+1 source ops:service.error
+2 source ops:service.error
+3 source ops:service.error
+4 source ops:service.error
+5 source ops:service.error
+6 system reflexr:rule_fired
+7 system reflexr:run_started
+8 system reflexr:run_succeeded
 ```
 
-reflexr's own facts are on the same log as your events: the firing (`rule_fired`, naming the events it matched) and each step of the run. `await workspace.runs()` returns the run itself, with its status, attempts and output. [The reactor](guides/reactor.md) explains evaluation, retries and ordering.
+reflexr's own facts are on the same log as your events: the firing (`reflexr:rule_fired`, naming the events it matched) and each step of the run. `await workspace.runs()` returns the run itself, with its status, attempts and output. [The reactor](guides/reactor.md) explains evaluation, retries and ordering.
 
 ## 5. Let an agent triage
 
@@ -189,10 +193,10 @@ triage = AgentAction(triage_agent, name="triage")
 Point the rule at it with `then=run(triage)`, and give it to the reactor with `actions={"triage": triage}`. When the rule fires, the agent is told:
 
 ```text
-Rule "error-spike" fired for {"service": "auth"}. This is attempt 1.
+Rule "ops:error-spike" fired for {"service": "auth"}. This is attempt 1.
 The rule: Three severe errors from one service within a minute.
 The events that made it fire, oldest first:
-<event seq="1" type="service.error" at="..." by="source">{"message": "token check failed", ...}</event>
+<event seq="1" type="ops:service.error" at="..." by="source">{"message": "token check failed", ...}</event>
 ...
 
 Respond to this firing.
@@ -201,10 +205,10 @@ Respond to this firing.
 Its structured output is the run's output, and the incident it opens is on the log, attributed to the agent and caused by the run:
 
 ```text
-4 system rule_fired
-5 system run_started
-6 agent incident.opened
-7 system run_succeeded
+4 system reflexr:rule_fired
+5 system reflexr:run_started
+6 agent ops:incident.opened
+7 system reflexr:run_succeeded
 ```
 
 The exact tool calls depend on the model. Because the incident's envelope records the run as its cause, other rules can react to it, and the chain of events stays in one trace and one session. [Actions](guides/actions.md) covers agents, graphs with checkpoints, and functions in depth.
@@ -250,7 +254,7 @@ Then publish, and read the runs:
 ```bash
 curl -X POST localhost:8000/v1/workspaces/prod/events -H "authorization: Bearer $TOKEN" \
   -H "content-type: application/json" \
-  -d '{"event": {"type": "service.error", "service": "auth", "severity": 8}}'
+  -d '{"event": {"type": "ops:service.error", "service": "auth", "severity": 8}}'
 # [{"type":"published","seq":1,"id":"evt_4d2b782c09fcbab4","duplicate":false}]
 
 curl localhost:8000/v1/workspaces/prod/runs -H "authorization: Bearer $TOKEN"

@@ -40,7 +40,7 @@ BLOCKED = {
         "code": "400",
     }
 }
-rule = Rule(name="review", when=on(Deploy), then=run("review"))
+rule = Rule(name="app:review", when=on(Deploy), then=run("review"))
 
 
 class FakeProxy:
@@ -84,7 +84,7 @@ async def acme_key(tenant_id: TenantId) -> str | None:
 async def pii_for_review(
     tenant_id: TenantId, workspace_id: WorkspaceId, rule: RuleName
 ) -> Sequence[str]:
-    return ["presidio-pii"] if rule == "review" else []
+    return ["presidio-pii"] if rule == "app:review" else []
 
 
 def review(model: Any, gateway: LiteLLMGateway, *extra: Any) -> AgentAction[None, str]:
@@ -121,11 +121,11 @@ async def test_each_request_carries_the_tenant_chain_trace_key_and_guardrails() 
     assert body["metadata"] == {
         "tenant_id": "acme",
         "workspace_id": "prod",
-        "rule": "review",
+        "rule": "app:review",
         "scope": "[]",
         "run_id": done.id,
         "session_id": done.correlation_id,
-        "tags": ["reflexr", "tenant:acme", "workspace:prod", "rule:review", "oncall"],
+        "tags": ["reflexr", "tenant:acme", "workspace:prod", "rule:app:review", "oncall"],
         "trace_user_id": "ada",
         "existing_trace_id": done.trace_ids[-1],
     }
@@ -156,7 +156,7 @@ async def test_the_models_settings_reach_the_proxy_beside_the_gateways() -> None
 
 async def test_without_a_person_tenant_key_guardrails_or_trace() -> None:
     proxy = FakeProxy()
-    other = Rule(name="other", when=on(Deploy), then=run("review"))
+    other = Rule(name="app:other", when=on(Deploy), then=run("review"))
     workspaces = Workspaces(InMemoryStorage(), rules=[other])
     ws = await workspaces.open("globex", "prod", actor=ExternalAgentActor(client_id="claude"))
     await ws.publish(Deploy(service="auth"))

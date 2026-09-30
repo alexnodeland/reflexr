@@ -20,10 +20,13 @@ A rule serializes to plain JSON, with durations as ISO 8601 strings. `Rule.model
 
 ```python
 from reflexr import Rule
+from reflexr.core import DEFAULT_REGISTRY
 
 rule = Rule.model_validate_json(text)  # raises pydantic.ValidationError if it does not fit
-rule.check(events={"service.error": ServiceError})  # raises InvalidRule for unknown types or fields
+rule.check(events=DEFAULT_REGISTRY)  # raises InvalidRule for unknown types or fields
 ```
+
+Names are qualified: an event type or a rule name without its namespace fails validation, and an event type's error names the qualified one it may mean.
 
 ## Generating client types
 

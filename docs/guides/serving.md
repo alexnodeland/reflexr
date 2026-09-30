@@ -93,7 +93,7 @@ Without `authorize`, any authenticated actor may use every workspace of its own 
 ```bash
 curl -X POST localhost:8000/v1/workspaces/prod/events \
   -H 'authorization: Bearer k_grafana' -H 'content-type: application/json' \
-  -d '{"event": {"type": "service.error", "service": "auth", "severity": 8,
+  -d '{"event": {"type": "ops:service.error", "service": "auth", "severity": 8,
                  "message": "token check failed"}, "id": "alert-7"}'
 ```
 
@@ -106,8 +106,8 @@ The id makes publishing idempotent: sending `alert-7` again appends nothing and 
 ```json
 {
   "events": [
-    {"event": {"type": "service.error", "service": "auth", "severity": 9}, "id": "alert-8"},
-    {"event": {"type": "service.error", "service": "auth", "severity": 9}, "id": "alert-9"}
+    {"event": {"type": "ops:service.error", "service": "auth", "severity": 9}, "id": "alert-8"},
+    {"event": {"type": "ops:service.error", "service": "auth", "severity": 9}, "id": "alert-9"}
   ],
   "correlation_id": "alert-7"
 }
@@ -118,7 +118,7 @@ The response lists one `published` outcome per event. A request that cannot be p
 | Response | When |
 |---|---|
 | 404 `not_found` | The event's type is not one the `Workspaces` accepts, or the `correlation_id` names no event |
-| 403 `forbidden` | The event is one of reflexr's own, such as `rule_fired`, which only reflexr records |
+| 403 `forbidden` | The event is one of reflexr's own, such as `reflexr:rule_fired`, which only reflexr records |
 | 422 `validation_failed` | The `correlation_id` names a later event of a chain rather than its first; the message names the chain that event belongs to |
 | 422 | The body does not validate, such as an event missing a field of its type; the detail lists Pydantic's errors |
 
@@ -148,7 +148,7 @@ Everything else a client can do is a command ([stream protocol](../protocol.md#c
 ```json
 {"type": "command", "command_id": "c_2",
  "command": {"type": "publish", "id": "deploy-1.4.2",
-             "event": {"type": "deploy.finished", "service": "auth", "version": "1.4.2"}}}
+             "event": {"type": "ops:deploy.finished", "service": "auth", "version": "1.4.2"}}}
 ```
 
 ```json
@@ -191,7 +191,7 @@ Every path is relative to the router's prefix, `/v1` above:
 A dashboard follows a rule's health with `GET /v1/workspaces/prod/rules`:
 
 ```json
-[{"rule": "error-spike", "enabled": true, "cursor": 4, "lag": 3, "generation": 0, "dead_letters": 0}]
+[{"rule": "ops:error-spike", "enabled": true, "cursor": 4, "lag": 3, "generation": 0, "dead_letters": 0}]
 ```
 
 A lag that keeps growing means no reactor is evaluating the workspace, or it cannot keep up, unless the rule is [disabled](reactor.md#disabling-a-rule).
@@ -199,8 +199,8 @@ A lag that keeps growing means no reactor is evaluating the workspace, or it can
 Page forwards through a long log with `after_seq`, starting from the last `seq` you have. To show the latest events first, as an incident timeline does, read the tail with `last`, then page backwards with `before_seq` set to the oldest `seq` you have:
 
 ```text
-GET /v1/workspaces/prod/events?type=service.error&last=20
-GET /v1/workspaces/prod/events?type=service.error&last=20&before_seq=4180
+GET /v1/workspaces/prod/events?type=ops:service.error&last=20
+GET /v1/workspaces/prod/events?type=ops:service.error&last=20&before_seq=4180
 ```
 
 ## The WebSocket stream
@@ -208,14 +208,14 @@ GET /v1/workspaces/prod/events?type=service.error&last=20&before_seq=4180
 A client connects to `/v1/workspaces/{workspace_id}/stream` with the subprotocol `reflexr.v1`, and sends `hello` with the last `seq` it has (0 the first time) and, optionally, the event types it wants:
 
 ```json
-{"type": "hello", "protocol": "reflexr.v1", "resume_after_seq": 0, "types": ["service.error", "rule_fired", "run_succeeded"]}
+{"type": "hello", "protocol": "reflexr.v1", "resume_after_seq": 0, "types": ["ops:service.error", "reflexr:rule_fired", "reflexr:run_succeeded"]}
 ```
 
 The server answers `welcome` with the head of the log, replays every event after `resume_after_seq`, and sends `replay_complete`. From then on the client receives each event as it is appended, and a `command_result` for each command frame it sends:
 
 ```text
 {"type": "welcome", "protocol": "reflexr.v1", "workspace_id": "prod", "head_seq": 7, "reset": false}
-{"seq": 1, "id": "alert-7", "ts": "2026-03-02T09:00:03Z", "workspace_id": "prod", "actor": {"kind": "source", "name": "grafana"}, "causation": null, "correlation_id": "alert-7", "traceparent": null, "event": {"type": "service.error", "service": "auth", "severity": 8, "message": "token check failed"}, "type": "event"}
+{"seq": 1, "id": "alert-7", "ts": "2026-03-02T09:00:03Z", "workspace_id": "prod", "actor": {"kind": "source", "name": "grafana"}, "causation": null, "correlation_id": "alert-7", "traceparent": null, "event": {"type": "ops:service.error", "service": "auth", "severity": 8, "message": "token check failed"}, "type": "event"}
 ...
 {"type": "replay_complete", "up_to_seq": 7}
 ```

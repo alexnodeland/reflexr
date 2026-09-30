@@ -23,7 +23,7 @@ from typing import Annotated, Any, Literal, Self, cast, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-from reflexr.core.events import Event, event_types
+from reflexr.core.events import DEFAULT_REGISTRY, Event, EventName
 
 Op = Literal["eq", "ne", "lt", "le", "gt", "ge", "in", "contains", "matches", "exists"]
 """How a :class:`WhereFilter` compares a field with its value."""
@@ -57,7 +57,7 @@ class OnFilter(_Stage):
     """Envelopes whose event is one of ``types``."""
 
     kind: Literal["on"] = "on"
-    types: tuple[str, ...] = Field(min_length=1)
+    types: tuple[EventName, ...] = Field(min_length=1)
 
 
 class WhereFilter(_Stage):
@@ -313,11 +313,11 @@ class Condition(_Stage):
 
 
 def _check_field(path: str, types: Admitted) -> None:
-    registry = event_types()
     missing = [
         name
         for name in types or ()
-        if (event_type := registry.get(name)) is not None and not has_field(event_type, path)
+        if (event_type := DEFAULT_REGISTRY.get(name)) is not None
+        and not has_field(event_type, path)
     ]
     if missing:
         raise ValueError(f"no field {path!r} on {', '.join(missing)}")

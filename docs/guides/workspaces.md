@@ -23,8 +23,9 @@ ada = monitoring.as_actor(UserActor(id="ada", name="Ada"))
 | Argument | Default | Meaning |
 |---|---|---|
 | `storage` | required | Where workspaces are kept ([Storage](storage.md)) |
-| `events` | every registered type | The event types clients may publish: an allowlist ([Events and envelopes](events.md#publishing)) |
+| `events` | every type in `registry` | The event types clients may publish: an allowlist ([Events and envelopes](events.md#publishing)) |
 | `emitted` | none | Event types only runs may publish, such as an incident an agent opens; clients are refused them |
+| `registry` | `DEFAULT_REGISTRY` | The namespaces whose types the workspaces accept, so applications in one process stay apart ([Registries](events.md#registries)) |
 | `rules` | none | The [rules](rules.md) every workspace evaluates, checked when `Workspaces` is built |
 | `predicates` | none | The Python predicates rules refer to, by name |
 | `schedules` | none | The [schedules](schedules.md) that publish ticks into the workspaces |
@@ -85,7 +86,7 @@ async def triage(reaction: Reaction[None]) -> str:
 
 
 rule = Rule(
-    name="error-spike",
+    name="ops:error-spike",
     when=on(ServiceError).where(F.severity >= 7),
     scope=by(F.service),
     then=run("triage"),
@@ -107,14 +108,14 @@ for envelope in await workspace.read():
 ```
 
 ```text
-1 service.error source alert-7 0
-2 rule_fired system alert-7 1
-3 run_started system alert-7 1
-4 incident.opened agent alert-7 1
-5 run_succeeded system alert-7 1
+1 ops:service.error source alert-7 0
+2 reflexr:rule_fired system alert-7 1
+3 reflexr:run_started system alert-7 1
+4 ops:incident.opened agent alert-7 1
+5 reflexr:run_succeeded system alert-7 1
 ```
 
-The incident's `causation` names the firing and run behind it, and its depth counts the runs between it and the alert. A rule that fired on `incident.opened` would run at depth 2, and so on up to the workspace's `max_depth`, beyond which publishing is rejected, so workflows that trigger each other stop ([Loop and spend safety](safety.md#causation-depth)).
+The incident's `causation` names the firing and run behind it, and its depth counts the runs between it and the alert. A rule that fired on `oncall:incident.opened` would run at depth 2, and so on up to the workspace's `max_depth`, beyond which publishing is rejected, so workflows that trigger each other stop ([Loop and spend safety](safety.md#causation-depth)).
 
 ## Reading the log
 
@@ -146,10 +147,10 @@ async for envelope in monitoring.subscribe(after_seq=last_seen_seq):
 
 ```python
 # The five latest deploys, oldest first
-deploys = await workspace.read(types=["deploy.finished"], last=5)
+deploys = await workspace.read(types=["ops:deploy.finished"], last=5)
 
 # The five before those: page backwards from the oldest seq you have
-earlier = await workspace.read(types=["deploy.finished"], last=5, before_seq=deploys[0].seq)
+earlier = await workspace.read(types=["ops:deploy.finished"], last=5, before_seq=deploys[0].seq)
 
 # What happened between two points in the log
 window = await workspace.read(after_seq=40, before_seq=60)
@@ -165,13 +166,13 @@ People and operators steer runs and rules through the same handles. Each operati
 
 | Method | Applies to | Does | Appends |
 |---|---|---|---|
-| `retry_run(run_id)` | Any run that has not succeeded and is not running | Makes it runnable now; a dead-lettered, cancelled or skipped run gets a fresh retry budget | `run_requeued` |
-| `skip_run(run_id, reason=None)` | Pending, retrying or dead-lettered runs | Gives up on it, unblocking later runs of its scope | `run_skipped` |
-| `cancel_run(run_id, reason=None)` | Pending, running, retrying or dead-lettered runs | Cancels it; a running attempt is stopped when its executor next renews its lease, and its result is discarded | `run_cancelled` |
-| `replay_rule(rule, from_seq=0, mode="rebuild")` | A registered rule | Resets the rule to evaluate the log again after `from_seq` ([Replaying a rule](reactor.md#replaying-a-rule)) | `rule_reset` |
+| `retry_run(run_id)` | Any run that has not succeeded and is not running | Makes it runnable now; a dead-lettered, cancelled or skipped run gets a fresh retry budget | `reflexr:run_requeued` |
+| `skip_run(run_id, reason=None)` | Pending, retrying or dead-lettered runs | Gives up on it, unblocking later runs of its scope | `reflexr:run_skipped` |
+| `cancel_run(run_id, reason=None)` | Pending, running, retrying or dead-lettered runs | Cancels it; a running attempt is stopped when its executor next renews its lease, and its result is discarded | `reflexr:run_cancelled` |
+| `replay_rule(rule, from_seq=0, mode="rebuild")` | A registered rule | Resets the rule to evaluate the log again after `from_seq` ([Replaying a rule](reactor.md#replaying-a-rule)) | `reflexr:rule_reset` |
 
 ```python
-[stuck] = await ada.runs(rule="error-spike", status="dead")
+[stuck] = await ada.runs(rule="ops:error-spike", status="dead")
 await ada.retry_run(stuck.id)  # try again, with a fresh budget
 await ada.skip_run(stuck.id, reason="billing is being migrated")  # or give up on it
 ```

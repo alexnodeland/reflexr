@@ -2,7 +2,7 @@
 
 It is a plain pydantic-ai ``Agent`` whose deps are reflexr's ``Reaction``. The ``EventContext``
 capability gives it ``read_events``, to look back through the log (for a recent deploy, say),
-and ``emit_event``, allowed to publish ``incident.opened`` only. Its prompt, written by
+and ``emit_event``, allowed to publish ``oncall:incident.opened`` only. Its prompt, written by
 ``AgentAction``, describes the firing: the rule, the service and the alerts that fired it.
 
 With ``ONCALL_LITELLM_URL`` set, it calls a LiteLLM proxy instead of a provider, through

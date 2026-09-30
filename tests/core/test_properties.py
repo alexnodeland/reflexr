@@ -27,25 +27,25 @@ MINUTE = timedelta(minutes=1)
 
 RULES = [
     Rule(
-        name="spike",
+        name="app:spike",
         when=on(ServiceError).where(F.severity >= 5).count(at_least=3, within=MINUTE),
         scope=by(F.service),
         then=run("act"),
     ),
     Rule(
-        name="regression",
+        name="app:regression",
         when=sequence(on(Deploy), on(ServiceError).where(F.severity >= 7), within=5 * MINUTE),
         scope=by(F.service),
         then=run("act"),
     ),
     Rule(
-        name="quiet",
+        name="app:quiet",
         when=on(Heartbeat).absent(within=2 * MINUTE),
         scope=by(F.service),
         then=run("act"),
     ),
     Rule(
-        name="deduped",
+        name="app:deduped",
         when=on(ServiceError).distinct(F.fingerprint, within=MINUTE).at_most(2, per=3 * MINUTE),
         scope=by(F.service),
         then=run("act"),
@@ -56,7 +56,7 @@ SERVICES = st.sampled_from(["auth", "billing"])
 EVENTS = st.one_of(
     st.builds(
         lambda s, sev, fp: {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": s,
             "severity": sev,
             "fingerprint": fp,
@@ -65,9 +65,9 @@ EVENTS = st.one_of(
         st.integers(1, 10),
         st.sampled_from(["A", "B", "C"]),
     ),
-    st.builds(lambda s: {"type": "deploy.finished", "service": s}, SERVICES),
-    st.builds(lambda s: {"type": "heartbeat", "service": s}, SERVICES),
-    st.just({"type": "tick", "schedule": "clock", "at": "2026-01-01T00:00:00Z"}),
+    st.builds(lambda s: {"type": "app:deploy.finished", "service": s}, SERVICES),
+    st.builds(lambda s: {"type": "app:heartbeat", "service": s}, SERVICES),
+    st.just({"type": "reflexr:tick", "schedule": "clock", "at": "2026-01-01T00:00:00Z"}),
 )
 LOGS = st.lists(st.tuples(st.integers(0, 90), EVENTS), min_size=1, max_size=40)
 
@@ -105,16 +105,16 @@ def _in_batches(rule: Rule, envelopes: list[Envelope], sizes: list[int]) -> list
 @example(
     # A deadline that passes exactly at the last envelope of a batch.
     log=[
-        (0, {"type": "heartbeat", "service": "auth"}),
-        (120, {"type": "heartbeat", "service": "b"}),
+        (0, {"type": "app:heartbeat", "service": "auth"}),
+        (120, {"type": "app:heartbeat", "service": "b"}),
     ],
     rule=RULES[2],
     sizes=[1],
 )
 @example(
     log=[
-        (0, {"type": "heartbeat", "service": "auth"}),
-        (120, {"type": "heartbeat", "service": "b"}),
+        (0, {"type": "app:heartbeat", "service": "auth"}),
+        (120, {"type": "app:heartbeat", "service": "b"}),
     ],
     rule=RULES[2],
     sizes=[2],

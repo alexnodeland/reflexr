@@ -263,6 +263,7 @@
         },
         "types": {
           "items": {
+            "pattern": "^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
             "type": "string"
           },
           "minItems": 1,
@@ -355,9 +356,9 @@
       "title": "RetryPolicy",
       "type": "object"
     },
-    "RuleName_a-z0-9___-_____": {
+    "RuleName_a-z__a-z0-9____a-z0-9___-_____": {
       "maxLength": 100,
-      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9._-]*$",
       "type": "string"
     },
     "Scope": {
@@ -489,7 +490,7 @@
       "type": "boolean"
     },
     "name": {
-      "$ref": "#/$defs/RuleName_a-z0-9___-_____"
+      "$ref": "#/$defs/RuleName_a-z__a-z0-9____a-z0-9___-_____"
     },
     "on_dead_letter": {
       "default": "continue",

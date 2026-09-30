@@ -31,7 +31,7 @@ class Handled(Feedback, name="handled", targets={"chain"}):
 
 
 async def test_every_command_goes_through_the_workspace(storage: Storage) -> None:
-    rule = Rule(name="deploys", when=on(Deploy), then=run("note"))
+    rule = Rule(name="app:deploys", when=on(Deploy), then=run("note"))
     workspace = await Workspaces(storage, rules=[rule]).open(
         "acme", "prod", actor=SourceActor(name="ci")
     )
@@ -58,15 +58,15 @@ async def test_every_command_goes_through_the_workspace(storage: Storage) -> Non
     cancelled = await execute(workspace, CancelRun(run_id="r2"))
     assert isinstance(cancelled, RunOutcome)
     assert cancelled.run.status == "cancelled"
-    replayed = await execute(workspace, ReplayRule(rule="deploys", mode="refire"))
+    replayed = await execute(workspace, ReplayRule(rule="app:deploys", mode="refire"))
     assert isinstance(replayed, RuleOutcome)
-    assert (replayed.rule, replayed.progress.generation) == ("deploys", 1)
+    assert (replayed.rule, replayed.progress.generation) == ("app:deploys", 1)
 
 
 async def test_rejections_come_from_the_workspace(storage: Storage) -> None:
     workspace = await Workspaces(storage).open("acme", "prod", actor=SourceActor(name="ci"))
-    with pytest.raises(NotFound, match="event type pager"):
-        await execute(workspace, Publish(event=load_event({"type": "pager"})))
+    with pytest.raises(NotFound, match="event type app:pager"):
+        await execute(workspace, Publish(event=load_event({"type": "app:pager"})))
     with pytest.raises(NotFound, match="feedback type nope"):
         await execute(
             workspace,

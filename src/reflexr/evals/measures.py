@@ -116,7 +116,7 @@ async def time_to_resolution(
 
     Args:
         workspace: The workspace.
-        resolves: Whether an envelope resolves its chain, such as an ``incident.resolved``.
+        resolves: Whether an envelope resolves its chain, such as an ``oncall:incident.resolved``.
 
     Returns:
         The time to resolution of each chain that was resolved, by correlation id.
