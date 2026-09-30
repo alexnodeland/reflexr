@@ -394,7 +394,7 @@ Each phase is a series of small pull requests to `main`.
 - [x] #45 decided, and ADR-0039 accepted (#74)
 - [x] Phase 1, qualified rule names: landed with #45's implementation (#83)
 - [x] Phase 1, the rest of core: `ActionRef.params`, `StoredRules`, `RuleChange` and `check_stored`
-- [ ] Phase 2: storage and migration 0006
+- [x] Phase 2: storage and migration 0006
 - [ ] Phase 3: workspace and reactor
 - [ ] Phase 4: surfaces
 - [ ] Phase 5: docs, ADRs and oncall

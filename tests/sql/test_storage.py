@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reflexr import Rule, SourceActor, on, run
-from reflexr.core import RuleProgress, ScopeState, UnknownEvent, start
+from reflexr.core import RuleProgress, ScopeState, StoredRule, UnknownEvent, start
 from reflexr.sql import SqlStorage, migrate
 from reflexr.workspace import (
     Clock,
@@ -207,12 +207,18 @@ async def test_stored_values_keep_their_key_order(schema: Database) -> None:
         event = ServiceError(service="auth", extra=extra)
         await transaction.append([Entry(id="e1", actor=MONITOR, event=event)])
         await transaction.save_states("triage", {"k": ScopeState.model_validate({"scope": scope})})
+        rule = Rule(name="chat:deploys", when=on(ServiceError), then=run("notify"))
+        await transaction.save_stored_rule(
+            StoredRule.model_validate({"rule": rule, "version": 1, "provenance": extra})
+        )
     [envelope] = await storage.read(ACME)
     assert isinstance(envelope.event, ServiceError)
     assert list(envelope.event.extra) == list(extra)
     async with storage.transaction(ACME) as transaction:
         [state] = (await transaction.states("triage", ["k"])).values()
     assert list(state.scope) == list(scope)
+    [stored] = await storage.stored_rules(ACME)
+    assert list(stored.provenance) == list(extra)
 
 
 async def test_events_of_types_this_process_does_not_know_round_trip(schema: Database) -> None:
