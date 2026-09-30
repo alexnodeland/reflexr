@@ -396,7 +396,7 @@ Each phase is a series of small pull requests to `main`.
 - [x] Phase 1, the rest of core: `ActionRef.params`, `StoredRules`, `RuleChange` and `check_stored`
 - [x] Phase 2: storage and migration 0006
 - [x] Phase 3: workspace and reactor, and the commands in the protocol
-- [ ] Phase 4: surfaces
+- [x] Phase 4: surfaces, the REST read and the MCP tools
 - [ ] Phase 5: docs, ADRs and oncall
 - [x] [stackr#37][s-37]: "archives", in RFC-0002
 - [ ] stackr RFC-0002's prerequisite row for #21 marked done, unblocking its phase 5

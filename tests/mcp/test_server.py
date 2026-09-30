@@ -1,4 +1,4 @@
-"""External agents over MCP: tools, the run resource, and change notifications."""
+"""External agents over MCP: tools, stored rules, the run resource, and change notifications."""
 
 import asyncio
 import json
@@ -14,7 +14,14 @@ from mcp.shared.exceptions import MCPError
 from mcp.types import INVALID_PARAMS, TextContent, TextResourceContents
 
 from reflexr import Actor, F, Feedback, Rule, by, on, run
-from reflexr.core import EvaluationError, ExternalAgentActor, TenantId, WorkspaceId
+from reflexr.core import (
+    EvaluationError,
+    ExternalAgentActor,
+    RuleChange,
+    StoredRules,
+    TenantId,
+    WorkspaceId,
+)
 from reflexr.mcp import McpContext, ReflexrMcp, run_uri
 from reflexr.workspace import (
     InMemoryStorage,
@@ -29,6 +36,29 @@ from tests.event_types import Deploy, ServiceError
 CLAUDE = ExternalAgentActor(client_id="claude-code", name="Claude Code")
 FORBIDDEN = "this workspace is not yours to use"
 deploys = Rule(name="app:deploys", when=on(Deploy), scope=by(F.service), then=run("note"))
+PROVENANCE = {"source": "artifactr", "artifact": "art_7", "version": 3}
+
+
+async def anyone(
+    tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor, change: RuleChange
+) -> bool:
+    return True
+
+
+CHAT = StoredRules(allow=anyone, actions={"note": None}, namespaces={"chat"})
+"""Stored rules in the ``chat`` namespace, which any client may change."""
+
+
+def chat_rule(service: str = "auth") -> dict[str, Any]:
+    """A stored rule that notes each deploy of a service, as JSON."""
+    rule = Rule(
+        name="chat:deploys",
+        when=on(Deploy).where(service=service).at_most(10, per=timedelta(hours=1)),
+        then=run("note"),
+        ordering="none",
+        timeout=timedelta(minutes=1),
+    )
+    return rule.model_dump(mode="json")
 
 
 class Useful(Feedback, name="mcp_useful", targets={"run"}):
@@ -66,7 +96,9 @@ async def note(reaction: Reaction[None]) -> Literal["noted"]:
 
 @pytest.fixture
 def workspaces() -> Workspaces:
-    return Workspaces(InMemoryStorage(), events=[Deploy, ServiceError], rules=[deploys])
+    return Workspaces(
+        InMemoryStorage(), events=[Deploy, ServiceError], rules=[deploys], stored_rules=CHAT
+    )
 
 
 @pytest.fixture
@@ -121,9 +153,11 @@ async def test_agents_publish_read_and_operate(server: Server, workspaces: Works
         [rule] = json.loads((await call(client, "list_rules"))[1])
         assert rule["name"] == "app:deploys"
         status = (await call(client, "rule_status", workspace_id="prod"))[1]
-        assert status == "- app:deploys: enabled, cursor 8, 0 behind, generation 0, 0 dead letters"
+        assert status == (
+            "- app:deploys: code, enabled, cursor 8, 0 behind, generation 0, 0 dead letters"
+        )
         assert (await call(client, "rule_status", workspace_id="empty"))[1] == (
-            "- app:deploys: enabled, cursor 0, 0 behind, generation 0, 0 dead letters"
+            "- app:deploys: code, enabled, cursor 0, 0 behind, generation 0, 0 dead letters"
         )
         schedules = await call(client, "schedule_status", workspace_id="prod")
         assert schedules == (False, "No schedule targets this workspace.")
@@ -172,10 +206,140 @@ async def test_agents_publish_read_and_operate(server: Server, workspaces: Works
         bad = await call(
             client, "publish_event", workspace_id="prod", event={"type": "app:deploy.finished"}
         )
-        assert (bad[0], "invalid app:deploy.finished event" in bad[1]) == (True, True)
+        assert bad == (
+            True,
+            "Error executing tool publish_event: invalid app:deploy.finished event: "
+            '[{"loc": ["service"], "msg": "Field required", "type": "missing"}]',
+        )
         await asyncio.sleep(0.01)  # let the watcher forward the run facts
     uris = {str(event.uri) for event in bus.events}
     assert run_uri("acme", "prod", done["id"]) in uris
+
+
+async def test_agents_install_update_and_archive_stored_rules(server: Server) -> None:
+    mcp, _, _ = server
+    rule = chat_rule()
+    async with Client(mcp.server) as client:
+        installed = await call(
+            client, "install_rule", workspace_id="prod", rule=rule, provenance=PROVENANCE
+        )
+        assert json.loads(installed[1]) == {
+            "type": "rule_version",
+            "rule": "chat:deploys",
+            "version": 1,
+            "seq": 1,
+            "duplicate": False,
+        }
+        again = await call(
+            client, "install_rule", workspace_id="prod", rule=rule, provenance=PROVENANCE
+        )
+        assert json.loads(again[1])["duplicate"] is True, "a retry changes nothing"
+        _, got = await call(client, "get_rule", workspace_id="prod", rule="chat:deploys")
+        assert json.loads(got) == {
+            "rule": rule,
+            "origin": "stored",
+            "version": 1,
+            "provenance": PROVENANCE,
+        }
+        _, code = await call(client, "get_rule", workspace_id="prod", rule="app:deploys")
+        assert json.loads(code) == {
+            "rule": deploys.model_dump(mode="json"),
+            "origin": "code",
+            "version": None,
+            "provenance": None,
+        }
+        _, status = await call(client, "rule_status", workspace_id="prod")
+        assert status == (
+            "- app:deploys: code, enabled, cursor 0, 1 behind, generation 0, 0 dead letters\n"
+            "- chat:deploys: stored, version 1, enabled, cursor 1, 0 behind, generation 0, "
+            "0 dead letters"
+        )
+        [listed] = json.loads((await call(client, "list_rules"))[1])
+        assert listed["name"] == "app:deploys", "the code rules only"
+        billing = chat_rule(service="billing")
+        _, updated = await call(
+            client, "update_rule", workspace_id="prod", rule=billing, expected_version=1
+        )
+        assert json.loads(updated)["version"] == 2
+        _, archived = await call(
+            client,
+            "archive_rule",
+            workspace_id="prod",
+            rule="chat:deploys",
+            expected_version=2,
+            reason="done",
+        )
+        assert json.loads(archived)["version"] == 3
+        assert await call(client, "get_rule", workspace_id="prod", rule="chat:deploys") == (
+            True,
+            "Error executing tool get_rule: rule chat:deploys does not exist",
+        )
+
+
+@pytest.mark.parametrize(
+    ("tool", "rule", "refusal"),
+    [
+        pytest.param(
+            "update_rule",
+            chat_rule() | {"timeout": None},
+            'rule chat:deploys cannot be stored: ["timeout is required"]',
+            id="beyond the limits",
+        ),
+        pytest.param(
+            "install_rule",
+            chat_rule(service="billing"),
+            "rule chat:deploys is installed already: update it",
+            id="installed already",
+        ),
+        pytest.param(
+            "install_rule",
+            chat_rule() | {"name": "deploys"},
+            "1 validation error for install_ruleArguments\nrule.name\n"
+            "  String should match pattern",
+            id="refused by the SDK before the tool runs",
+        ),
+    ],
+)
+async def test_a_refused_change_to_a_stored_rule_is_a_tool_error(
+    server: Server, tool: str, rule: dict[str, Any], refusal: str
+) -> None:
+    mcp, _, _ = server
+    async with Client(mcp.server) as client:
+        await call(client, "install_rule", workspace_id="prod", rule=chat_rule())
+        error, text = await call(client, tool, workspace_id="prod", rule=rule)
+    assert error
+    assert text.startswith(f"Error executing tool {tool}: {refusal}"), text
+
+
+async def test_no_other_tenant_or_workspace_sees_a_stored_rule_over_mcp(server: Server) -> None:
+    mcp, identity, _ = server
+    async with Client(mcp.server) as client:
+        await call(client, "install_rule", workspace_id="prod", rule=chat_rule())
+        for tenant, workspace_id in (("globex", "prod"), ("acme", "staging")):
+            identity.tenant = tenant
+            got = await call(client, "get_rule", workspace_id=workspace_id, rule="chat:deploys")
+            assert got == (True, "Error executing tool get_rule: rule chat:deploys does not exist")
+            _, status = await call(client, "rule_status", workspace_id=workspace_id)
+            assert status == (
+                "- app:deploys: code, enabled, cursor 0, 0 behind, generation 0, 0 dead letters"
+            )
+            archived = await call(
+                client, "archive_rule", workspace_id=workspace_id, rule="chat:deploys"
+            )
+            assert archived == (
+                True,
+                "Error executing tool archive_rule: stored rule chat:deploys does not exist",
+            )
+
+
+async def test_the_tools_that_change_stored_rules_are_served_only_when_they_are_on(
+    server: Server,
+) -> None:
+    mcp, _, _ = server
+    bare = ReflexrMcp(Workspaces(InMemoryStorage(), events=[Deploy]), resolve=Identity().resolve)
+    served = {tool.name for tool in await mcp.server.list_tools()}
+    served_bare = {tool.name for tool in await bare.server.list_tools()}
+    assert served - served_bare == {"install_rule", "update_rule", "archive_rule"}
 
 
 async def test_agents_read_the_log_from_its_end_and_backwards(
@@ -257,12 +421,17 @@ async def test_authorize_decides_which_workspaces_a_client_may_use(
     bus = RecordingBus()
     mcp = ReflexrMcp(workspaces, resolve=Identity().resolve, authorize=authorize, bus=bus)
     run_id = {"run_id": done.id}
+    rule = chat_rule()
     tools: dict[str, dict[str, Any]] = {
         "publish_event": {"event": {"type": "app:deploy.finished", "service": "auth"}},
         "read_events": {},
         "rule_status": {},
+        "get_rule": {"rule": "app:deploys"},
         "schedule_status": {},
         "replay_rule": {"rule": "app:deploys"},
+        "install_rule": {"rule": rule},
+        "update_rule": {"rule": rule},
+        "archive_rule": {"rule": "chat:deploys"},
         "list_runs": {},
         "get_run": run_id,
         "retry_run": run_id,
@@ -331,8 +500,8 @@ async def test_the_rule_status_lists_every_registered_rule_as_rest_does() -> Non
         await mcp.aclose()
         await bare.aclose()
     assert status == (
-        "- app:deploys: enabled, cursor 0, 1 behind, generation 0, 1 dead letter\n"
-        "- app:off: disabled, cursor 0, 1 behind, generation 0, 0 dead letters"
+        "- app:deploys: code, enabled, cursor 0, 1 behind, generation 0, 1 dead letter\n"
+        "- app:off: code, disabled, cursor 0, 1 behind, generation 0, 0 dead letters"
     )
     statuses = await workspace.rule_statuses()
     assert [s.rule for s in statuses] == ["app:deploys", "app:off"]  # REST's list

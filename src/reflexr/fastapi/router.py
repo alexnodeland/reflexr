@@ -34,6 +34,7 @@ from reflexr.workspace import (
     Schedule,
     ScheduleStatus,
     Workspace,
+    WorkspaceRule,
     Workspaces,
     execute,
 )
@@ -197,13 +198,22 @@ def reflexr_router(
 
     @router.get("/rules", dependencies=[signed_in])
     async def list_rules() -> list[Rule]:
-        """Return the registered rules."""
+        """Return the rules registered in code, which every workspace evaluates."""
         return list(workspaces.rules.values())
 
     @router.get("/workspaces/{workspace_id}/rules")
     async def list_rule_status(workspace: Workspace = current_workspace) -> list[RuleStatus]:
-        """Return whether each rule is enabled, and its cursor, lag, generation and dead letters."""
+        """Return the status of each of the workspace's rules, code rules first.
+
+        A status is the rule's origin, a stored rule's version, whether the rule is enabled,
+        and its cursor, lag, generation and dead letters.
+        """
         return await workspace.rule_statuses()
+
+    @router.get("/workspaces/{workspace_id}/rules/{rule}")
+    async def get_rule(rule: RuleName, workspace: Workspace = current_workspace) -> WorkspaceRule:
+        """Return one of the workspace's rules, with a stored rule's version and provenance."""
+        return await _or_http(workspace.get_rule(rule))
 
     @router.get("/workspaces/{workspace_id}/runs")
     async def list_runs(

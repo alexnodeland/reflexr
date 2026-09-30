@@ -143,7 +143,7 @@ async def grafana_alert(payload: dict[str, Any], request: Request) -> dict[str, 
 
 ## Commands
 
-Everything else a client can do is a command ([stream protocol](../protocol.md#commands)): `publish`, `give_feedback`, `retry_run`, `skip_run`, `cancel_run` and `replay_rule`. `POST /v1/workspaces/{workspace_id}/commands` takes the same command frame a WebSocket client sends, and answers with its `command_result`:
+Everything else a client can do is a command ([stream protocol](../protocol.md#commands)): `publish`, `give_feedback`, `retry_run`, `skip_run`, `cancel_run` and `replay_rule`, and, for [stored rules](#stored-rules), `install_rule`, `update_rule` and `archive_rule`. `POST /v1/workspaces/{workspace_id}/commands` takes the same command frame a WebSocket client sends, and answers with its `command_result`:
 
 ```json
 {"type": "command", "command_id": "c_2",
@@ -183,15 +183,16 @@ Every path is relative to the router's prefix, `/v1` above:
 | `GET /workspaces/{workspace_id}/runs?rule=&scope_key=&status=&limit=` | Runs, newest first |
 | `GET /workspaces/{workspace_id}/runs/{run_id}` | One run: its status, attempts, error, output, checkpoint and each attempt's trace id |
 | `GET /workspaces/{workspace_id}/dead-letters?rule=` | The envelopes rules could not evaluate, oldest first |
-| `GET /workspaces/{workspace_id}/rules` | Whether each rule is `enabled`, and its `cursor`, its `lag` behind the head of the log, its `generation`, and its number of `dead_letters` |
+| `GET /workspaces/{workspace_id}/rules` | Each of the workspace's rules, code rules first: its `origin`, `code` or `stored`, and a stored rule's `version`; whether it is `enabled`; and its `cursor`, its `lag` behind the head of the log, its `generation`, and its number of `dead_letters` |
+| `GET /workspaces/{workspace_id}/rules/{rule}` | One of the workspace's rules: its definition, its `origin`, and a stored rule's `version` and `provenance` |
 | `GET /workspaces/{workspace_id}/schedules` | Each schedule that ticks in the workspace, with its `last_tick` and `next_tick` |
-| `GET /rules` | The registered rules, as JSON: the same for every tenant, and visible to every authenticated caller ([Multi-tenancy and security](security.md#tenants-and-workspaces)) |
+| `GET /rules` | The rules registered in code, as JSON: the same for every tenant, and visible to every authenticated caller ([Multi-tenancy and security](security.md#tenants-and-workspaces)) |
 | `GET /schedules` | The registered schedules, likewise |
 
 A dashboard follows a rule's health with `GET /v1/workspaces/prod/rules`:
 
 ```json
-[{"rule": "ops:error-spike", "enabled": true, "cursor": 4, "lag": 3, "generation": 0, "dead_letters": 0}]
+[{"rule": "ops:error-spike", "origin": "code", "version": null, "enabled": true, "cursor": 4, "lag": 3, "generation": 0, "dead_letters": 0}]
 ```
 
 A lag that keeps growing means no reactor is evaluating the workspace, or it cannot keep up, unless the rule is [disabled](reactor.md#disabling-a-rule).
@@ -202,6 +203,30 @@ Page forwards through a long log with `after_seq`, starting from the last `seq` 
 GET /v1/workspaces/prod/events?type=ops:service.error&last=20
 GET /v1/workspaces/prod/events?type=ops:service.error&last=20&before_seq=4180
 ```
+
+## Stored rules
+
+When the application turns [stored rules](rules.md#stored-rules) on, a client installs, updates and archives them in a workspace with their commands, and each answers `rule_version`, the rule's new version and the `seq` of the fact that recorded the change:
+
+```json
+{"type": "command", "command_id": "install-prp_12",
+ "command": {"type": "install_rule", "rule": {"name": "chat:prod-deploy-failures", "...": "..."},
+             "provenance": {"source": "artifactr", "artifact": "art_rule_7"}}}
+```
+
+```json
+{"type": "command_result", "command_id": "install-prp_12", "ok": true, "outcome": {"type": "rule_version", "rule": "chat:prod-deploy-failures", "version": 1, "seq": 812, "duplicate": false}, "rejection": null}
+```
+
+A change the configuration's `allow` hook refuses, or one to a code rule, is 403, a rule the fixed limits refuse is 422 with every problem in `errors`, a rule changed since the `expected_version` given is 409, and a name no stored rule has is 404. A change retried after it succeeded, even with a new `command_id`, changes nothing and answers `"duplicate": true`. Give `expected_version` so a retry after someone else's change is refused rather than applied.
+
+A stored rule belongs to the workspace it is installed in, and is read there beside the code rules: `GET /v1/workspaces/prod/rules` lists it after them, and `GET /v1/workspaces/prod/rules/chat:prod-deploy-failures` returns it with its version and provenance:
+
+```json
+{"rule": {"name": "chat:prod-deploy-failures", "...": "..."}, "origin": "stored", "version": 1, "provenance": {"source": "artifactr", "artifact": "art_rule_7"}}
+```
+
+The same path in another workspace, or in another tenant's workspace of the same id, is 404, as is an archived rule. `GET /v1/rules` lists the code rules only.
 
 ## The WebSocket stream
 

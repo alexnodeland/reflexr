@@ -5,7 +5,7 @@ import contextlib
 import json
 import logging
 import re
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
 from typing import Any, Literal
 
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
@@ -21,20 +21,24 @@ from starlette.requests import Request
 
 from reflexr.core import (
     SYSTEM_EVENTS,
+    ArchiveRule,
     CancelRun,
     Command,
     ExternalAgentActor,
     FeedbackTarget,
     Forbidden,
     GiveFeedback,
+    InstallRule,
     Outcome,
     Publish,
     Rejection,
     ReplayRule,
     RetryRun,
+    Rule,
     RunStatus,
     SkipRun,
     TenantId,
+    UpdateRule,
     WorkspaceId,
     load_event,
 )
@@ -116,7 +120,8 @@ class ReflexrMcp:
     server undoes that, so logging stays the application's.
 
     Args:
-        workspaces: Opens tenant-scoped workspaces, and holds the rules.
+        workspaces: Opens tenant-scoped workspaces, and holds the rules. The tools that install,
+            update and archive stored rules are served only if it has ``stored_rules``.
         resolve: Authenticates each request.
         authorize: Whether a client may use a workspace of its tenant, asked on every tool call,
             resource read and resource subscription that names a workspace; allows everything
@@ -262,7 +267,7 @@ class ReflexrMcp:
             try:
                 loaded = load_event(event)
             except Rejection as rejection:
-                raise ToolError(rejection.message) from rejection
+                raise _tool_error(rejection.payload()) from rejection
             command = Publish(event=loaded, id=id, correlation_id=correlation_id)
             return await self._execute(ctx, workspace_id, command)
 
@@ -294,17 +299,31 @@ class ReflexrMcp:
 
         @server.tool()
         async def list_rules(ctx: Context) -> str:
-            """List the rules every workspace evaluates, as JSON."""
+            """List the rules registered in code, which every workspace evaluates, as JSON.
+
+            A workspace's stored rules, installed at runtime, are in ``rule_status`` and
+            ``get_rule``.
+            """
             await self._resolve(ctx)
             rules = [r.model_dump(mode="json") for r in self._workspaces.rules.values()]
             return json.dumps(rules)
 
         @server.tool()
         async def rule_status(workspace_id: str, ctx: Context) -> str:
-            """Show every rule: enabled or not, its cursor, lag, generation and dead letters."""
+            """Show each of a workspace's rules: code or stored, enabled or not, and its progress.
+
+            A stored rule shows its version. The progress is the rule's cursor, how far it is
+            behind the log, its generation and its dead letters.
+            """
             workspace = await self._workspace(ctx, workspace_id)
             statuses = await workspace.rule_statuses()
             return "\n".join(map(_rule_line, statuses)) or "No rules are registered."
+
+        @server.tool()
+        async def get_rule(workspace_id: str, rule: str, ctx: Context) -> str:
+            """Return a workspace's rule as JSON, with a stored rule's version and provenance."""
+            workspace = await self._workspace(ctx, workspace_id)
+            return (await _tool(workspace.get_rule(rule))).model_dump_json()
 
         @server.tool()
         async def schedule_status(workspace_id: str, ctx: Context) -> str:
@@ -324,6 +343,63 @@ class ReflexrMcp:
             """Evaluate a rule again from ``from_seq``: rebuild its state quietly, or refire."""
             command = ReplayRule(rule=rule, from_seq=from_seq, mode=mode)
             return await self._execute(ctx, workspace_id, command)
+
+        # Only where stored rules are on: elsewhere these tools could only refuse, yet two of
+        # them would put the rules schema in every client's list of tools.
+        if self._workspaces.stored_rules is not None:
+
+            @server.tool()
+            async def install_rule(
+                workspace_id: str,
+                rule: Rule,
+                ctx: Context,
+                provenance: dict[str, Any] | None = None,
+            ) -> str:
+                """Install a stored rule in a workspace: version 1, or the next of an archived rule.
+
+                It acts on events logged after it. ``provenance`` says where the rule came from,
+                such as the artifact a person accepted: JSON kept with the rule, and not read.
+                A change retried after it succeeded changes nothing, and answers as a
+                ``duplicate``.
+                """
+                command = InstallRule(rule=rule, provenance=provenance or {})
+                return await self._execute(ctx, workspace_id, command)
+
+            @server.tool()
+            async def update_rule(
+                workspace_id: str,
+                rule: Rule,
+                ctx: Context,
+                expected_version: int | None = None,
+                provenance: dict[str, Any] | None = None,
+            ) -> str:
+                """Replace an active stored rule, named by ``rule``'s name, with a new version.
+
+                A new condition or scope resets it. Give ``expected_version``, the version you
+                last saw, so a change someone else made first is refused rather than overwritten.
+                A change retried after it succeeded changes nothing, and answers as a
+                ``duplicate``.
+                """
+                command = UpdateRule(
+                    rule=rule, expected_version=expected_version, provenance=provenance or {}
+                )
+                return await self._execute(ctx, workspace_id, command)
+
+            @server.tool()
+            async def archive_rule(
+                workspace_id: str,
+                rule: str,
+                ctx: Context,
+                expected_version: int | None = None,
+                reason: str | None = None,
+            ) -> str:
+                """Archive a stored rule, so it stops, and cancel its unfinished runs.
+
+                A change retried after it succeeded changes nothing, and answers as a
+                ``duplicate``.
+                """
+                command = ArchiveRule(rule=rule, expected_version=expected_version, reason=reason)
+                return await self._execute(ctx, workspace_id, command)
 
         @server.tool()
         async def list_runs(
@@ -426,10 +502,11 @@ def _refused(uri: str, rejection: Rejection) -> MCPError:
 
 
 def _rule_line(status: RuleStatus) -> str:
+    origin = f"stored, version {status.version}" if status.origin == "stored" else "code"
     letters = "1 dead letter" if status.dead_letters == 1 else f"{status.dead_letters} dead letters"
     return (
-        f"- {status.rule}: {'enabled' if status.enabled else 'disabled'}, cursor {status.cursor}, "
-        f"{status.lag} behind, generation {status.generation}, {letters}"
+        f"- {status.rule}: {origin}, {'enabled' if status.enabled else 'disabled'}, "
+        f"cursor {status.cursor}, {status.lag} behind, generation {status.generation}, {letters}"
     )
 
 
@@ -444,4 +521,16 @@ async def _tool[T](awaitable: Awaitable[T]) -> T:
     try:
         return await awaitable
     except Rejection as rejection:
-        raise ToolError(rejection.message) from rejection
+        raise _tool_error(rejection.payload()) from rejection
+
+
+def _tool_error(rejection: Mapping[str, JsonValue]) -> ToolError:
+    """A rejection's payload as the tool error to raise: its message, and every problem it lists.
+
+    A tool error is text, so the ``errors`` a validation failure lists, which REST's body
+    carries beside the message, follow the message as JSON.
+    """
+    message = str(rejection["message"])
+    if errors := rejection.get("errors"):
+        return ToolError(f"{message}: {json.dumps(errors)}")
+    return ToolError(message)

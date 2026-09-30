@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from starlette.testclient import WebSocketTestSession
 from starlette.websockets import WebSocketDisconnect
 
-from tests.fastapi.conftest import build
+from tests.fastapi.conftest import STORED_RULES, build, chat_rule, command
 
 STREAM = "/v1/workspaces/prod/stream"
 ERROR = {"type": "app:service.error", "service": "auth"}
@@ -24,10 +24,6 @@ def client() -> Iterator[TestClient]:
 
 def hello(**options: Any) -> dict[str, Any]:
     return {"type": "hello", "protocol": "reflexr.v1", **options}
-
-
-def command(command_id: str, **body: Any) -> dict[str, Any]:
-    return {"type": "command", "command_id": command_id, "command": body}
 
 
 def publish(client: TestClient, event: dict[str, Any]) -> None:
@@ -159,6 +155,53 @@ def test_commands_invalid_frames_and_rejections(client: TestClient) -> None:
         ws.send_json(command("c2", type="skip_run", run_id="nope"))
         rejected = ws.receive_json()
         assert (rejected["ok"], rejected["rejection"]["type"]) == (False, "not_found")
+
+
+def test_stored_rules_are_installed_updated_and_archived_over_the_stream() -> None:
+    app, _, _ = build(stored_rules=STORED_RULES)
+    changes = ["reflexr:rule_installed", "reflexr:rule_archived"]
+    with TestClient(app) as client, client.websocket_connect(STREAM) as ws:
+        ws.send_json(hello(types=changes))
+        until(ws, "replay_complete")
+
+        def change(command_id: str, **body: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+            """Send a command that changes a rule: its outcome, and the fact it appended."""
+            ws.send_json(command(command_id, **body))
+            frames = {frame["type"]: frame for frame in (ws.receive_json(), ws.receive_json())}
+            return frames["command_result"]["outcome"], frames["event"]["event"]
+
+        rule, billing = chat_rule(), chat_rule(service="billing")
+        installed, fact = change("c1", type="install_rule", rule=rule, provenance={"by": "ws"})
+        assert installed == {
+            "type": "rule_version",
+            "rule": "chat:deploys",
+            "version": 1,
+            "seq": 1,
+            "duplicate": False,
+        }
+        assert (fact["type"], fact["spec"], fact["provenance"]) == (
+            "reflexr:rule_installed",
+            rule,
+            {"by": "ws"},
+        )
+        updated, fact = change("c2", type="update_rule", rule=billing, expected_version=1)
+        assert (updated["version"], fact["type"], fact["spec"]) == (
+            2,
+            "reflexr:rule_installed",
+            billing,
+        )
+        archived, fact = change("c3", type="archive_rule", rule="chat:deploys", reason="done")
+        assert (archived["version"], fact["type"], fact["reason"]) == (
+            3,
+            "reflexr:rule_archived",
+            "done",
+        )
+        ws.send_json(command("c4", type="update_rule", rule=billing))
+        refused = ws.receive_json()
+        assert (refused["ok"], refused["rejection"]) == (
+            False,
+            {"type": "invalid_state", "message": "rule chat:deploys is archived: install it again"},
+        )
 
 
 def test_a_command_that_crashes_reports_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
