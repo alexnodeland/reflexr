@@ -234,7 +234,7 @@ One table, keyed like every other ([ADR-0030][adr-0030]):
 | `reflexr_rules` | tenant, workspace, `name` | `version`, `status` (`active` or `archived`), and the JSON of `rule` and `provenance` |
 
 - **Port.** `Transaction` gains `stored_rule(name)`, `stored_rules()` and `save_stored_rule(stored)`, and `Storage` gains `stored_rules(workspace)`. Rules are listed by name, and the primary key serves every read. `InMemoryStorage` keeps them in a dictionary, and the behaviour suite covers both.
-- **Migration 0005** creates the table, after ADR-0039's 0004. It changes no existing rows. Its downgrade drops the table, and with it every stored rule. Their facts stay in the logs.
+- **Migration 0006** creates the table, after ADR-0039's 0005. It changes no existing rows. Its downgrade drops the table, and with it every stored rule. Their facts stay in the logs.
 
 ### Protocol and JSON Schema
 
@@ -383,7 +383,7 @@ Each phase is a series of small pull requests to `main`.
 | Phase | Deliverable | Exit criteria |
 |---|---|---|
 | 1. Names and core, with #45's implementation | Qualified rule names, and the code rules renamed in oncall, the tests, the fixtures and the docs. `ActionRef.params`, `StoredRules`, `RuleChange`, `check_stored` and its constants, and the two facts | A bare rule name fails at construction. A table of bad stored rules, each refused with every problem listed |
-| 2. Storage | `reflexr_rules`, in memory and in SQL, with migration 0005 | The behaviour suite passes on memory, SQLite and PostgreSQL, and the migrations don't drift |
+| 2. Storage | `reflexr_rules`, in memory and in SQL, with migration 0006 | The behaviour suite passes on memory, SQLite and PostgreSQL, and the migrations don't drift |
 | 3. Workspace and reactor | `Workspaces(stored_rules=)`, the three commands and `get_rule` on `Workspace`, `rules_in`, `begin` and `reset` in the change's transaction, archiving, parameters on the action port, and the namespace as the metric label | A rule installed while two reactors serve fires on the next matching event, even one published before either's next pass. An archived rule's runs are cancelled, and a rule installed again never reuses a firing id |
 | 4. Surfaces | The commands, outcome and facts in the protocol and its schema, the REST read and the MCP tools | Contract tests for each command on every surface. No surface shows a stored rule to another tenant or workspace |
 | 5. Docs and oncall | ADRs for the decisions, and the architecture, protocol and guides. oncall installs a stored rule | `make docs` passes. oncall's smoke test installs a rule over REST and sees it fire |
@@ -392,12 +392,13 @@ Each phase is a series of small pull requests to `main`.
 
 - [x] Decided on 2026-09-29, and recorded on [#21][issue-21]
 - [x] #45 decided, and ADR-0039 accepted (#74)
-- [ ] Phase 1: names and core, with #45's implementation
-- [ ] Phase 2: storage and migration 0005
+- [x] Phase 1, qualified rule names: landed with #45's implementation (#83)
+- [ ] Phase 1, the rest of core: `ActionRef.params`, `StoredRules`, `RuleChange` and `check_stored`
+- [ ] Phase 2: storage and migration 0006
 - [ ] Phase 3: workspace and reactor
 - [ ] Phase 4: surfaces
 - [ ] Phase 5: docs, ADRs and oncall
-- [ ] [stackr#37][s-37]: "archives", in RFC-0002
+- [x] [stackr#37][s-37]: "archives", in RFC-0002
 - [ ] stackr RFC-0002's prerequisite row for #21 marked done, unblocking its phase 5
 
 [adr-0003]: ../adr/0003-independent-sibling-of-artifactr.md
