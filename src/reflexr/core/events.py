@@ -365,6 +365,32 @@ class RuleReset(_ReflexrEvent, name="rule_reset"):
     """Envelopes up to this ``seq`` rebuild the rule's state without recording firings."""
 
 
+class RuleInstalled(_ReflexrEvent, name="rule_installed"):
+    """A stored rule was installed or updated: its new version, whole, and where it came from.
+
+    The facts are a stored rule's history: the version that fired a run is the latest one
+    before its firing.
+    """
+
+    rule: RuleName
+    version: int
+    spec: dict[str, JsonValue]
+    """The rule, as JSON."""
+
+    provenance: dict[str, JsonValue]
+    """Where the change came from, as its installer said."""
+
+
+class RuleArchived(_ReflexrEvent, name="rule_archived"):
+    """A stored rule was archived, and its unfinished runs cancelled."""
+
+    rule: RuleName
+    version: int
+    reason: str | None = None
+    cancelled: int
+    """How many unfinished runs archiving cancelled."""
+
+
 class RunStarted(_ReflexrEvent, name="run_started"):
     """An attempt of a run began."""
 
@@ -459,6 +485,8 @@ SystemEvent = (
     RuleFired
     | RuleErrored
     | RuleReset
+    | RuleInstalled
+    | RuleArchived
     | RunStarted
     | RunProgressed
     | RunRetrying
@@ -474,6 +502,8 @@ SYSTEM_EVENTS: tuple[type[Event], ...] = (
     RuleFired,
     RuleErrored,
     RuleReset,
+    RuleInstalled,
+    RuleArchived,
     RunStarted,
     RunProgressed,
     RunRetrying,
@@ -549,6 +579,8 @@ def about_rule(event: Event) -> RuleName | None:
             RuleFired()
             | RuleErrored()
             | RuleReset()
+            | RuleInstalled()
+            | RuleArchived()
             | RunStarted()
             | RunProgressed()
             | RunRetrying()

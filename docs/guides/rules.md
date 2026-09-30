@@ -1,6 +1,6 @@
 # Rules
 
-A rule says what to watch for in a workspace's log, how to partition what it watches, and which action to run when its condition holds. Rules are typed, serializable data rather than code ([ADR-0006](../adr/0006-rules-as-typed-serializable-data.md)), so they can be listed, diffed, validated, stored as JSON and written by an agent as easily as by a person. This page covers a rule's fields, its condition (filters, dedupe, patterns and throttle), scopes, how rules measure time, how they are checked, and their JSON form.
+A rule says what to watch for in a workspace's log, how to partition what it watches, and which action to run when its condition holds. Rules are typed, serializable data rather than code ([ADR-0006](../adr/0006-rules-as-typed-serializable-data.md)), so they can be listed, diffed, validated, stored as JSON and written by an agent as easily as by a person. This page covers a rule's fields, its condition (filters, dedupe, patterns and throttle), scopes, how rules measure time, how they are checked, their JSON form, and rules stored in a workspace at runtime.
 
 ## A rule is data
 
@@ -222,4 +222,48 @@ A rule serializes to plain JSON, with durations as ISO 8601 strings. This is `op
 
 `Rule.model_validate_json(text)` reads it back, equal to the rule the builder made, and `rule.model_dump_json()` writes it, with every field. The JSON Schema of a rule is generated from the models into [`schemas/reflexr.rules.v1.json`](https://github.com/alexnodeland/reflexr/blob/main/schemas/reflexr.rules.v1.json), so a form or an agent that writes rules can validate them before they reach `Rule.check` ([JSON Schemas](../reference/schema.md)).
 
-In this version rules live in code and are registered when the application starts. `rule.definition()` is a hash of what the rule decides, its condition and its scope. When a deployed rule's definition changes, its old state no longer applies, so it starts afresh; changing its action, its params, retries or ordering, or disabling and enabling it, keeps its state ([Where a rule starts](reactor.md#where-a-rule-starts)).
+Code rules are registered when the application starts. `rule.definition()` is a hash of what the rule decides, its condition and its scope. When a deployed rule's definition changes, its old state no longer applies, so it starts afresh; changing its action, its params, retries or ordering, or disabling and enabling it, keeps its state ([Where a rule starts](reactor.md#where-a-rule-starts)).
+
+## Stored rules
+
+A stored rule is the same `Rule`, installed in one workspace at runtime rather than registered in code, as when a person accepts a rule drafted in chat ([RFC-0003](../rfcs/0003-managing-rules-at-runtime.md)). Stored rules are off unless `Workspaces` is given a `StoredRules`:
+
+```python
+from reflexr.core import Actor, AgentActor, RuleChange, StoredRules, TenantId, WorkspaceId
+
+
+async def allow(
+    tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor, change: RuleChange
+) -> bool:
+    return isinstance(actor, AgentActor) and actor.rule == "relayr:install-rule"
+
+
+workspaces = Workspaces(
+    storage,
+    rules=[...],
+    stored_rules=StoredRules(allow=allow, actions={"notify": NotifyParams}, namespaces={"chat"}),
+)
+```
+
+- **`allow`** is asked about every change, as `authorize` is about a workspace, with the `RuleChange`: which command, which rule, and the new rule. A refusal is `forbidden`.
+- **`actions`** are the only actions a stored rule may run, each with the params model it declares, or `None`. The reactor checks when it is built that each is among its actions and declares that model.
+- **`namespaces`** are the rule namespaces stored rules may use. `Workspaces` refuses a code rule in one of them, so a stored rule never shares a code rule's name. A deploy that drops a namespace hides its stored rules, as one without `StoredRules` hides them all, and the reactor cancels their runs; they can still be archived.
+
+Everything else is fixed, the same for every tenant, and `check_stored(rule, config)` lists every way a rule breaks it: a throttle is required, allowing at most 60 firings in any hour; there are no scope fields, predicates or `matches`; `ordering` is `"none"`, `on_dead_letter` `"continue"` and `start` `"now"`, and the rule is enabled; and retries, the timeout, windows, the description and the rule's JSON are bounded. A change's provenance may have at most 4 KiB of JSON (`check_provenance`), and a workspace at most 50 active stored rules.
+
+A workspace handle changes them, as its actor:
+
+```python
+relayr = await workspaces.open("acme", "prod", actor=installer)
+installed = await relayr.install_rule(rule, provenance={"artifact": "art_rule_7"})
+await relayr.update_rule(changed, expected_version=installed.stored.version)
+await relayr.archive_rule(rule.name, reason="the artifact was archived")
+```
+
+- **`install_rule`** stores version 1, or the next version of an archived rule. The rule starts at its own `reflexr:rule_installed` fact, which carries the whole rule and its provenance, so it acts only on what is logged after it.
+- **`update_rule`** stores the next version of an active rule. A new condition or scope resets it at its fact, with `reflexr:rule_reset`, as a changed code rule is reset; any other change keeps its state. With `expected_version`, a rule someone else changed first is `invalid_state`, naming its version.
+- **`archive_rule`** is the only way to stop one. In one transaction it cancels the rule's unfinished runs, clears its state, and appends `reflexr:rule_archived`, which counts the runs it cancelled. Its progress stays, so a rule installed again under the name starts afresh in its next generation and never reuses a firing id.
+
+Each returns a `RuleVersion`: the stored rule as the change left it, and the `seq` of its fact. A change that would leave the rule as it is appends nothing and is a `duplicate`, even with an out-of-date `expected_version`, so a retry of a change that succeeded is safe. Installing and updating check the rule as `Workspaces` checks code rules, then with `check_stored` and `check_provenance`, and a rule with problems is `validation_failed`, listing them all. The same commands, `install_rule`, `update_rule` and `archive_rule`, go through `reflexr.workspace.execute` like every other ([Commands](../protocol.md#commands)).
+
+`Workspaces.rules_in` is the one way to find a workspace's rules: its code rules, then its active stored rules in the configured namespaces. The reactor reads them for every pass, batch and claim, with no cache, so a rule installed while reactors serve fires on the next matching event, and a run executes the version its claim reads. `get_rule` returns one rule, with a stored rule's version and provenance, and `rule_statuses` reports each rule's `origin` and `version`. A rule never sees the facts about its own changes; other rules can watch them.

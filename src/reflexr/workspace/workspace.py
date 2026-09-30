@@ -1,8 +1,8 @@
 """Workspaces: tenant-scoped handles over a workspace's log, runs and rule progress (ADR-0016).
 
 Every write goes through a :class:`Workspace` handle, inside one storage transaction: publishing
-events, giving feedback, and operating runs. Each write is attributed to the handle's actor, and
-each is traced (ADR-0018).
+events, giving feedback, operating runs, and changing stored rules. Each write is attributed to
+the handle's actor, and each is traced (ADR-0018).
 """
 
 from collections import Counter
@@ -26,6 +26,8 @@ from pydantic import BaseModel, ConfigDict, JsonValue
 
 from reflexr.core import (
     DEFAULT_REGISTRY,
+    FINISHED,
+    MAX_STORED_RULES,
     Actor,
     Causation,
     ChainTarget,
@@ -37,10 +39,14 @@ from reflexr.core import (
     Feedback,
     FeedbackGiven,
     FeedbackTarget,
+    InvalidRule,
     InvalidState,
     NotFound,
     Predicates,
     Rule,
+    RuleArchived,
+    RuleChange,
+    RuleInstalled,
     RuleName,
     RuleProgress,
     Run,
@@ -51,6 +57,8 @@ from reflexr.core import (
     RunStatus,
     RunTarget,
     ScopeKey,
+    StoredRule,
+    StoredRules,
     TenantId,
     UnknownEvent,
     ValidationFailed,
@@ -58,10 +66,13 @@ from reflexr.core import (
     begin,
     cancel,
     check_event_name,
+    check_provenance,
+    check_stored,
     checkpoint,
     new_event_id,
     reset,
     retry,
+    scope_key,
     skip,
     type_of,
 )
@@ -103,12 +114,51 @@ class Published:
     """Whether the id was already in the log, so nothing was appended."""
 
 
+@dataclass(frozen=True)
+class RuleVersion:
+    """The outcome of a change to a stored rule."""
+
+    stored: StoredRule
+    """The stored rule as the change left it, or as it already was for a duplicate."""
+
+    seq: int
+    """The ``seq`` of the change's fact, ``reflexr:rule_installed`` or ``reflexr:rule_archived``.
+
+    For a duplicate, the head of the log: nothing has changed the rule since its version's fact,
+    so reading on from here misses nothing about it.
+    """
+
+    duplicate: bool = False
+    """Whether the rule was already as the change would leave it, so nothing changed."""
+
+
+class WorkspaceRule(BaseModel):
+    """One of a workspace's rules: a code rule, or the current version of an active stored one."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    rule: Rule
+    origin: Literal["code", "stored"]
+    """``code``: registered in code, for every workspace. ``stored``: installed in this one."""
+
+    version: int | None = None
+    """A stored rule's current version. None for a code rule."""
+
+    provenance: dict[str, JsonValue] | None = None
+    """Where a stored rule's current version came from, as its installer said. None for a code
+    rule."""
+
+
 class RuleStatus(BaseModel):
     """A rule's progress in a workspace."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     rule: RuleName
+    origin: Literal["code", "stored"]
+    version: int | None = None
+    """A stored rule's current version. None for a code rule."""
+
     enabled: bool
     """Whether the reactor evaluates the rule. A disabled rule's cursor holds."""
 
@@ -147,6 +197,8 @@ class Workspaces:
             and predicates when the workspaces are created, so a mistake fails at startup. A
             disabled rule is registered and checked too, but the reactor leaves it be.
         predicates: The Python predicates rules refer to, by name. They must be pure.
+        stored_rules: What rules installed in a workspace at runtime may do. Without it, every
+            change to a stored rule is forbidden, and no workspace reads any.
         schedules: The schedules that publish ticks into the workspaces.
         clock: Returns the current time for run transitions. Defaults to the system clock.
         max_depth: The deepest causal chain an event may extend: a run's events beyond it are
@@ -156,8 +208,8 @@ class Workspaces:
 
     Raises:
         InvalidRule: If a rule refers to an event type, field or predicate that does not exist.
-        ValueError: If two rules, or two schedules, have the same name, or a type in ``events``
-            or ``emitted`` is not in ``registry``.
+        ValueError: If two rules, or two schedules, have the same name, a type in ``events`` or
+            ``emitted`` is not in ``registry``, or a rule is in a namespace of stored rules.
     """
 
     def __init__(
@@ -169,6 +221,7 @@ class Workspaces:
         registry: EventRegistry = DEFAULT_REGISTRY,
         rules: Iterable[Rule] = (),
         predicates: Predicates | None = None,
+        stored_rules: StoredRules | None = None,
         schedules: Iterable[Schedule] = (),
         clock: Clock = utc_now,
         max_depth: int = 8,
@@ -183,10 +236,14 @@ class Workspaces:
         accepted = registry if events is None else chosen_types
         known = {**accepted, **from_runs}
         chosen = dict(predicates or {})
+        stored = stored_rules.namespaces if stored_rules else frozenset[str]()
         named: dict[RuleName, Rule] = {}
         for rule in rules:
             if rule.name in named:
                 raise ValueError(f"two rules are named {rule.name!r}")
+            namespace = rule.name.partition(":")[0]
+            if namespace in stored:
+                raise ValueError(f"rule {rule.name!r} is in {namespace!r}, which stored rules use")
             rule.check(events=known, predicates=chosen)
             named[rule.name] = rule
         timetables: dict[str, Schedule] = {}
@@ -198,12 +255,19 @@ class Workspaces:
             storage=storage,
             accepted=accepted,
             emitted=frozenset(from_runs),
+            known=known,
             rules=named,
+            code={name: WorkspaceRule(rule=rule, origin="code") for name, rule in named.items()},
             predicates=chosen,
+            stored_rules=stored_rules,
             schedules=timetables,
             clock=clock,
             max_depth=max_depth,
-            telemetry=Telemetry(tracer_provider=tracer_provider, meter_provider=meter_provider),
+            telemetry=Telemetry(
+                tracer_provider=tracer_provider,
+                meter_provider=meter_provider,
+                stored_namespaces=stored,
+            ),
         )
 
     @property
@@ -213,8 +277,13 @@ class Workspaces:
 
     @property
     def rules(self) -> Mapping[RuleName, Rule]:
-        """The rules every workspace evaluates, by name."""
+        """The code rules, which every workspace evaluates, by name."""
         return self._context.rules
+
+    @property
+    def stored_rules(self) -> StoredRules | None:
+        """What stored rules may do, or None if they are off."""
+        return self._context.stored_rules
 
     @property
     def schedules(self) -> Mapping[str, Schedule]:
@@ -240,6 +309,19 @@ class Workspaces:
     def telemetry(self) -> Telemetry:
         """The tracer and instruments reflexr records with."""
         return self._context.telemetry
+
+    async def rules_in(self, at: WorkspaceRef | Transaction) -> dict[RuleName, WorkspaceRule]:
+        """Return a workspace's rules: the code rules, then its active stored rules, by name.
+
+        Everything that needs a workspace's rules finds them here, and nothing is cached.
+        Without ``stored_rules`` there are only the code rules, and nothing to read; with it,
+        only stored rules in its namespaces, so a namespace a deploy dropped is hidden.
+
+        Args:
+            at: A transaction on the workspace, to read its stored rules as the transaction
+                sees them, or the workspace, to read them with a storage call of their own.
+        """
+        return await self._context.rules_in(at)
 
     async def open(
         self,
@@ -281,12 +363,35 @@ class _Context:
     storage: Storage
     accepted: Mapping[str, type[Event]]
     emitted: frozenset[str]
+    known: Mapping[str, type[Event]]
+    """The event types rules may watch: those clients may publish, and those only runs may."""
+
     rules: Mapping[RuleName, Rule]
+    code: Mapping[RuleName, WorkspaceRule]
+    """The code rules, as :meth:`rules_in` returns them."""
+
     predicates: Predicates
+    stored_rules: StoredRules | None
     schedules: Mapping[str, Schedule]
     clock: Clock
     max_depth: int
     telemetry: Telemetry
+
+    async def rules_in(self, at: WorkspaceRef | Transaction) -> dict[RuleName, WorkspaceRule]:
+        rules = dict(self.code)
+        config = self.stored_rules
+        if config is None:
+            return rules
+        stored = await (
+            self.storage.stored_rules(at) if isinstance(at, WorkspaceRef) else at.stored_rules()
+        )
+        for row in stored:
+            # A namespace a deploy dropped is hidden, as stored rules are without a configuration.
+            if row.rule.name.partition(":")[0] in config.namespaces:
+                rules[row.rule.name] = WorkspaceRule(
+                    rule=row.rule, origin="stored", version=row.version, provenance=row.provenance
+                )
+        return rules
 
 
 @dataclass(frozen=True)
@@ -560,16 +665,17 @@ class Workspace:
             The rule's new progress. The reactor does the evaluating.
 
         Raises:
-            NotFound: If there is no such rule.
+            NotFound: If the workspace has no such rule.
             ValidationFailed: If ``from_seq`` is not between 0 and the head of the log.
         """
-        definition = self._context.rules.get(rule)
-        if definition is None:
-            raise NotFound("rule", rule)
         with self._span("reflexr.replay_rule") as span:
             span.set_attribute(a.RULE, rule)
             traceparent = current_traceparent()
             async with self._context.storage.transaction(self._ref) as transaction:
+                found = (await self._context.rules_in(transaction)).get(rule)
+                if found is None:
+                    raise NotFound("rule", rule)
+                definition = found.rule
                 head = await transaction.head_seq()
                 if not 0 <= from_seq <= head:
                     raise ValidationFailed(
@@ -587,6 +693,171 @@ class Workspace:
                 await transaction.save_progress(rule, restarted)
                 await self._append(transaction, event, None, None, traceparent, None)
         return restarted
+
+    # ─── stored rules ─────────────────────────────────────────────────────────
+
+    async def install_rule(
+        self, rule: Rule, *, provenance: Mapping[str, JsonValue] | None = None
+    ) -> RuleVersion:
+        """Install a stored rule: its first version, or the next version of an archived one.
+
+        The rule starts at its ``reflexr:rule_installed`` fact, so it acts on what is logged
+        after it. A rule installed again is reset there, continuing its generation, so no firing
+        id repeats.
+
+        Args:
+            rule: The rule, in one of the namespaces ``StoredRules`` names.
+            provenance: Where it came from, such as the artifact a person accepted: JSON that
+                reflexr keeps on the rule and its fact, and does not read.
+
+        Returns:
+            Its new version, or, if it is installed as given already, that version as a
+            duplicate.
+
+        Raises:
+            Forbidden: If stored rules are off, the name is a code rule's, or ``allow`` refuses
+                the change.
+            ValidationFailed: If :meth:`~reflexr.core.Rule.check`,
+                :func:`~reflexr.core.check_stored` or :func:`~reflexr.core.check_provenance`
+                finds problems, listing them all, or the workspace has as many active stored
+                rules as it may.
+            InvalidState: If the rule is installed already: update it instead.
+        """
+        kept = dict(provenance or {})
+        config = await self._allow(RuleChange(kind="install", rule=rule.name, spec=rule))
+        self._validate(rule, kept, config)
+        with self._span("reflexr.install_rule") as span:
+            span.set_attribute(a.RULE, rule.name)
+            traceparent = current_traceparent()
+            async with self._context.storage.transaction(self._ref) as transaction:
+                current = await transaction.stored_rule(rule.name)
+                version = 1 if current is None else current.version + 1
+                installed = StoredRule(rule=rule, version=version, provenance=kept)
+                if current is not None:
+                    if _same(current, installed):
+                        return RuleVersion(current, await transaction.head_seq(), duplicate=True)
+                    if current.status == "active":
+                        raise InvalidState(f"rule {rule.name} is installed already: update it")
+                if len(await transaction.stored_rules()) >= MAX_STORED_RULES:
+                    raise ValidationFailed(
+                        f"the workspace has {MAX_STORED_RULES} active stored rules, the most it "
+                        "may have",
+                        [],
+                    )
+                seq = await self._save_version(transaction, installed, traceparent, restart=True)
+        return RuleVersion(installed, seq)
+
+    async def update_rule(
+        self,
+        rule: Rule,
+        *,
+        expected_version: int | None = None,
+        provenance: Mapping[str, JsonValue] | None = None,
+    ) -> RuleVersion:
+        """Replace an active stored rule with a new version.
+
+        A new condition or scope resets the rule at its ``reflexr:rule_installed`` fact, as a
+        changed code rule is reset; any other change keeps its state.
+
+        Args:
+            rule: The new version, with the name of the rule it replaces.
+            expected_version: The version it replaces, so a change someone else made first is
+                not overwritten.
+            provenance: Where it came from, as for :meth:`install_rule`.
+
+        Returns:
+            Its new version, or, if it is as given already, that version as a duplicate, whatever
+            ``expected_version`` says, so a retry of an update that succeeded is no conflict.
+
+        Raises:
+            Forbidden: As for :meth:`install_rule`.
+            ValidationFailed: If the checks :meth:`install_rule` makes of a rule find problems.
+            NotFound: If no stored rule has the name.
+            InvalidState: If the rule is not at ``expected_version``, which the message names,
+                or is archived: install it again.
+        """
+        kept = dict(provenance or {})
+        config = await self._allow(RuleChange(kind="update", rule=rule.name, spec=rule))
+        self._validate(rule, kept, config)
+        with self._span("reflexr.update_rule") as span:
+            span.set_attribute(a.RULE, rule.name)
+            traceparent = current_traceparent()
+            async with self._context.storage.transaction(self._ref) as transaction:
+                current = await _stored(transaction, rule.name)
+                updated = StoredRule(rule=rule, version=current.version + 1, provenance=kept)
+                if _same(current, updated):
+                    return RuleVersion(current, await transaction.head_seq(), duplicate=True)
+                _expect(current, expected_version)
+                if current.status == "archived":
+                    raise InvalidState(f"rule {rule.name} is archived: install it again")
+                seq = await self._save_version(transaction, updated, traceparent)
+        return RuleVersion(updated, seq)
+
+    async def archive_rule(
+        self, rule: RuleName, *, expected_version: int | None = None, reason: str | None = None
+    ) -> RuleVersion:
+        """Archive a stored rule, and cancel its unfinished runs.
+
+        Its scope states are cleared and its progress kept, so a rule installed again under its
+        name continues its generation. The runs' ``reflexr:run_cancelled`` facts follow the
+        ``reflexr:rule_archived`` fact, in the same transaction.
+
+        Args:
+            rule: The stored rule's name.
+            expected_version: The version it archives, as for :meth:`update_rule`.
+            reason: Why, for the fact.
+
+        Returns:
+            The archived version, or, if the rule is archived already, that version as a
+            duplicate.
+
+        Raises:
+            Forbidden: As for :meth:`install_rule`.
+            NotFound: If no stored rule has the name.
+            InvalidState: If the rule is not at ``expected_version``, which the message names.
+        """
+        await self._allow(RuleChange(kind="archive", rule=rule))
+        with self._span("reflexr.archive_rule") as span:
+            span.set_attribute(a.RULE, rule)
+            traceparent = current_traceparent()
+            async with self._context.storage.transaction(self._ref) as transaction:
+                current = await _stored(transaction, rule)
+                archived = current.model_copy(
+                    update={"version": current.version + 1, "status": "archived"}
+                )
+                if _same(current, archived):
+                    return RuleVersion(current, await transaction.head_seq(), duplicate=True)
+                _expect(current, expected_version)
+                # A stored rule has no scope fields, so each of its runs is in its one scope.
+                runs = await transaction.scope_runs(rule, scope_key([]))
+                unfinished = [run for run in runs if run.status not in FINISHED]
+                await transaction.save_stored_rule(archived)
+                await transaction.clear_states(rule)
+                fact = await self._append(
+                    transaction,
+                    RuleArchived(
+                        rule=rule,
+                        version=archived.version,
+                        reason=reason,
+                        cancelled=len(unfinished),
+                    ),
+                    None,
+                    await self._chain(transaction, None),
+                    traceparent,
+                    self.causation,
+                )
+                now = self._context.clock()
+                for run in unfinished:
+                    cancelled, event = cancel(run, now=now, reason="its rule was archived")
+                    await transaction.save_runs([cancelled])
+                    await self._append(
+                        transaction, event, None, run.correlation_id, traceparent, run.causation
+                    )
+        for _ in unfinished:
+            self._record(
+                RUNS, {a.RULE: rule, a.RUN_STATUS: "cancelled", a.ACTOR_KIND: self._actor.kind}
+            )
+        return RuleVersion(archived, fact.seq)
 
     # ─── reads ────────────────────────────────────────────────────────────────
 
@@ -696,25 +967,40 @@ class Workspace:
         """Return each rule's progress: its cursor, generation and pending deadlines."""
         return await self._context.storage.progress(self._ref)
 
+    async def get_rule(self, rule: RuleName) -> WorkspaceRule:
+        """Return one of the workspace's rules, with a stored rule's version and provenance.
+
+        Raises:
+            NotFound: If the workspace has no such rule, as for a stored rule that is archived.
+        """
+        found = (await self._context.rules_in(self._ref)).get(rule)
+        if found is None:
+            raise NotFound("rule", rule)
+        return found
+
     async def rule_statuses(self) -> list[RuleStatus]:
-        """Return each registered rule's status: enabled, cursor, lag, generation, dead letters.
+        """Return the status of each of the workspace's rules, code rules first.
 
         Every surface reports this, so they agree. A rule that has not evaluated the workspace
-        yet is at cursor 0, and the progress of a rule no longer registered is left out.
+        yet is at cursor 0, and the progress of a rule the workspace no longer has, such as a
+        code rule no longer registered or an archived stored rule, is left out.
         """
-        # Progress first: the head only grows, so no cursor read before it is past it.
+        rules = await self._context.rules_in(self._ref)
+        # Progress next: the head only grows, so no cursor read before it is past it.
         progress = await self.rule_progress()
         head = await self.head_seq()
         letters = Counter(letter.rule for letter in await self.dead_letters())
         statuses: list[RuleStatus] = []
-        for name, rule in self._context.rules.items():
+        for name, found in rules.items():
             cursor, generation = (
                 (progress[name].cursor, progress[name].generation) if name in progress else (0, 0)
             )
             statuses.append(
                 RuleStatus(
                     rule=name,
-                    enabled=rule.enabled,
+                    origin=found.origin,
+                    version=found.version,
+                    enabled=found.rule.enabled,
                     cursor=cursor,
                     lag=head - cursor,
                     generation=generation,
@@ -838,6 +1124,78 @@ class Workspace:
         )
         return updated
 
+    async def _allow(self, change: RuleChange) -> StoredRules:
+        """Return the configuration of stored rules, if the actor may make the change.
+
+        Raises:
+            Forbidden: If stored rules are off, the name is a code rule's, or ``allow`` refuses.
+        """
+        config = self._context.stored_rules
+        if config is None:
+            raise Forbidden("stored rules are off in these workspaces")
+        if change.rule in self._context.rules:
+            raise Forbidden(f"rule {change.rule} is registered in code")
+        if not await config.allow(self.tenant_id, self.workspace_id, self._actor, change):
+            raise Forbidden(f"this change to rule {change.rule} is not yours to make")
+        return config
+
+    def _validate(
+        self, rule: Rule, provenance: Mapping[str, JsonValue], config: StoredRules
+    ) -> None:
+        """Refuse a rule to store, with every problem its checks find.
+
+        It is checked as code rules are, against these workspaces' event types, and then as a
+        stored rule, with its provenance.
+
+        Raises:
+            ValidationFailed: Listing the problems.
+        """
+        context = self._context
+        problems: list[JsonValue] = []
+        try:
+            rule.check(events=context.known, predicates=context.predicates)
+        except InvalidRule as invalid:
+            problems.extend(invalid.problems)
+        problems.extend(check_stored(rule, config))
+        problems.extend(check_provenance(provenance))
+        if problems:
+            raise ValidationFailed(f"rule {rule.name} cannot be stored", problems)
+
+    async def _save_version(
+        self,
+        transaction: Transaction,
+        stored: StoredRule,
+        traceparent: str | None,
+        *,
+        restart: bool = False,
+    ) -> int:
+        """Save an installed or updated version, and return the ``seq`` of its fact.
+
+        A rule new to the workspace begins at its fact. One it knows is reset there, with
+        ``reflexr:rule_reset`` after the fact, if ``restart`` or its definition changed.
+        """
+        rule = stored.rule
+        await transaction.save_stored_rule(stored)
+        event = RuleInstalled(
+            rule=rule.name,
+            version=stored.version,
+            spec=rule.model_dump(mode="json"),
+            provenance=stored.provenance,
+        )
+        chain = await self._chain(transaction, None)
+        fact = await self._append(transaction, event, None, chain, traceparent, self.causation)
+        progress = await transaction.progress(rule.name)
+        if progress is None:
+            await transaction.save_progress(rule.name, begin(rule, head_seq=fact.seq))
+        elif restart or progress.definition != rule.definition():
+            restarted, reset_event = reset(rule, progress, from_seq=fact.seq)
+            await transaction.clear_states(rule.name)
+            await transaction.save_progress(rule.name, restarted)
+            await self._append(
+                transaction, reset_event, None, fact.correlation_id, traceparent, self.causation
+            )
+        return fact.seq
+
     def _span(self, name: str, kind: SpanKind = SpanKind.INTERNAL) -> AbstractContextManager[Span]:
         return self._context.telemetry.tracer.start_as_current_span(
             name,
@@ -877,6 +1235,39 @@ def _check_page(
             raise ValidationFailed(f"{name} cannot be negative", [])
 
 
+async def _stored(transaction: Transaction, name: RuleName) -> StoredRule:
+    """Return a stored rule, active or archived.
+
+    Raises:
+        NotFound: If no stored rule has the name.
+    """
+    stored = await transaction.stored_rule(name)
+    if stored is None:
+        raise NotFound("stored rule", name)
+    return stored
+
+
+def _same(current: StoredRule, following: StoredRule) -> bool:
+    """Whether a change's version is the current one but for its number, so a duplicate."""
+    return (following.rule, following.status, following.provenance) == (
+        current.rule,
+        current.status,
+        current.provenance,
+    )
+
+
+def _expect(current: StoredRule, expected_version: int | None) -> None:
+    """Refuse a change whose caller expected another version of the rule.
+
+    Raises:
+        InvalidState: Naming the current version.
+    """
+    if expected_version is not None and current.version != expected_version:
+        raise InvalidState(
+            f"rule {current.rule.name} is at version {current.version}, not {expected_version}"
+        )
+
+
 async def _existing_chain(transaction: Transaction, correlation_id: str) -> str:
     """Return a chain's id, having checked that it is the id of the chain's first event."""
     envelope = await transaction.envelope(correlation_id)
@@ -895,7 +1286,8 @@ async def meet_rules(transaction: Transaction, rules: Iterable[Rule]) -> None:
     """Start every rule at a new workspace's first event, before it is appended.
 
     In a new workspace every rule starts at the beginning, whatever its ``start``; a rule added
-    later starts where the log is then.
+    later starts where the log is then. These are the code rules: a stored rule comes later,
+    since installing one appends its fact, and it begins there.
     """
     if await transaction.head_seq() == 0:
         for rule in rules:

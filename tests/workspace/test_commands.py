@@ -1,24 +1,34 @@
 """The command handler every surface shares."""
 
+from datetime import timedelta
 from typing import Literal
 
 import pytest
 
 from reflexr import Feedback, Rule, SourceActor, on, run
 from reflexr.core import (
+    Actor,
+    ArchiveRule,
     CancelRun,
     ChainTarget,
     GiveFeedback,
+    InstallRule,
     NotFound,
     Publish,
     PublishedOutcome,
     RecordedOutcome,
     ReplayRule,
     RetryRun,
+    RuleChange,
     RuleOutcome,
+    RuleVersionOutcome,
     RunOutcome,
     SkipRun,
+    StoredRules,
+    TenantId,
+    UpdateRule,
     ValidationFailed,
+    WorkspaceId,
     load_event,
 )
 from reflexr.workspace import Storage, WorkspaceRef, Workspaces, execute
@@ -77,3 +87,33 @@ async def test_rejections_come_from_the_workspace(storage: Storage) -> None:
             workspace,
             GiveFeedback(feedback_type="handled", target=ChainTarget(correlation_id="x"), value={}),
         )
+
+
+async def anyone(
+    tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor, change: RuleChange
+) -> bool:
+    return True
+
+
+async def test_stored_rules_are_changed_through_the_workspace(storage: Storage) -> None:
+    config = StoredRules(allow=anyone, actions={"note": None}, namespaces={"chat"})
+    workspace = await Workspaces(storage, stored_rules=config).open(
+        "acme", "prod", actor=SourceActor(name="relayr")
+    )
+    rule = Rule(
+        name="chat:deploys",
+        when=on(Deploy).at_most(1, per=timedelta(minutes=5)),
+        then=run("note"),
+        ordering="none",
+        timeout=timedelta(minutes=1),
+    )
+    installed = await execute(workspace, InstallRule(rule=rule, provenance={"proposal": "prp_12"}))
+    assert installed == RuleVersionOutcome(rule="chat:deploys", version=1, seq=1)
+    assert await execute(workspace, InstallRule(rule=rule, provenance={"proposal": "prp_12"})) == (
+        RuleVersionOutcome(rule="chat:deploys", version=1, seq=1, duplicate=True)
+    )
+    retried = rule.model_copy(update={"retry": rule.retry.model_copy(update={"max_attempts": 2})})
+    updated = await execute(workspace, UpdateRule(rule=retried, expected_version=1))
+    assert updated == RuleVersionOutcome(rule="chat:deploys", version=2, seq=2)
+    archived = await execute(workspace, ArchiveRule(rule="chat:deploys", reason="done"))
+    assert archived == RuleVersionOutcome(rule="chat:deploys", version=3, seq=3)

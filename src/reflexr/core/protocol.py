@@ -15,6 +15,7 @@ from reflexr.core.errors import UnsupportedProtocol, ValidationFailed
 from reflexr.core.events import AnyEvent, Envelope, EventName
 from reflexr.core.feedback import FeedbackTarget
 from reflexr.core.ids import EventId, RuleName, RunId, WorkspaceId
+from reflexr.core.rules import Rule
 from reflexr.core.runs import Run
 from reflexr.core.state import RuleProgress
 
@@ -80,8 +81,46 @@ class ReplayRule(_Model):
     mode: Literal["rebuild", "refire"] = "rebuild"
 
 
+class InstallRule(_Model):
+    """Install a stored rule: its first version, or the next version of an archived one."""
+
+    type: Literal["install_rule"] = "install_rule"
+    rule: Rule
+    provenance: dict[str, JsonValue] = {}
+    """Where the rule came from, such as the artifact a person accepted. reflexr stores it on
+    the rule and its fact, and does not read it."""
+
+
+class UpdateRule(_Model):
+    """Replace an active stored rule with a new version, reset if its condition or scope changed."""
+
+    type: Literal["update_rule"] = "update_rule"
+    rule: Rule
+    expected_version: int | None = Field(default=None, ge=1)
+    """The version the change replaces. If the rule is at another, someone else changed it."""
+
+    provenance: dict[str, JsonValue] = {}
+
+
+class ArchiveRule(_Model):
+    """Archive a stored rule, and cancel its unfinished runs."""
+
+    type: Literal["archive_rule"] = "archive_rule"
+    rule: RuleName
+    expected_version: int | None = Field(default=None, ge=1)
+    reason: str | None = None
+
+
 type Command = Annotated[
-    Publish | GiveFeedback | RetryRun | SkipRun | CancelRun | ReplayRule,
+    Publish
+    | GiveFeedback
+    | RetryRun
+    | SkipRun
+    | CancelRun
+    | ReplayRule
+    | InstallRule
+    | UpdateRule
+    | ArchiveRule,
     Field(discriminator="type"),
 ]
 """Anything a client can ask a workspace to do."""
@@ -122,8 +161,26 @@ class RuleOutcome(_Model):
     progress: RuleProgress
 
 
+class RuleVersionOutcome(_Model):
+    """A stored rule's version after the command changed it, or found it changed already."""
+
+    type: Literal["rule_version"] = "rule_version"
+    rule: RuleName
+    version: int
+    seq: int
+    """The ``seq`` of the change's fact, ``reflexr:rule_installed`` or ``reflexr:rule_archived``.
+
+    For a duplicate, the head of the log: nothing has changed the rule since its version's fact,
+    so reading on from here misses nothing about it.
+    """
+
+    duplicate: bool = False
+    """Whether the rule was already as the command would leave it, so nothing changed."""
+
+
 type Outcome = Annotated[
-    PublishedOutcome | RecordedOutcome | RunOutcome | RuleOutcome, Field(discriminator="type")
+    PublishedOutcome | RecordedOutcome | RunOutcome | RuleOutcome | RuleVersionOutcome,
+    Field(discriminator="type"),
 ]
 """What a command did."""
 

@@ -74,6 +74,8 @@ async def test_reads_filter_the_log_and_list_rules_runs_and_schedules(app: App) 
     [status] = (await client.get("/workspaces/prod/rules")).json()
     assert status == {
         "rule": "app:spike",
+        "origin": "code",
+        "version": None,
         "enabled": True,
         "cursor": status["cursor"],
         "lag": 0,
@@ -97,6 +99,8 @@ async def test_reads_filter_the_log_and_list_rules_runs_and_schedules(app: App) 
     assert unevaluated == [
         {
             "rule": "app:spike",
+            "origin": "code",
+            "version": None,
             "enabled": True,
             "cursor": 0,
             "lag": 0,
@@ -228,6 +232,8 @@ async def test_the_rule_and_schedule_status_bodies_keep_their_json() -> None:
     assert rules == [
         {
             "rule": "app:spike",
+            "origin": "code",
+            "version": None,
             "enabled": True,
             "cursor": 8,
             "lag": 0,
@@ -236,6 +242,8 @@ async def test_the_rule_and_schedule_status_bodies_keep_their_json() -> None:
         },
         {
             "rule": "app:fragile",
+            "origin": "code",
+            "version": None,
             "enabled": True,
             "cursor": 8,
             "lag": 0,
@@ -244,6 +252,8 @@ async def test_the_rule_and_schedule_status_bodies_keep_their_json() -> None:
         },
         {
             "rule": "app:off",
+            "origin": "code",
+            "version": None,
             "enabled": False,
             "cursor": 0,
             "lag": 8,

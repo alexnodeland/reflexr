@@ -16,7 +16,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from reflexr import Rule, UserActor
-from reflexr.core import Predicates
+from reflexr.core import Predicates, StoredRules
 from reflexr.sql import SqlStorage, create_schema
 from reflexr.workspace import InMemoryStorage, Storage, Workspace, Workspaces
 from tests.clock import FakeClock
@@ -80,20 +80,30 @@ async def storage(
 
 class Build(Protocol):
     def __call__(
-        self, rules: Iterable[Rule] = (), predicates: Predicates | None = None
+        self,
+        rules: Iterable[Rule] = (),
+        predicates: Predicates | None = None,
+        *,
+        stored_rules: StoredRules | None = None,
     ) -> Workspaces: ...
 
 
 @pytest.fixture
 def build(storage: Storage, clock: FakeClock, telemetry: Telemetry) -> Build:
-    """Build workspaces over the test storage, with rules and predicates."""
+    """Build workspaces over the test storage, with rules, predicates and stored rules."""
 
-    def build(rules: Iterable[Rule] = (), predicates: Predicates | None = None) -> Workspaces:
+    def build(
+        rules: Iterable[Rule] = (),
+        predicates: Predicates | None = None,
+        *,
+        stored_rules: StoredRules | None = None,
+    ) -> Workspaces:
         return Workspaces(
             storage,
             events=[ServiceError, Deploy, Heartbeat, Flag],
             rules=rules,
             predicates=predicates,
+            stored_rules=stored_rules,
             clock=clock,
             max_depth=3,
             tracer_provider=telemetry.tracer_provider,

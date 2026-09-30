@@ -19,7 +19,12 @@ from reflexr.telemetry import (
     workspace_attributes,
 )
 from reflexr.telemetry import attributes as a
-from reflexr.telemetry.metrics import EVALUATION_DURATION, EVALUATION_LAG, EVENTS_PUBLISHED
+from reflexr.telemetry.metrics import (
+    EVALUATION_DURATION,
+    EVALUATION_LAG,
+    EVENTS_PUBLISHED,
+    FIRINGS,
+)
 
 # The attributes that identify a single thing: tracing gives them, metrics never do.
 IDENTIFYING = {a.EVENT_ID, a.EVENT_SEQ, a.RUN_ID, a.SCOPE, a.SESSION_ID, a.CONVERSATION_ID}
@@ -110,6 +115,19 @@ def test_every_kind_of_instrument_records() -> None:
     scope = {a.TENANT_ID: "t", a.WORKSPACE_ID: "w"}
     assert points["reflexr.evaluation.lag"] == [({a.RULE: "r", **scope}, 7)]
     assert points["reflexr.evaluation.duration"] == [(scope, 0.25)]
+    provider.shutdown()
+
+
+def test_a_stored_rule_is_recorded_as_its_namespace() -> None:
+    reader = InMemoryMetricReader()
+    provider = MeterProvider(metric_readers=[reader])
+    telemetry = Telemetry(meter_provider=provider, stored_namespaces={"chat"})
+    assert telemetry.rule_attribute("chat:deploys") == "chat:*"
+    assert telemetry.rule_attribute("oncall:triage") == "oncall:triage"
+    for rule in ("chat:deploys", "chat:alerts", "oncall:triage"):
+        telemetry.record(FIRINGS, 1, tenant_id="t", workspace_id="w", attributes={a.RULE: rule})
+    fired = {str(attributes[a.RULE]): n for attributes, n in _points(reader)["reflexr.firings"]}
+    assert fired == {"chat:*": 2, "oncall:triage": 1}
     provider.shutdown()
 
 

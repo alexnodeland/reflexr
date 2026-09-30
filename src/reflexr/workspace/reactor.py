@@ -11,17 +11,20 @@ Acting is at least once: see :mod:`reflexr.workspace.executor`.
 import asyncio
 import contextlib
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from time import perf_counter
 from typing import Any, overload
 
+from pydantic import BaseModel
+
 from reflexr.core import (
     Evaluation,
     Fact,
     InvalidRule,
-    Rule,
+    RuleName,
+    StoredRules,
     Tick,
     begin,
     create_run,
@@ -47,7 +50,7 @@ from reflexr.workspace.actions import Action, RunContext, params_model
 from reflexr.workspace.executor import REACTOR, Executor
 from reflexr.workspace.schedules import SCHEDULER, Schedule, tick_id
 from reflexr.workspace.storage import Entry, Transaction, WorkspaceRef
-from reflexr.workspace.workspace import Workspaces, meet_rules
+from reflexr.workspace.workspace import WorkspaceRule, Workspaces, meet_rules
 
 logger = logging.getLogger("reflexr.reactor")
 
@@ -86,8 +89,10 @@ class Reactor[D]:
 
     Args:
         workspaces: The workspaces, with their storage and rules.
-        actions: What rules run, by the name they refer to them by. Every rule's action must
-            be here, and its params must validate as the params model the action declares.
+        actions: What rules run, by the name they refer to them by. Every code rule's action
+            must be here, and its params must validate as the params model the action declares.
+            Every action stored rules may run must be here too, declaring the params model
+            ``StoredRules`` gives it.
         deps: The application's dependencies, handed to every action in its
             :class:`~reflexr.workspace.Reaction`.
         holder: This reactor's name in leases. Defaults to a new random id; give each process
@@ -101,8 +106,10 @@ class Reactor[D]:
             ``reflexr.langfuse.langfuse_run`` to attribute runs in Langfuse.
 
     Raises:
-        InvalidRule: If a rule's action is not among ``actions``, or its params do not validate
-            as the action's params model.
+        InvalidRule: If a code rule's action is not among ``actions``, or its params do not
+            validate as the action's params model.
+        ValueError: If an action stored rules may run is not among ``actions``, or declares
+            another params model than ``StoredRules`` gives it.
     """
 
     @overload
@@ -154,6 +161,8 @@ class Reactor[D]:
             if action is None:
                 raise InvalidRule(rule.name, [f"no action {rule.then.action!r}"])
             load_params(rule, params_model(action))
+        if workspaces.stored_rules is not None:
+            _check_stored_actions(workspaces.stored_rules, chosen)
         self._workspaces = workspaces
         self._holder = holder or new_id("reactor")
         self._batch_size = batch_size
@@ -372,14 +381,16 @@ class Reactor[D]:
         telemetry = self._workspaces.telemetry
         try:
             with untraced():
-                if not await self._has_work(ref):
+                rules = await self._workspaces.rules_in(ref)
+                if not await self._has_work(ref, rules):
                     return 0
             started = perf_counter()
             with telemetry.tracer.start_as_current_span(
                 "reflexr.evaluate",
                 attributes=workspace_attributes(ref.tenant_id, ref.workspace_id),
             ) as span:
-                fired, evaluated = await self._catch_up(ref, stop)
+                enabled = [name for name, found in rules.items() if found.rule.enabled]
+                fired, evaluated = await self._catch_up(ref, enabled, stop)
                 span.set_attributes({a.EVALUATED_RULES: sorted(evaluated), a.FIRING_COUNT: fired})
             telemetry.record(
                 EVALUATION_DURATION,
@@ -393,39 +404,44 @@ class Reactor[D]:
         return fired
 
     async def _catch_up(
-        self, ref: WorkspaceRef, stop: asyncio.Event | None
+        self, ref: WorkspaceRef, rules: Sequence[RuleName], stop: asyncio.Event | None
     ) -> tuple[int, set[str]]:
-        """Evaluate batches until no rule has new envelopes, the lease is lost, or a stop."""
+        """Evaluate batches until no rule has new envelopes, the lease is lost, or a stop.
+
+        ``rules`` are the enabled ones: a disabled rule's cursor holds until it is enabled again.
+        """
         storage = self._workspaces.storage
         fired = 0
         evaluated: set[str] = set()
         while True:
             advanced = False
-            for rule in self._workspaces.rules.values():
+            for name in rules:
                 if stop is not None and stop.is_set():
                     break  # whichever reactor evaluates next carries on from the cursors
-                if not rule.enabled:
-                    continue  # its cursor holds until it is enabled again
-                evaluation = await self._evaluate_batch(ref, rule)
+                evaluation = await self._evaluate_batch(ref, name)
                 if evaluation is None:
                     continue
                 advanced = True
-                evaluated.add(rule.name)
+                evaluated.add(name)
                 fired += len(evaluation.firings)
-                self._record_evaluation(ref, rule, evaluation)
+                self._record_evaluation(ref, name, evaluation)
             renewed = await storage.acquire_lease(
                 ref, EVALUATION_LEASE, self._holder, self._lease_ttl
             )
             if not advanced or not renewed:
                 return fired, evaluated
 
-    async def _evaluate_batch(self, ref: WorkspaceRef, rule: Rule) -> Evaluation | None:
-        """Evaluate one batch of a rule's new envelopes in one transaction.
+    async def _evaluate_batch(self, ref: WorkspaceRef, name: RuleName) -> Evaluation | None:
+        """Evaluate one batch of a rule's new envelopes in one transaction, as the rule is now.
 
-        Returns None if the rule had nothing new.
+        Returns None if the rule had nothing new, or the workspace no longer has it.
         """
         workspaces = self._workspaces
         async with workspaces.storage.transaction(ref) as transaction:
+            found = (await workspaces.rules_in(transaction)).get(name)
+            if found is None:
+                return None  # a stored rule archived since the pass began
+            rule = found.rule
             head = await transaction.head_seq()
             progress = await transaction.progress(rule.name)
             if progress is None:
@@ -483,33 +499,42 @@ class Reactor[D]:
             ]
         )
 
-    async def _has_work(self, ref: WorkspaceRef) -> bool:
-        """Record each enabled rule's lag, and return whether any has work to do.
+    async def _has_work(self, ref: WorkspaceRef, rules: Mapping[RuleName, WorkspaceRule]) -> bool:
+        """Record the enabled rules' lag, and return whether any has work to do.
 
         These are the cases in which :meth:`_evaluate_batch` writes: a rule with no progress
         yet begins, one whose definition changed is reset, and one whose cursor is behind the
         head evaluates. Keep the two in step: in any other case a batch would find nothing.
+
+        Stored rules share a series per namespace, so each records the most any of its rules
+        is behind.
         """
         storage = self._workspaces.storage
+        telemetry = self._workspaces.telemetry
         head = await storage.head_seq(ref)
         progress = await storage.progress(ref)
+        lags: dict[str, int] = {}
         work = False
-        for name, rule in self._workspaces.rules.items():
+        for name, found in rules.items():
+            rule = found.rule
             if not rule.enabled:
                 continue  # behind by choice, so not a lag to alert on
             known = progress.get(name)
             cursor = known.cursor if known else 0
-            self._workspaces.telemetry.record(
+            series = telemetry.rule_attribute(name)
+            lags[series] = max(lags.get(series, 0), head - cursor)
+            work = work or known is None or cursor < head or known.definition != rule.definition()
+        for series, lag in lags.items():
+            telemetry.record(
                 EVALUATION_LAG,
-                head - cursor,
+                lag,
                 tenant_id=ref.tenant_id,
                 workspace_id=ref.workspace_id,
-                attributes={a.RULE: name},
+                attributes={a.RULE: series},
             )
-            work = work or known is None or cursor < head or known.definition != rule.definition()
         return work
 
-    def _record_evaluation(self, ref: WorkspaceRef, rule: Rule, evaluation: Evaluation) -> None:
+    def _record_evaluation(self, ref: WorkspaceRef, rule: RuleName, evaluation: Evaluation) -> None:
         def record(metric: Metric, count: int, attributes: Attributes) -> None:
             if count:
                 self._workspaces.telemetry.record(
@@ -521,6 +546,28 @@ class Reactor[D]:
                 )
 
         fired = len(evaluation.firings)
-        record(FIRINGS, fired, {a.RULE: rule.name})
-        record(RUNS, fired, {a.RULE: rule.name, a.RUN_STATUS: "pending", a.ACTOR_KIND: "system"})
-        record(RULE_ERRORS, len(evaluation.errors), {a.RULE: rule.name})
+        record(FIRINGS, fired, {a.RULE: rule})
+        record(RUNS, fired, {a.RULE: rule, a.RUN_STATUS: "pending", a.ACTOR_KIND: "system"})
+        record(RULE_ERRORS, len(evaluation.errors), {a.RULE: rule})
+
+
+def _check_stored_actions(config: StoredRules, actions: Mapping[str, Action[Any]]) -> None:
+    """Confirm that each action stored rules may run is registered, with the model they give it.
+
+    Raises:
+        ValueError: Naming the first that is not.
+    """
+    for name, model in config.actions.items():
+        action = actions.get(name)
+        if action is None:
+            raise ValueError(f"stored rules may run {name!r}, which is not among the actions")
+        declared = params_model(action)
+        if declared is not model:
+            raise ValueError(
+                f"stored rules give the action {name!r} {_model_name(model)}, but it declares "
+                f"{_model_name(declared)}"
+            )
+
+
+def _model_name(model: type[BaseModel] | None) -> str:
+    return "no params" if model is None else model.__name__

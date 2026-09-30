@@ -5,26 +5,35 @@ from pydantic import TypeAdapter, ValidationError
 
 from reflexr.core import (
     PROTOCOL,
+    ArchiveRule,
     ClientFrame,
     CommandFrame,
     CommandResult,
     GiveFeedback,
     Hello,
+    InstallRule,
     Publish,
     PublishedOutcome,
     ReplayRule,
+    Rule,
+    RuleVersionOutcome,
     RunTarget,
     ServerFrame,
     UnknownEvent,
     UnsupportedProtocol,
+    UpdateRule,
     ValidationFailed,
     Welcome,
+    on,
     resume,
+    run,
 )
 from tests.event_types import ServiceError
 
 CLIENT: TypeAdapter[ClientFrame] = TypeAdapter(ClientFrame)
 SERVER: TypeAdapter[ServerFrame] = TypeAdapter(ServerFrame)
+
+deploys = Rule(name="chat:deploys", when=on("oncall:deploy.completed"), then=run("notify"))
 
 
 def test_client_frames_round_trip_by_their_type() -> None:
@@ -39,9 +48,41 @@ def test_client_frames_round_trip_by_their_type() -> None:
             ),
         ),
         CommandFrame(command_id="c3", command=ReplayRule(rule="app:triage", mode="refire")),
+        CommandFrame(
+            command_id="c4",
+            command=InstallRule(rule=deploys, provenance={"artifact": "art_rule_7"}),
+        ),
+        CommandFrame(command_id="c5", command=UpdateRule(rule=deploys, expected_version=1)),
+        CommandFrame(command_id="c6", command=ArchiveRule(rule="chat:deploys", reason="done")),
     ]
     for frame in frames:
         assert CLIENT.validate_json(CLIENT.dump_json(frame)) == frame
+
+
+def test_the_rfcs_install_frame_is_a_command() -> None:
+    frame = CLIENT.validate_python(
+        {
+            "type": "command",
+            "command_id": "install-prp_12",
+            "command": {
+                "type": "install_rule",
+                "rule": {
+                    "name": "chat:prod-deploy-failures",
+                    "when": {
+                        "filter": {"kind": "on", "types": ["oncall:deploy.completed"]},
+                        "throttle": {"at_most": 1, "per": "PT15M"},
+                    },
+                    "then": {"action": "notify", "params": {"thread_id": "thr_4"}},
+                    "ordering": "none",
+                    "timeout": "PT1M",
+                },
+                "provenance": {"source": "artifactr", "proposal": "prp_12"},
+            },
+        }
+    )
+    assert isinstance(frame, CommandFrame)
+    assert isinstance(frame.command, InstallRule)
+    assert frame.command.rule.then.params == {"thread_id": "thr_4"}
 
 
 def test_commands_are_strict_and_events_of_unknown_types_are_kept() -> None:
@@ -74,6 +115,11 @@ def test_server_frames_round_trip_by_their_type() -> None:
         Welcome(workspace_id="prod", head_seq=7, reset=True),
         CommandResult(command_id="c1", ok=True, outcome=PublishedOutcome(seq=8, id="e1")),
         CommandResult(command_id="c2", ok=False, rejection={"type": "not_found", "message": "x"}),
+        CommandResult(
+            command_id="c3",
+            ok=True,
+            outcome=RuleVersionOutcome(rule="chat:deploys", version=2, seq=812, duplicate=True),
+        ),
     ]
     for frame in frames:
         assert SERVER.validate_json(SERVER.dump_json(frame)) == frame

@@ -4,8 +4,9 @@ A stored rule is an ordinary :class:`~reflexr.core.Rule`, installed in one works
 rather than registered in code (RFC-0003). What it may do is fixed: the application's
 :class:`StoredRules` names the actions and rule namespaces it may use, and constants bound
 everything else, the same for every tenant. :func:`check_stored` lists what a rule breaks, so a
-draft can be checked before anyone proposes it. A :class:`StoredRule` is one rule as its workspace
-keeps it: its current version, whether it is active, and where it came from.
+draft can be checked before anyone proposes it, and :func:`check_provenance` what a change's
+provenance does. A :class:`StoredRule` is one rule as its workspace keeps it: its current version,
+whether it is active, and where it came from.
 """
 
 import json
@@ -16,7 +17,7 @@ from datetime import timedelta
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
-from pydantic_core import to_jsonable_python
+from pydantic_core import to_json, to_jsonable_python
 
 from reflexr.core.actors import Actor
 from reflexr.core.conditions import (
@@ -48,6 +49,12 @@ MAX_STORED_DESCRIPTION = 2000
 
 MAX_STORED_BYTES = 16 * 1024
 """The most bytes a stored rule's JSON may have."""
+
+MAX_STORED_PROVENANCE = 4 * 1024
+"""The most bytes a change's provenance may have, as JSON."""
+
+MAX_STORED_RULES = 50
+"""The most active stored rules a workspace may have."""
 
 _FIXED: dict[str, JsonValue] = {
     "ordering": "none",
@@ -157,6 +164,17 @@ def check_stored(rule: Rule, config: StoredRules) -> list[str]:
     if len(rule.model_dump_json().encode()) > MAX_STORED_BYTES:
         problems.append(f"the rule's JSON must be at most {MAX_STORED_BYTES} bytes")
     return list(dict.fromkeys(problems))
+
+
+def check_provenance(provenance: Mapping[str, JsonValue]) -> list[str]:
+    """Return the problem with a change's provenance, if its JSON is over core's limit.
+
+    Provenance is opaque to reflexr, so its size is all there is to check. It is measured as a
+    rule's JSON is: compact, in UTF-8 bytes.
+    """
+    if len(to_json(provenance)) > MAX_STORED_PROVENANCE:
+        return [f"provenance must be at most {MAX_STORED_PROVENANCE} bytes of JSON"]
+    return []
 
 
 def _condition_problems(rule: Rule) -> list[str]:

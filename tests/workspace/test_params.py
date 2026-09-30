@@ -1,5 +1,6 @@
 """Params: validated as the action's model when the reactor is built and at each attempt."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, assert_type
@@ -8,7 +9,15 @@ import pytest
 from pydantic import BaseModel, JsonValue
 
 from reflexr import Rule, SourceActor, on, run
-from reflexr.core import InvalidRule, RunDeadLettered
+from reflexr.core import (
+    Actor,
+    InvalidRule,
+    RuleChange,
+    RunDeadLettered,
+    StoredRules,
+    TenantId,
+    WorkspaceId,
+)
 from reflexr.workspace import (
     Action,
     InMemoryStorage,
@@ -18,7 +27,6 @@ from reflexr.workspace import (
     Workspaces,
     with_params,
 )
-from reflexr.workspace.executor import Executor
 from tests.event_types import Deploy
 from tests.workspace.conftest import Build
 from tests.workspace.helpers import fired
@@ -96,37 +104,52 @@ class Renamed(BaseModel):
 async def post(reaction: Reaction[Notices], params: Renamed) -> None: ...
 
 
+async def anyone(
+    tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor, change: RuleChange
+) -> bool:
+    return True
+
+
+def stored(actions: Mapping[str, type[BaseModel] | None]) -> StoredRules:
+    return StoredRules(allow=anyone, actions=actions, namespaces={"chat"})
+
+
 @pytest.mark.parametrize(
-    ("actions", "reason", "error"),
+    ("allowed", "actions", "reason", "error"),
     [
         # A deploy changed the model, so the rule's params no longer validate.
         (
+            {"notify": Renamed},
             {"notify": with_params(post, Renamed)},
             "invalid_params",
             "then.params.channel: Field required",
         ),
         # A deploy removed the action.
-        ({}, "unknown_action", "no action 'notify'"),
+        ({}, {}, "unknown_action", "no action 'notify'"),
     ],
 )
 async def test_an_attempt_that_cannot_run_its_action_fails_permanently(
-    build: Build, actions: dict[str, Action[Notices]], reason: str, error: str
+    build: Build,
+    allowed: Mapping[str, type[BaseModel] | None],
+    actions: dict[str, Action[Notices]],
+    reason: str,
+    error: str,
 ) -> None:
-    workspaces = build([notice(thread_id="thr_4")])
-    workspace = await deployed(workspaces)
-    valid = {"notify": with_params(notify, NotifyParams)}
-    await Reactor(workspaces, actions=valid, deps=Notices()).evaluate()
-    # The reactor refuses such a rule when it is built, so the executor meets it directly,
-    # as it will meet a stored rule that a deploy broke.
-    executor = Executor(
-        workspaces,
-        actions=actions,
-        deps=Notices(),
-        holder="reactor",
-        lease_ttl=timedelta(seconds=30),
-        concurrency=1,
+    # A stored rule whose params were checked when it was installed...
+    rule = Rule(
+        name="chat:notice",
+        when=on(Deploy).at_most(1, per=timedelta(hours=1)),
+        then=run("notify", thread_id="thr_4"),
+        ordering="none",
+        timeout=timedelta(minutes=1),
     )
-    assert (await executor.execute(limit=10)).attempts == 1
+    installing = build(stored_rules=stored({"notify": NotifyParams}))
+    workspace = await installing.open("acme", "prod", actor=SourceActor(name="relayr"))
+    await workspace.install_rule(rule)
+    await workspace.publish(Deploy(service="auth"))
+    # ...meets a deploy that changed its action, which no reactor could check.
+    redeployed = build(stored_rules=stored(allowed))
+    assert (await Reactor(redeployed, actions=actions, deps=Notices()).settle()).attempts == 1
     [dead] = await workspace.runs()
     assert (dead.status, dead.attempts, dead.reason, dead.error) == ("dead", 1, reason, error)
     [fact] = [e.event for e in await workspace.read() if isinstance(e.event, RunDeadLettered)]
