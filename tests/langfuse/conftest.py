@@ -3,7 +3,6 @@
 import json
 import uuid
 from collections.abc import Iterator
-from datetime import datetime
 from typing import Any
 
 import httpx
@@ -16,47 +15,18 @@ from reflexr.langfuse import langfuse_client
 
 
 class FakeLangfuseApi:
-    """The parts of Langfuse's HTTP API the adapters use, in memory."""
+    """The part of Langfuse's HTTP API a client sends scores to, in memory."""
 
-    def __init__(self, *configs: str, page_size: int = 2) -> None:
-        self.configs: list[dict[str, Any]] = [{"name": name} for name in configs]
+    def __init__(self) -> None:
         self.scores: dict[str, dict[str, Any]] = {}
-        self.times: dict[str, datetime] = {}
-        """When each score was given, by id: its ingestion event's timestamp."""
-        self.page_size = page_size
 
     def handle(self, request: httpx.Request) -> httpx.Response:
-        path = request.url.path
-        if path == "/api/public/ingestion":
+        if request.url.path == "/api/public/ingestion":
             for event in json.loads(request.content)["batch"]:
                 if event["type"] == "score-create":
                     self.scores[event["body"]["id"]] = event["body"]
-                    self.times[event["body"]["id"]] = datetime.fromisoformat(event["timestamp"])
             return httpx.Response(207, json={"successes": [], "errors": []})
-        if path == "/api/public/score-configs" and request.method == "POST":
-            self.configs.append(json.loads(request.content))
-            return httpx.Response(200, json=self._config(self.configs[-1]))
-        if path == "/api/public/score-configs":
-            page = int(request.url.params["page"])
-            chunk = self.configs[(page - 1) * self.page_size : page * self.page_size]
-            pages = -(-len(self.configs) // self.page_size)
-            meta = {"page": page, "limit": 2, "totalItems": len(self.configs), "totalPages": pages}
-            return httpx.Response(
-                200, json={"data": [self._config(c) for c in chunk], "meta": meta}
-            )
         return httpx.Response(404)
-
-    @staticmethod
-    def _config(config: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "dataType": "NUMERIC",
-            **config,
-            "id": config["name"],
-            "createdAt": "2026-09-28T00:00:00Z",
-            "updatedAt": "2026-09-28T00:00:00Z",
-            "projectId": "project",
-            "isArchived": False,
-        }
 
 
 class Backend:

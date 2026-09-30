@@ -35,8 +35,12 @@ postgres = ["reflexr[sql]", "asyncpg>=0.31"]
 fastapi = ["fastapi>=0.141"]
 mcp = ["mcp>=2.2"]
 evals = ["evalr>=0.1.0.dev0"]
-# The score mapping and ports that reflexr.scores' mirror and the adapter build on.
-langfuse = ["langfuse>=4.15,<5", "evalr>=0.1.0.dev0"]
+langfuse = [
+    "langfuse>=4.15,<5",
+    # The score mapping and ports that reflexr.scores' mirror builds on, and evalr.langfuse's
+    # score adapters, which send the mirror's scores to Langfuse.
+    "evalr[langfuse]>=0.1.0.dev0",
+]
 litellm = ["pydantic-ai-slim[openai]>=2.51"]
 otel = [
     "opentelemetry-exporter-otlp-proto-http>=1.45",
@@ -86,9 +90,9 @@ dev = [
 ]
 
 # evalr is not published yet: the [evals] and [langfuse] extras resolve it from GitHub, pinned
-# (ADR-0020, ADR-0025).
+# (ADR-0020).
 [tool.uv.sources]
-evalr = { git = "https://github.com/alexnodeland/evalr", rev = "c6866c4b3f338f4dbace7b625765105e4a0dc7a1" }
+evalr = { git = "https://github.com/alexnodeland/evalr", rev = "7a290123aa25011b48ae9ae9cfc3e847c8cab10c" }
 
 [build-system]
 requires = ["uv_build>=0.12,<0.13"]

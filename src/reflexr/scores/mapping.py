@@ -1,6 +1,6 @@
 """Feedback types through evalr's mapping, their scores named as the types are registered.
 
-evalr owns how a field becomes a score (ADR-0025, as amended): one score per field, named
+evalr owns how a field becomes a score (ADR-0045): one score per field, named
 ``{type}.{field}`` and typed by the field. Here the ``{type}`` is a feedback type's registered
 name, which differs from evalr's default, the class name in snake case, for a type registered
 with ``name=``.

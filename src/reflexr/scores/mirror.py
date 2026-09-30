@@ -9,8 +9,9 @@ Each ``feedback_given`` becomes one score per scored field, attached to the trac
 Score ids are derived from the envelope's id and the field, so mirroring the same log again
 replaces scores instead of duplicating them: the mirror can always start over from the
 beginning. It need not, though: it saves a cursor in the workspace as it goes, and a restarted
-mirror carries on after it (ADR-0040). The scores are evalr's ``Score``, with no evaluator, and
-where the feedback came from in their ``source``.
+mirror carries on after it (ADR-0040). The scores are evalr's ``Score``: they have no
+evaluator, they say where the feedback came from in their ``source``, and they name no span,
+since feedback judges a trace or a session, never one of its spans.
 """
 
 import uuid

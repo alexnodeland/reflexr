@@ -146,12 +146,12 @@ Feedback about something that has no trace, because no SDK was configured when i
 
 A mirror keeps a cursor in its workspace, so a restarted mirror carries on where it was instead of mirroring the whole log again ([ADR-0040](../adr/0040-telemetry-that-composes-across-libraries.md)). It saves the cursor after it records a piece of feedback's scores, and after every 500 other envelopes. Mirroring is at least once: a mirror stopped between recording and saving records that feedback again, and the sink replaces the scores. Each mirror names its cursor, and each mirror of a workspace, one per sink, needs its own: two sharing a name would skip feedback after a restart. `cursor=None` keeps none, and starts from the beginning every time. `follow(after_seq=0)` mirrors everything again, but leaves the cursor where it is until it passes it, so a restart carries on from the cursor; to mirror everything again across restarts, give the mirror a new cursor name. A mirror polls the log untraced, so an idle one makes no traces. Each score is evalr's `Score`, with no evaluator; where it came from (the tenant, workspace, feedback type, target kind, the participant who gave it, and the `seq`) is its `source`, which a sink records as the score's metadata.
 
-`sync_score_configs(store)` creates the score configs of every registered feedback type (or those you list) that a `ScoreConfigStore` lacks, leaves the ones it has as they are, and returns the names it created. The sink and the store are evalr's small protocols ([ADR-0025](../adr/0025-ports-and-adapters.md)), re-exported by `reflexr.scores`, so any backend can implement them, and evalr's contract suites (`evalr.contracts.check_score_sink` and `check_score_config_store`) check one:
+`sync_score_configs(store)` creates the score configs of every registered feedback type (or those you list) that a `ScoreConfigStore` lacks, leaves the ones it has as they are, and returns the names it created. The sink and the store are evalr's small protocols, `evalr.core.ScoreSink` and `evalr.core.ScoreConfigStore` ([ADR-0045](../adr/0045-scores-on-evalr.md)), so any backend can implement them, and evalr's contract suites (`evalr.contracts.check_score_sink` and `check_score_config_store`) check one:
 
 ```python
 from collections.abc import Sequence
 
-from reflexr.scores import Score
+from evalr.core import Score
 
 
 class PrintingSink:
@@ -164,22 +164,24 @@ For tests, `evalr.memory` has an `InMemoryScoreSink` and an `InMemoryScoreConfig
 
 ### Scores in Langfuse
 
-With the `langfuse` extra, feedback becomes Langfuse scores beside the traces it judges. `LangfuseScores` is a `ScoreSink`, and `LangfuseScoreConfigs` a `ScoreConfigStore`, both passing evalr's contract suites:
+With the `langfuse` extra, feedback becomes Langfuse scores beside the traces it judges, through evalr's Langfuse adapters: `LangfuseScoreSink` is a `ScoreSink`, and `LangfuseScoreConfigStore` a `ScoreConfigStore`, the same ones evalr's evaluators use:
 
 ```python
 import asyncio
 
-from reflexr.langfuse import LangfuseScoreConfigs, LangfuseScores
+from evalr.langfuse import LangfuseScoreConfigStore, LangfuseScoreSink
+
 from reflexr.scores import FeedbackMirror, sync_score_configs
 
 # From configure_telemetry(..., langfuse="traces" or "scores"), or langfuse_client(...):
 langfuse = telemetry.langfuse
-await sync_score_configs(LangfuseScoreConfigs(langfuse))  # once, at startup
-mirror = FeedbackMirror(workspace, LangfuseScores(langfuse), cursor="langfuse")
+await sync_score_configs(LangfuseScoreConfigStore(langfuse))  # once, at startup
+sink = LangfuseScoreSink(langfuse)
+mirror = FeedbackMirror(workspace, sink, cursor="langfuse")
 task = asyncio.create_task(mirror.follow())
 ```
 
-Score configs give Langfuse each score's type, range and categories, so its UI offers the same scales for annotation. Langfuse accepts config names of up to 35 characters; a longer `{type}.{field}` raises, and a shorter `name=` on the feedback type fixes it. Scores are queued by the Langfuse client and sent in the background, and a score sent again with the same id replaces the first; call `langfuse.flush()` before a short-lived process exits. [Langfuse](observability.md#langfuse) covers traces.
+Score configs give Langfuse each score's type, range and categories, so its UI offers the same scales for annotation. Langfuse accepts config names of up to 35 characters; a longer `{type}.{field}` raises, and a shorter `name=` on the feedback type fixes it. Scores are queued by the Langfuse client and sent in the background, and a score sent again with the same id replaces the first; await `sink.flush()` before a short-lived process exits. [Langfuse](observability.md#langfuse) covers traces.
 
 ## Evaluators and datasets with evalr
 

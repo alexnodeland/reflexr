@@ -1,7 +1,7 @@
 """The package layering in docs/architecture.md, enforced.
 
 Each layer may import the standard library, the reflexr layers below it, and an explicit list of
-third-party packages. Dependencies point one way, so each layer is usable without the ones above.
+third-party modules. Dependencies point one way, so each layer is usable without the ones above.
 """
 
 import ast
@@ -28,11 +28,12 @@ LAYERS: dict[str, tuple[set[str], set[str]]] = {
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.mcp"},
         {"pydantic", "opentelemetry", "mcp", "starlette"},
     ),
-    # The feedback mirror, on evalr's score mapping and ports (ADR-0025).
+    # The feedback mirror, on evalr's score mapping and ports (ADR-0045).
     "scores": (
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.scores"},
-        {"pydantic", "evalr"},
+        {"pydantic", "evalr.core"},
     ),
+    # The evalr adapter. Only it, and the mirror through evalr.core, may import evalr.
     "evals": (
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.evals"},
         {"pydantic", "evalr"},
@@ -42,14 +43,8 @@ LAYERS: dict[str, tuple[set[str], set[str]]] = {
         {"opentelemetry", "pydantic_ai", "fastapi", "sqlalchemy", "langfuse"},
     ),
     "langfuse": (
-        {
-            "reflexr.core",
-            "reflexr.telemetry",
-            "reflexr.workspace",
-            "reflexr.scores",
-            "reflexr.langfuse",
-        },
-        {"langfuse", "opentelemetry", "evalr"},
+        {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.langfuse"},
+        {"langfuse", "opentelemetry"},
     ),
     "litellm": (
         {"reflexr.core", "reflexr.telemetry", "reflexr.workspace", "reflexr.litellm"},
@@ -67,13 +62,18 @@ LAYERS: dict[str, tuple[set[str], set[str]]] = {
 
 
 def _imports(path: Path) -> set[str]:
+    """Every module a file imports, with ``from m import n`` counted as ``m.n``."""
     names: set[str] = set()
     for node in ast.walk(ast.parse(path.read_text())):
         if isinstance(node, ast.Import):
             names.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            names.add(node.module)
+            names.update(f"{node.module}.{alias.name}" for alias in node.names)
     return names
+
+
+def _within(name: str, prefixes: set[str]) -> bool:
+    return any(name == p or name.startswith(f"{p}.") for p in prefixes)
 
 
 @pytest.mark.parametrize("layer", sorted(LAYERS))
@@ -88,9 +88,9 @@ def test_layer_imports_only_what_it_may(layer: str) -> None:
             if root in sys.stdlib_module_names:
                 continue
             if root == "reflexr":
-                assert any(name == p or name.startswith(f"{p}.") for p in own), f"{where}: above"
+                assert _within(name, own), f"{where}: above"
             else:
-                assert root in third_party, f"{where}: not a dependency of this layer"
+                assert _within(name, third_party), f"{where}: not a dependency of this layer"
 
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "oncall" / "src" / "oncall"
@@ -104,4 +104,6 @@ def test_the_reference_implementation_uses_only_the_public_api() -> None:
     for path in modules:
         for name in _imports(path):
             if name.split(".")[0] == "reflexr":
-                assert name in PUBLIC, f"{path.name} imports {name}, not a public package"
+                where = f"{path.name} imports {name}, not a package's public name"
+                assert _within(name, PUBLIC), where
+                assert name.count(".") <= 2, where

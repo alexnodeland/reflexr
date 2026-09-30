@@ -1,6 +1,6 @@
 # ADR-0020: evalr, a shared eval kit
 
-**Status:** Accepted
+**Status:** Accepted; its last amendment superseded by [ADR-0045](0045-scores-on-evalr.md)
 **Date:** 2026-09-28
 **Deciders:** Alex Nodeland
 
