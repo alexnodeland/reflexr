@@ -71,7 +71,7 @@ async def resolve_actor(connection: HTTPConnection) -> tuple[TenantId, Actor]:
 
 Browsers cannot set headers on a WebSocket, so a cookie, or a short-lived token in the query string, is usual there.
 
-To decide which workspaces of its tenant an actor may use, pass `authorize`. A refusal answers 403, or closes the WebSocket with 4403:
+To decide which workspaces of its tenant an actor may use, pass `authorize`. A refusal answers 403, with the `forbidden` rejection as the body's `detail`, as every rejection has, or closes the WebSocket with 4403:
 
 ```python
 from reflexr.core import WorkspaceId

@@ -17,7 +17,6 @@ from reflexr.core import (
     Envelope,
     EvaluationError,
     EventId,
-    Forbidden,
     PublishedOutcome,
     Rejection,
     Rule,
@@ -101,14 +100,17 @@ def reflexr_router(
     results = _Results(remembered_commands)
 
     async def open_workspace(connection: HTTPConnection, workspace_id: WorkspaceId) -> Workspace:
+        """Authenticate a request or connection, and open its workspace if it may use it.
+
+        Raises:
+            HTTPException: 401, if ``resolve_actor`` refuses it.
+            Forbidden: If ``authorize`` refuses the actor this workspace.
+        """
         tenant_id, actor = await _authenticate(connection)
         trace.get_current_span().set_attributes(
             {**workspace_attributes(tenant_id, workspace_id), **actor_attributes(actor)}
         )
-        try:
-            return await workspaces.open(tenant_id, workspace_id, actor=actor, authorize=authorize)
-        except Forbidden as refused:
-            raise HTTPException(status_code=403, detail=refused.message) from refused
+        return await workspaces.open(tenant_id, workspace_id, actor=actor, authorize=authorize)
 
     async def _authenticate(connection: HTTPConnection) -> tuple[TenantId, Actor]:
         try:
@@ -117,7 +119,7 @@ def reflexr_router(
             raise HTTPException(status_code=401, detail=str(error) or "unauthorized") from error
 
     async def workspace_dependency(request: Request, workspace_id: WorkspaceId) -> Workspace:
-        return await open_workspace(request, workspace_id)
+        return await _or_http(open_workspace(request, workspace_id))
 
     async def authenticated(request: Request) -> None:
         await _authenticate(request)

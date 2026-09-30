@@ -215,13 +215,13 @@ class ReflexrMcp:
         tenant_id, actor = await self._resolve(context)
         for (tenant, workspace_id), uri in named.items():
             if tenant != tenant_id:
-                raise MCPError(INVALID_PARAMS, _unavailable(tenant), data={"uri": uri})
+                raise _refused(uri, Forbidden(_unavailable(tenant)))
             try:
                 await self._workspaces.open(
                     tenant_id, workspace_id, actor=actor, authorize=self._authorize
                 )
             except Forbidden as refused:
-                raise MCPError(INVALID_PARAMS, refused.message, data={"uri": uri}) from refused
+                raise _refused(uri, refused) from refused
 
     async def _notify(self, tenant_id: TenantId, workspace: Workspace) -> None:
         head = await workspace.head_seq()
@@ -410,6 +410,17 @@ class ReflexrMcp:
 
 def _unavailable(tenant_id: TenantId) -> str:
     return f"runs of tenant {tenant_id} are not available"
+
+
+def _refused(uri: str, rejection: Rejection) -> MCPError:
+    """A subscription the server refuses, as the protocol error to raise.
+
+    It is ``INVALID_PARAMS``, as the SDK reports a missing resource, so clients can tell a
+    refusal from a failure of the server (``INTERNAL_ERROR``). Its data carries the URI and
+    the rejection, as REST's error body does.
+    """
+    data = {"uri": uri, "rejection": rejection.payload()}
+    return MCPError(INVALID_PARAMS, rejection.message, data=data)
 
 
 def _rule_line(status: RuleStatus) -> str:

@@ -74,7 +74,7 @@ async def authorize(tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor
 mcp = ReflexrMcp(workspaces, resolve=resolve_client, authorize=authorize)
 ```
 
-It is asked on every tool call and resource read that names a workspace, before anything is read or written, and when a client subscribes to a run's changes. A refusal is a tool error carrying the `forbidden` rejection's message, `Error executing tool read_events: this workspace is not yours to use`. A refused resource read fails with the same message, and so does a `subscriptions/listen` request that names a run of a refused workspace. `list_rules` names no workspace, so it is not asked. Without `authorize`, a client may use every workspace of the tenant `resolve` returns.
+It is asked on every tool call and resource read that names a workspace, before anything is read or written, and when a client subscribes to a run's changes. A refusal is a tool error carrying the `forbidden` rejection's message, `Error executing tool read_events: this workspace is not yours to use`. A refused resource read fails with the same message, and so does a `subscriptions/listen` request that names a run of a refused workspace, with `INVALID_PARAMS`; the error's data carries the URI and the `forbidden` rejection, as REST's error body does. `list_rules` names no workspace, so it is not asked. Without `authorize`, a client may use every workspace of the tenant `resolve` returns.
 
 ## Tools
 

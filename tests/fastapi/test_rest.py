@@ -266,7 +266,11 @@ async def test_requests_are_authenticated_and_authorized(app: App) -> None:
     bad = await client.get("/workspaces/prod/events", headers={"x-token": "bad"})
     assert (bad.status_code, bad.json()["detail"]) == (401, "bad token")
     assert (await client.get("/rules", headers={"x-token": "bad"})).status_code == 401
-    assert (await client.get("/workspaces/secret/events")).status_code == 403
+    refused = await client.get("/workspaces/secret/events")
+    assert (refused.status_code, refused.json()["detail"]) == (
+        403,
+        {"type": "forbidden", "message": "this workspace is not yours to use"},
+    )
     await client.post("/workspaces/prod/events", json={"event": ERROR})
     other = await client.get("/workspaces/prod/events", headers={"x-tenant": "globex"})
     assert other.json() == []  # the same workspace id in another tenant is another workspace

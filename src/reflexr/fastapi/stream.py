@@ -16,6 +16,7 @@ from reflexr.core import (
     CommandResult,
     ErrorFrame,
     EventFrame,
+    Forbidden,
     Hello,
     ReplayComplete,
     UnsupportedProtocol,
@@ -110,9 +111,11 @@ class Stream:
     async def _session(self) -> None:
         try:
             workspace = await self._open_workspace(self._ws, self._workspace_id)
-        except HTTPException as refused:
-            code = 4401 if refused.status_code == 401 else 4403
-            await self._close(code, str(refused.detail))
+        except HTTPException as refused:  # not authenticated
+            await self._close(4401, str(refused.detail))
+            return
+        except Forbidden as refused:
+            await self._close(4403, refused.message)
             return
         self._tenant_id = workspace.tenant_id
         hello = await self._hello()
