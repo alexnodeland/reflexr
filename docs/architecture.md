@@ -470,16 +470,25 @@ erDiagram
 | Convention | artifactr | reflexr |
 |---|---|---|
 | Tenancy | Tenants own workspaces; `workspaces.open(tenant, workspace, actor=)` | The same: tenants own workspaces, opened the same way |
-| Log | One per workspace, envelopes with a gap-free `seq` | The same |
-| Actors | user, agent, external agent, system | The same, plus source |
+| Authorization | `Workspaces.open(..., authorize=)` refuses a workspace with `Forbidden`, for every surface | The same |
+| Log | One per workspace, envelopes with a gap-free `seq` and a `traceparent` | The same |
+| Actors | user, agent, external agent, system, evaluator | The same, plus source |
 | Types | `Artifact` subclasses registered by name | `Event` subclasses registered by name |
 | Core | Sans-IO `commit`, conformance fixtures | Sans-IO `evaluate`, conformance fixtures |
-| Storage | Protocol, in-memory and SQL, leases, one behaviour suite | The same |
+| Storage | Protocol, in-memory and SQL, leases, one behaviour suite, cancel-safe | The same |
 | Telemetry | `configure_telemetry(*contributions)`, `telemetry()`, `untraced()`, `langfuse="traces" \| "scores"` | The same, each taking the other's contribution |
 | Log consumers | `cursor` and `save_cursor`, which only move forward; `FeedbackMirror(cursor=)` | The same |
 | pydantic-ai | A capability plus a deps type (`ArtifactWorkspace`, `Session`) | A capability plus a deps type (`EventContext`, `Reaction`) |
 | WebSocket | `hello`, replay, `replay_complete`, close codes | The same shape |
 | MCP | Tenant in resource URIs | The same |
+
+Some code is shared verbatim, at the same path under `src/artifactr/`, and each copy says so. A change to one is made to both:
+
+- `_logging_left_alone`, in `src/reflexr/mcp/server.py`
+- `litellm_model`, in `src/reflexr/litellm/gateway.py`
+- `create_sqlite_engine`, in `src/reflexr/sql/sqlite.py`
+- `langfuse_client`, in `src/reflexr/langfuse/client.py`
+- `_to_the_end` and `_awaited_to_the_end`, in `src/reflexr/sql/storage.py` ([ADR-0042](adr/0042-cancel-safe-storage.md))
 
 ## Dependencies
 

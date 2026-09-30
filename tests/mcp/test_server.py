@@ -231,7 +231,11 @@ async def test_runs_are_resources_of_their_tenant_only(
             with pytest.raises(MCPError, match="runs of tenant acme are not available") as refused:
                 async with client.listen(resource_subscriptions=[*others, uri]):
                     pass
-            assert (refused.value.code, refused.value.data) == (INVALID_PARAMS, {"uri": uri})
+            unavailable = {"type": "forbidden", "message": "runs of tenant acme are not available"}
+            assert (refused.value.code, refused.value.data) == (
+                INVALID_PARAMS,
+                {"uri": uri, "rejection": unavailable},
+            )
 
 
 async def test_authorize_decides_which_workspaces_a_client_may_use(
@@ -282,7 +286,10 @@ async def test_authorize_decides_which_workspaces_a_client_may_use(
             with pytest.raises(MCPError, match=FORBIDDEN) as refused:
                 async with client.listen(resource_subscriptions=[uri]):
                     pass
-            assert refused.value.code == INVALID_PARAMS
+            assert (refused.value.code, refused.value.data) == (
+                INVALID_PARAMS,
+                {"uri": uri, "rejection": {"type": "forbidden", "message": FORBIDDEN}},
+            )
             assert (await call(client, "read_events", workspace_id="prod"))[0] is False
             assert (await call(client, "list_rules"))[0] is False  # names no workspace
             assert await secret.head_seq() == head  # nothing was written
