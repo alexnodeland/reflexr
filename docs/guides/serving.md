@@ -45,7 +45,7 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(reflexr_router(workspaces, resolve_actor=resolve_actor), prefix="/v1")
 ```
 
-Setting `stop` stops the reactor gracefully, never in the middle of a transaction. It starts nothing new, gives the actions it is running `grace` to end (5 seconds by default), cancels those still running and records their attempts as abandoned, to be retried, and releases its leases before `serve` returns ([The reactor](reactor.md#running-the-reactor)). Keep `grace` within the time your platform gives a stopping process, less the rest of your shutdown: Docker allows 10 seconds, and Kubernetes `terminationGracePeriodSeconds`, 30 by default. Stop the reactor before anything it uses closes, such as the database engine. Cancelling the task instead stops it wherever it is, which on SQLite can leave the database locked.
+Setting `stop` stops the reactor gracefully. It starts nothing new, gives the actions it is running `grace` to end (5 seconds by default), cancels those still running and records their attempts as abandoned, to be retried, and releases its leases before `serve` returns ([The reactor](reactor.md#running-the-reactor)). Keep `grace` within the time your platform gives a stopping process, less the rest of your shutdown: Docker allows 10 seconds, and Kubernetes `terminationGracePeriodSeconds`, 30 by default. Stop the reactor before anything it uses closes, such as the database engine.
 
 Keep one `Workspaces` per process and share it between the router, the reactor and anything else, such as the [MCP server](mcp.md). The reactor can equally run in separate worker processes over the same [SQL storage](storage.md#sql-storage), since leases share the work between them ([The reactor](reactor.md#several-processes)).
 

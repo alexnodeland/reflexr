@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from reflexr.sql import create_schema
 from tests.databases import SQL_BACKENDS, Database, empty_database
 
 
@@ -20,3 +21,10 @@ async def database(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncItera
 def engine(database: Database) -> AsyncEngine:
     """An engine on the empty database."""
     return database.engine()
+
+
+@pytest.fixture
+async def schema(database: Database) -> Database:
+    """A database with reflexr's tables."""
+    await create_schema(database.engine())
+    return database

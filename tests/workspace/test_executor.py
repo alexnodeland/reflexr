@@ -15,7 +15,6 @@ from pydantic import BaseModel
 
 from reflexr import AgentActor, F, RetryPolicy, Rule, SourceActor, by, on, run
 from reflexr.core import (
-    Envelope,
     InvalidRule,
     InvalidState,
     NotFound,
@@ -833,64 +832,42 @@ async def test_a_stopped_reactor_abandons_attempts_still_running_after_the_grace
     await assert_let_go(storage, runs)
 
 
-class HeldStorage(InMemoryStorage):
-    """Storage whose next transaction or read, once armed, stays in flight until let go."""
+class RenewalFails(InMemoryStorage):
+    """Storage that fails to renew a run's lease, as a database that blinks."""
 
     def __init__(self, clock: FakeClock) -> None:
         super().__init__(clock=clock)
-        self.armed = False
-        self.holding = asyncio.Event()
-        self.let_go = asyncio.Event()
+        self.taken: set[str] = set()
+        self.failed = asyncio.Event()
 
-    async def hold(self) -> None:
-        if self.armed:
-            self.armed = False
-            self.holding.set()
-            await self.let_go.wait()
-
-    @asynccontextmanager
-    async def transaction(self, workspace: WorkspaceRef) -> AsyncIterator[Any]:
-        async with super().transaction(workspace) as transaction:
-            await self.hold()
-            yield transaction
-
-    async def read(self, workspace: WorkspaceRef, **window: Any) -> list[Envelope]:
-        await self.hold()
-        return await super().read(workspace, **window)
+    async def acquire_lease(
+        self, workspace: WorkspaceRef, key: str, holder: str, ttl: timedelta
+    ) -> bool:
+        if key in self.taken:
+            self.failed.set()
+            raise RuntimeError("the database blinked")
+        if key != EVALUATION_LEASE:
+            self.taken.add(key)
+        return await super().acquire_lease(workspace, key, holder, ttl)
 
 
-@pytest.mark.parametrize("call", ["checkpoint", "read"])
-async def test_a_stopped_reactor_cancels_an_action_only_between_its_storage_calls(
-    call: str, clock: FakeClock
+async def test_a_lease_renewal_that_fails_is_logged_and_the_action_runs_on(
+    clock: FakeClock, caplog: pytest.LogCaptureFixture
 ) -> None:
-    storage = HeldStorage(clock)
-    workspaces = Workspaces(storage, rules=[rule(then=run("careful"))], clock=clock)
-    finished: list[str] = []
+    storage = RenewalFails(clock)
+    workspaces = Workspaces(storage, rules=[rule(then=run("waits"))], clock=clock)
 
-    async def careful(reaction: Reaction[None]) -> None:
-        storage.armed = True
-        if call == "checkpoint":
-            await reaction.checkpoint("first", {"done": 1})
-        else:
-            await reaction.workspace.read()
-        finished.append(call)
-        await asyncio.Event().wait()
+    async def waits(reaction: Reaction[None]) -> None:
+        await storage.failed.wait()
 
     workspace = await open_(workspaces)
     await workspace.publish(Deploy(service="auth"))
-    stop = asyncio.Event()
-    executor = Reactor(workspaces, actions={"careful": careful})
+    executor = Reactor(workspaces, actions={"waits": waits}, lease_ttl=timedelta(milliseconds=30))
     async with asyncio.timeout(5):
-        served = asyncio.create_task(executor.serve(stop=stop, grace=timedelta(0)))
-        await storage.holding.wait()  # the action is in the middle of the call
-        stop.set()
-        await asyncio.sleep(0.05)
-        assert not served.done()  # the grace is over, but the call is in flight
-        storage.let_go.set()
-        await served
-    assert finished == [call]  # the call completed, and the action was cancelled after it
-    [abandoned] = await workspace.runs()
-    assert (abandoned.status, abandoned.reason) == ("retrying", "abandoned")
+        await executor.settle()
+    [done] = await workspace.runs()
+    assert done.status == "succeeded"
+    assert "renewing the lease of run" in caplog.text
 
 
 async def test_a_stopped_reactor_stops_waiting_for_its_next_pass(build: Build) -> None:

@@ -5,15 +5,12 @@ renewing the lease, and records the outcome. Every step that changes the run is 
 transaction, and the outcome is recorded only if the attempt is still the run's current one,
 so an executor that lost its lease, or a run an operator cancelled, cannot overwrite a newer
 state.
-
-An action is only ever cancelled between the storage calls it makes through its workspace,
-never inside one: each is a transaction, and one cancelled part-way can leave its connection
-holding the database's locks.
 """
 
 import asyncio
+import logging
 from collections.abc import Coroutine, Mapping
-from contextlib import AsyncExitStack, suppress
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import timedelta
 from time import perf_counter
@@ -56,7 +53,9 @@ from reflexr.telemetry.metrics import DEAD_LETTERS, RUN_ATTEMPTS, RUN_DURATION, 
 from reflexr.telemetry.telemetry import Attributes
 from reflexr.workspace.actions import Action, Reaction, RunContext, RunFailure
 from reflexr.workspace.storage import Entry, RunPolicy, Transaction, WorkspaceRef, run_lease
-from reflexr.workspace.workspace import OpenTransactions, Workspaces
+from reflexr.workspace.workspace import Workspaces
+
+logger = logging.getLogger("reflexr.reactor")
 
 EXECUTOR = SystemActor(name="reactor")
 
@@ -70,31 +69,6 @@ type _Attempt = Literal["finished", "declined", "contended"]
 
 ABANDONED = "the attempt was abandoned: its executor stopped"
 """The error recorded for an attempt whose executor stopped before it ended."""
-
-
-class Stopping:
-    """A stop that :meth:`Executor.execute` honours, as ``Reactor.serve(stop=)`` asks.
-
-    Once ``asked`` is set, attempts still waiting for a place do not start, and those running
-    have ``grace`` to end; then their actions are cancelled and each attempt is recorded as
-    abandoned.
-    """
-
-    def __init__(self, asked: asyncio.Event, grace: timedelta) -> None:
-        self.asked = asked
-        self._grace = grace.total_seconds()
-        self._deadline: float | None = None
-        self.over = False
-        """Whether the grace is over."""
-
-    async def wait_over(self) -> None:
-        """Return once the stop was asked for and its grace is over."""
-        await self.asked.wait()
-        loop = asyncio.get_running_loop()
-        if self._deadline is None:  # the first attempt to see the stop starts the grace
-            self._deadline = loop.time() + self._grace
-        await asyncio.sleep(self._deadline - loop.time())
-        self.over = True
 
 
 @dataclass(frozen=True)
@@ -143,11 +117,21 @@ class Executor[D]:
         self._concurrency = concurrency
         self._run_context = run_context
 
-    async def execute(self, *, limit: int, stop: Stopping | None = None) -> Executed:
+    async def execute(
+        self,
+        *,
+        limit: int,
+        stop: asyncio.Event | None = None,
+        grace_over: asyncio.Event | None = None,
+    ) -> Executed:
         """Attempt up to ``limit`` of the runs that can start, ``concurrency`` at a time.
 
-        With a ``stop``, attempts still waiting for a place do not start once it is asked for.
+        Once ``stop`` is set, attempts still waiting for a place do not start. Once
+        ``grace_over`` is set, running actions are cancelled, and their attempts recorded as
+        abandoned.
         """
+        stop = stop or asyncio.Event()
+        grace_over = grace_over or asyncio.Event()
         rules = self._workspaces.rules.values()
         with untraced():  # polling: the attempts it finds are traced, each as its own trace
             due = await self._workspaces.storage.due_runs(
@@ -157,16 +141,16 @@ class Executor[D]:
 
         async def attempt(ref: WorkspaceRef, run: Run) -> _Attempt:
             async with gate:
-                if stop is not None and stop.asked.is_set():
+                if stop.is_set():
                     return "declined"  # left for whichever reactor runs next
-                return await self._attempt(ref, run, stop)
+                return await self._attempt(ref, run, grace_over)
 
         async with asyncio.TaskGroup() as group:
             attempts = [group.create_task(attempt(ref, run)) for ref, run in due]
         results = [task.result() for task in attempts]
         return Executed(attempts=results.count("finished"), contended=results.count("contended"))
 
-    async def _attempt(self, ref: WorkspaceRef, run: Run, stop: Stopping | None) -> _Attempt:
+    async def _attempt(self, ref: WorkspaceRef, run: Run, grace_over: asyncio.Event) -> _Attempt:
         rule = self._workspaces.rules.get(run.rule)
         if rule is not None and not rule.enabled:
             return "declined"  # its runs wait until it is enabled again
@@ -179,13 +163,14 @@ class Executor[D]:
             if rule is None:
                 await self._cancel_orphan(ref, run)
                 return "declined"
-            return "finished" if await self._attempt_leased(ref, run, rule, stop) else "declined"
+            finished = await self._attempt_leased(ref, run, rule, grace_over)
+            return "finished" if finished else "declined"
         finally:
             with untraced():
                 await storage.release_lease(ref, key, self._holder)
 
     async def _attempt_leased(
-        self, ref: WorkspaceRef, due: Run, rule: Rule, stop: Stopping | None
+        self, ref: WorkspaceRef, due: Run, rule: Rule, grace_over: asyncio.Event
     ) -> bool:
         telemetry = self._workspaces.telemetry
         with telemetry.tracer.start_as_current_span(
@@ -210,7 +195,7 @@ class Executor[D]:
                 if linked is not None:
                     span.add_link(linked, {a.EVENT_SEQ: envelope.seq})
             started = perf_counter()
-            outcome = await self._run_action(ref, run, rule, events, stop)
+            outcome = await self._run_action(ref, run, rule, events, grace_over)
             if outcome.kind == "failed":
                 span.set_status(Status(StatusCode.ERROR, outcome.error))
             if outcome.kind == "interrupted":
@@ -257,7 +242,7 @@ class Executor[D]:
         run: Run,
         rule: Rule,
         events: tuple[Envelope, ...],
-        stop: Stopping | None,
+        grace_over: asyncio.Event,
     ) -> _Outcome:
         """Run the action while keeping the lease, and report how it ended."""
         workspace = await self._workspaces.open(
@@ -280,7 +265,7 @@ class Executor[D]:
             async with AsyncExitStack() as scope:
                 if self._run_context is not None:
                     await scope.enter_async_context(self._run_context(reaction))
-                return await self._supervise(ref, run, self._call(action, reaction), stop)
+                return await self._supervise(ref, run, self._call(action, reaction), grace_over)
         finally:
             context.detach(token)
 
@@ -289,32 +274,31 @@ class Executor[D]:
         ref: WorkspaceRef,
         run: Run,
         attempt: Coroutine[Any, Any, _Outcome],
-        stop: Stopping | None,
+        grace_over: asyncio.Event,
     ) -> _Outcome:
         """Run an attempt while keeping its lease.
 
-        The action is cancelled, between its storage calls, if the run is cancelled or its lease
-        lost, or once a stop's grace is over; the last makes the attempt an abandoned one.
+        The action is cancelled if the run is cancelled or its lease lost, or once the grace of
+        a stop is over; the last makes the attempt an abandoned one.
         """
-        transactions = OpenTransactions()
-        task = transactions.task(attempt)
-        helpers = [asyncio.create_task(self._keep(ref, run, task, transactions))]
-        if stop is not None:
-            helpers.append(asyncio.create_task(_cancel_when_over(stop, task, transactions)))
+        task = asyncio.create_task(attempt)
+        helpers = [
+            asyncio.create_task(self._keep(ref, run, task)),
+            asyncio.create_task(_cancel_when_set(grace_over, task)),
+        ]
         try:
             return await task
         except asyncio.CancelledError:
             current = asyncio.current_task()
             if current is not None and current.cancelling():
                 raise  # the reactor itself is being cancelled
-            if stop is not None and stop.over:
+            if grace_over.is_set():
                 return _Outcome("failed", error=ABANDONED, reason="abandoned")
             return _Outcome("interrupted")
         finally:
             for helper in helpers:
                 helper.cancel()
-                with suppress(asyncio.CancelledError):
-                    await helper
+            await asyncio.gather(*helpers, return_exceptions=True)
 
     @staticmethod
     async def _call(action: Action[D], reaction: Reaction[D]) -> _Outcome:
@@ -336,28 +320,26 @@ class Executor[D]:
         except ValidationError:
             return _Outcome("failed", error="the action returned a value that is not JSON")
 
-    async def _keep(
-        self,
-        ref: WorkspaceRef,
-        run: Run,
-        task: asyncio.Task[_Outcome],
-        transactions: OpenTransactions,
-    ) -> None:
+    async def _keep(self, ref: WorkspaceRef, run: Run, task: asyncio.Task[_Outcome]) -> None:
         """Renew the run's lease while its action runs.
 
-        The action is stopped if the run was cancelled or the lease was lost.
+        The action is stopped if the run was cancelled or the lease was lost. A storage error is
+        logged and ends the renewals, so the lease lapses and another reactor can take the run.
         """
         storage = self._workspaces.storage
-        with untraced():  # bookkeeping, not part of the attempt's trace
-            while True:
-                await asyncio.sleep(self._lease_ttl.total_seconds() / 3)
-                kept = await storage.acquire_lease(
-                    ref, run_lease(run.id), self._holder, self._lease_ttl
-                )
-                current = await storage.run(ref, run.id)
-                if not kept or current is None or current.status != "running":
-                    await transactions.cancel(task)
-                    return
+        try:
+            with untraced():  # bookkeeping, not part of the attempt's trace
+                while True:
+                    await asyncio.sleep(self._lease_ttl.total_seconds() / 3)
+                    kept = await storage.acquire_lease(
+                        ref, run_lease(run.id), self._holder, self._lease_ttl
+                    )
+                    current = await storage.run(ref, run.id)
+                    if not kept or current is None or current.status != "running":
+                        task.cancel()
+                        return
+        except Exception:
+            logger.exception("renewing the lease of run %s failed; it will lapse", run.id)
 
     async def _complete(
         self, ref: WorkspaceRef, run: Run, rule: Rule, outcome: _Outcome
@@ -438,9 +420,7 @@ class Executor[D]:
         )
 
 
-async def _cancel_when_over(
-    stop: Stopping, task: asyncio.Task[_Outcome], transactions: OpenTransactions
-) -> None:
-    """Cancel an action once a stop's grace is over, between its storage calls."""
-    await stop.wait_over()
-    await transactions.cancel(task)
+async def _cancel_when_set(event: asyncio.Event, task: asyncio.Task[_Outcome]) -> None:
+    """Cancel an action once ``event`` is set."""
+    await event.wait()
+    task.cancel()

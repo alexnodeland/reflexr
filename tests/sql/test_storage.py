@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reflexr import Rule, SourceActor, on, run
 from reflexr.core import RuleProgress, ScopeState, UnknownEvent, start
-from reflexr.sql import SqlStorage, create_schema, migrate
+from reflexr.sql import SqlStorage, migrate
 from reflexr.workspace import (
     Clock,
     Entry,
@@ -36,12 +36,6 @@ MINUTE = timedelta(minutes=1)
 NOON = datetime(2026, 9, 28, 12, tzinfo=UTC)
 WEST = timezone(timedelta(hours=-7))
 EAST = timezone(timedelta(hours=5))
-
-
-@pytest.fixture
-async def schema(database: Database) -> Database:
-    await create_schema(database.engine())
-    return database
 
 
 def process(
