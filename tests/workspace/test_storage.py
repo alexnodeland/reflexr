@@ -11,6 +11,7 @@ from reflexr.core import (
     EvaluationError,
     RuleProgress,
     ScopeState,
+    StoredRule,
     cancel,
     fail,
     skip,
@@ -35,6 +36,11 @@ ORDERED = RunPolicy(ordered=frozenset({"app:triage"}))
 def triage(**changes: object) -> Rule:
     fields = {"name": "app:triage", "when": on(ServiceError), "then": run("respond")}
     return Rule.model_validate({**fields, **changes})
+
+
+def stored(name: str, version: int = 1, **changes: object) -> StoredRule:
+    """A stored rule named ``name``, at ``version``."""
+    return StoredRule.model_validate({"rule": triage(name=name), "version": version, **changes})
 
 
 async def test_appends_assign_gap_free_seqs_and_default_chains(storage: Storage) -> None:
@@ -99,6 +105,7 @@ async def test_a_transaction_that_raises_rolls_back(storage: Storage) -> None:
             await transaction.append([entry("e1")])
             await transaction.save_runs([fired("r1")])
             await transaction.save_progress("app:triage", RuleProgress(cursor=1))
+            await transaction.save_stored_rule(stored("chat:deploys"))
             raise RuntimeError("boom")
 
     with pytest.raises(RuntimeError, match="boom"):
@@ -106,6 +113,7 @@ async def test_a_transaction_that_raises_rolls_back(storage: Storage) -> None:
     assert await storage.head_seq(ACME) == 0
     assert await storage.run(ACME, "r1") is None
     assert await storage.progress(ACME) == {}
+    assert await storage.stored_rules(ACME) == []
 
 
 async def test_a_transaction_cancelled_at_any_await_leaves_the_workspace_usable(
@@ -165,10 +173,13 @@ async def test_workspaces_are_isolated(storage: Storage) -> None:
     async with storage.transaction(ACME) as transaction:
         await transaction.append([entry("e1")])
         await transaction.save_runs([fired("r1")])
+        await transaction.save_stored_rule(stored("chat:deploys"))
     assert await storage.read(OTHER) == []
     assert await storage.run(OTHER, "r1") is None
+    assert await storage.stored_rules(OTHER) == []
     async with storage.transaction(OTHER) as transaction:
         assert await transaction.envelope("e1") is None
+        assert await transaction.stored_rule("chat:deploys") is None
         [envelope] = await transaction.append([entry("e1")])
     assert envelope.seq == 1
     assert set(await storage.workspaces()) == {ACME, OTHER}
@@ -206,6 +217,58 @@ async def test_clearing_states_hides_committed_and_pending_ones(storage: Storage
         keys = ['["auth"]', '["billing"]']
         assert await transaction.states("app:triage", keys) == {'["billing"]': billing}
         assert await transaction.states("app:paging", keys) == {'["auth"]': auth}
+
+
+async def test_stored_rules_are_saved_a_version_at_a_time_and_listed_by_name(
+    storage: Storage,
+) -> None:
+    deploys = stored("chat:deploys", provenance={"artifact": "art_7", "proposal": "prp_12"})
+    regional, alerts = stored("chat:deploy-us"), stored("chat:alerts")
+    # Python's order, by code point: "-" before "s". A locale's collation may put it after.
+    by_name = sorted([deploys, regional, alerts], key=lambda s: s.rule.name)
+    async with storage.transaction(ACME) as transaction:
+        assert await transaction.stored_rule("chat:deploys") is None
+        for rule in (deploys, regional, alerts):
+            await transaction.save_stored_rule(rule)
+        assert await transaction.stored_rule("chat:deploys") == deploys
+        assert await transaction.stored_rules() == by_name
+    assert await storage.stored_rules(ACME) == by_name
+    updated = stored("chat:deploys", 2, rule=triage(name="chat:deploys", timeout="PT1M"))
+    async with storage.transaction(ACME) as transaction:
+        await transaction.save_stored_rule(updated)
+        assert await transaction.stored_rules() == [alerts, regional, updated]
+    assert await storage.stored_rules(ACME) == [alerts, regional, updated]
+
+
+async def test_a_stored_rule_is_saved_only_at_its_next_version(storage: Storage) -> None:
+    with pytest.raises(ValueError, match="the next version of chat:deploys is 1, not 2"):
+        async with storage.transaction(ACME) as transaction:
+            await transaction.save_stored_rule(stored("chat:deploys", 2))
+    first = stored("chat:deploys")
+    async with storage.transaction(ACME) as transaction:
+        await transaction.save_stored_rule(first)
+        with pytest.raises(ValueError, match="is 2, not 1"):
+            await transaction.save_stored_rule(stored("chat:deploys"))
+    for version in (1, 3):
+        with pytest.raises(ValueError, match=f"is 2, not {version}"):
+            async with storage.transaction(ACME) as transaction:
+                await transaction.save_stored_rule(stored("chat:deploys", version))
+    assert await storage.stored_rules(ACME) == [first]
+
+
+async def test_an_archived_rule_stays_stored_but_is_not_listed(storage: Storage) -> None:
+    async with storage.transaction(ACME) as transaction:
+        await transaction.save_stored_rule(stored("chat:deploys"))
+    archived = stored("chat:deploys", 2, status="archived")
+    async with storage.transaction(ACME) as transaction:
+        await transaction.save_stored_rule(archived)
+        assert await transaction.stored_rules() == []
+    assert await storage.stored_rules(ACME) == []
+    installed_again = stored("chat:deploys", 3)
+    async with storage.transaction(ACME) as transaction:
+        assert await transaction.stored_rule("chat:deploys") == archived
+        await transaction.save_stored_rule(installed_again)
+    assert await storage.stored_rules(ACME) == [installed_again]
 
 
 async def test_runs_are_saved_and_listed_newest_first(storage: Storage) -> None:

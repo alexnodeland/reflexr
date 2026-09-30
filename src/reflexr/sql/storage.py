@@ -59,6 +59,7 @@ from reflexr.core import (
     RunStatus,
     ScopeKey,
     ScopeState,
+    StoredRule,
 )
 from reflexr.sql.tables import (
     CursorRow,
@@ -66,6 +67,7 @@ from reflexr.sql.tables import (
     EventRow,
     LeaseRow,
     ProgressRow,
+    RuleRow,
     RunRow,
     ScheduleRow,
     ScopedRow,
@@ -272,6 +274,31 @@ class _Transaction:
             self._session.add(row)
         row.at = at
 
+    @_awaited_to_the_end
+    async def stored_rule(self, name: RuleName) -> StoredRule | None:
+        row = await self._session.get(RuleRow, self._pk(name))
+        return None if row is None else _stored_rule(row)
+
+    @_awaited_to_the_end
+    async def stored_rules(self) -> list[StoredRule]:
+        rows = await self._session.scalars(_active_rules(self._ref))
+        return [_stored_rule(row) for row in rows]
+
+    @_awaited_to_the_end
+    async def save_stored_rule(self, stored: StoredRule) -> None:
+        name = stored.rule.name
+        row = await self._session.get(RuleRow, self._pk(name))
+        following = 1 if row is None else row.version + 1
+        if stored.version != following:
+            raise ValueError(f"the next version of {name} is {following}, not {stored.version}")
+        if row is None:
+            row = RuleRow(**self._key, name=name)
+            self._session.add(row)
+        row.version = stored.version
+        row.status = stored.status
+        row.rule = stored.rule.model_dump(mode="json")
+        row.provenance = stored.provenance
+
     @property
     def _key(self) -> dict[str, str]:
         return {"tenant_id": self._ref.tenant_id, "workspace_id": self._ref.workspace_id}
@@ -359,6 +386,15 @@ def _run(row: RunRow) -> Run:
 
 def _progress(row: ProgressRow) -> RuleProgress:
     return RuleProgress.model_validate(row.body)
+
+
+def _active_rules(ref: WorkspaceRef) -> Select[RuleRow]:
+    """Select a workspace's active stored rules, by name."""
+    return _scoped(RuleRow, ref).where(RuleRow.status == "active").order_by(RuleRow.name)
+
+
+def _stored_rule(row: RuleRow) -> StoredRule:
+    return StoredRule.model_validate(row, from_attributes=True)
 
 
 class SqlStorage:
@@ -513,6 +549,10 @@ class SqlStorage:
         """Return the time of each schedule's last tick in a workspace."""
         query = _scoped(ScheduleRow, workspace).order_by(ScheduleRow.position)
         return {row.name: row.at for row in await self._all(query)}
+
+    async def stored_rules(self, workspace: WorkspaceRef) -> list[StoredRule]:
+        """Return a workspace's active stored rules, by name, in code-point order."""
+        return [_stored_rule(row) for row in await self._all(_active_rules(workspace))]
 
     async def workspaces(self) -> list[WorkspaceRef]:
         """Return every workspace with a log."""

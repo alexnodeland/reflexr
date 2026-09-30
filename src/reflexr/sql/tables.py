@@ -18,6 +18,7 @@ from sqlalchemy import (
     Dialect,
     Index,
     MetaData,
+    String,
     TypeDecorator,
     UniqueConstraint,
 )
@@ -202,3 +203,20 @@ class CursorRow(ScopedRow):
     name: Mapped[str] = mapped_column(primary_key=True)
     seq: Mapped[int] = mapped_column(BigInteger)
     """The ``seq`` of the last envelope the consumer is done with."""
+
+
+class RuleRow(ScopedRow):
+    """A stored rule's current version in a workspace, with the JSON of its rule and provenance."""
+
+    __tablename__ = "reflexr_rules"
+
+    # Code-point order on PostgreSQL, whatever the server's locale, as SQLite and Python sort.
+    name: Mapped[str] = mapped_column(
+        String().with_variant(String(collation="C"), "postgresql"), primary_key=True
+    )
+    version: Mapped[int]
+    status: Mapped[str]
+    """``active`` or ``archived``."""
+
+    rule: Mapped[dict[str, Any]] = mapped_column(JSON)
+    provenance: Mapped[dict[str, Any]] = mapped_column(JSON)

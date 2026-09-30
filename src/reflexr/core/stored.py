@@ -1,10 +1,11 @@
-"""Stored rules: the configuration that allows them, and the limits every one is held to.
+"""Stored rules: the configuration that allows them, their limits, and how a workspace keeps one.
 
 A stored rule is an ordinary :class:`~reflexr.core.Rule`, installed in one workspace at runtime
 rather than registered in code (RFC-0003). What it may do is fixed: the application's
 :class:`StoredRules` names the actions and rule namespaces it may use, and constants bound
 everything else, the same for every tenant. :func:`check_stored` lists what a rule breaks, so a
-draft can be checked before anyone proposes it.
+draft can be checked before anyone proposes it. A :class:`StoredRule` is one rule as its workspace
+keeps it: its current version, whether it is active, and where it came from.
 """
 
 import json
@@ -14,7 +15,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from pydantic_core import to_jsonable_python
 
 from reflexr.core.actors import Actor
@@ -73,6 +74,29 @@ class RuleChange(BaseModel):
 
     spec: Rule | None = None
     """The rule as installed or updated. None when archiving."""
+
+
+class StoredRule(BaseModel):
+    """One stored rule as its workspace keeps it: the current version, and where it came from.
+
+    Storage keeps only the current version, and the log's facts hold the history. Every change
+    is a new version, numbered from 1 per workspace and name, and archiving is one too.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    rule: Rule
+    """The rule, whose name is the stored rule's."""
+
+    version: int = Field(ge=1)
+    """The current version, from 1."""
+
+    status: Literal["active", "archived"] = "active"
+    """Whether the rule runs. An archived rule stays stored, so one installed again under its
+    name continues its versions."""
+
+    provenance: dict[str, JsonValue] = Field(default_factory=dict[str, JsonValue])
+    """Where the change came from, as its installer says: opaque JSON that reflexr does not read."""
 
 
 @dataclass(frozen=True)

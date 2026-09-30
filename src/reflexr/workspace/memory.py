@@ -23,6 +23,7 @@ from reflexr.core import (
     RunStatus,
     ScopeKey,
     ScopeState,
+    StoredRule,
 )
 from reflexr.workspace.storage import Clock, Entry, RunPolicy, WorkspaceRef, run_lease, utc_now
 
@@ -40,6 +41,7 @@ class _Data:
     schedules: dict[str, datetime] = field(default_factory=dict[str, datetime])
     leases: dict[str, tuple[str, datetime]] = field(default_factory=dict[str, tuple[str, datetime]])
     cursors: dict[str, int] = field(default_factory=dict[str, int])
+    rules: dict[RuleName, StoredRule] = field(default_factory=dict[RuleName, StoredRule])
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     appended: asyncio.Condition = field(default_factory=asyncio.Condition)
 
@@ -59,6 +61,7 @@ class _Transaction:
         self._runs: dict[RunId, Run] = {}
         self._dead_letters: list[EvaluationError] = []
         self._schedules: dict[str, datetime] = {}
+        self._rules: dict[RuleName, StoredRule] = {}
 
     async def append(self, entries: Sequence[Entry]) -> list[Envelope]:
         envelopes: list[Envelope] = []
@@ -138,6 +141,20 @@ class _Transaction:
     async def save_schedule(self, name: str, at: datetime) -> None:
         self._schedules[name] = at
 
+    async def stored_rule(self, name: RuleName) -> StoredRule | None:
+        return _latest(self._rules, self._data.rules, name)
+
+    async def stored_rules(self) -> list[StoredRule]:
+        return _active_rules({**self._data.rules, **self._rules})
+
+    async def save_stored_rule(self, stored: StoredRule) -> None:
+        name = stored.rule.name
+        current = await self.stored_rule(name)
+        following = 1 if current is None else current.version + 1
+        if stored.version != following:
+            raise ValueError(f"the next version of {name} is {following}, not {stored.version}")
+        self._rules[name] = stored
+
     def commit(self) -> None:
         data = self._data
         data.log.extend(self._log)
@@ -150,10 +167,16 @@ class _Transaction:
         data.runs.update(self._runs)
         data.dead_letters.extend(self._dead_letters)
         data.schedules.update(self._schedules)
+        data.rules.update(self._rules)
 
 
 def _latest[K, V](pending: dict[K, V], committed: dict[K, V], key: K) -> V | None:
     return pending[key] if key in pending else committed.get(key)
+
+
+def _active_rules(rules: Mapping[RuleName, StoredRule]) -> list[StoredRule]:
+    """Return the active stored rules, by name."""
+    return [rules[name] for name in sorted(rules) if rules[name].status == "active"]
 
 
 def _first_holding(
@@ -277,6 +300,10 @@ class InMemoryStorage:
     async def schedules(self, workspace: WorkspaceRef) -> dict[str, datetime]:
         """Return the time of each schedule's last tick in a workspace."""
         return dict(self._data(workspace).schedules)
+
+    async def stored_rules(self, workspace: WorkspaceRef) -> list[StoredRule]:
+        """Return a workspace's active stored rules, by name, in code-point order."""
+        return _active_rules(self._data(workspace).rules)
 
     async def workspaces(self) -> list[WorkspaceRef]:
         """Return every workspace with a log."""

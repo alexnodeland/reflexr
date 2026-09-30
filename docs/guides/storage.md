@@ -1,6 +1,6 @@
 # Storage
 
-A workspace keeps its log, each rule's progress and scope states, its runs, dead letters, schedule ticks, leases and its consumers' cursors in a storage. One protocol, `Storage`, covers all of it, and `Workspaces` takes any implementation: storage is a port, and the implementations are its adapters ([ADR-0025](../adr/0025-ports-and-adapters.md)). Application code builds a storage and hands it to `Workspaces`; after that it goes through workspace handles and the reactor, which hold the tenant and workspace scope.
+A workspace keeps its log, each rule's progress and scope states, its runs, dead letters, schedule ticks, leases, its consumers' cursors and its stored rules in a storage. One protocol, `Storage`, covers all of it, and `Workspaces` takes any implementation: storage is a port, and the implementations are its adapters ([ADR-0025](../adr/0025-ports-and-adapters.md)). Application code builds a storage and hands it to `Workspaces`; after that it goes through workspace handles and the reactor, which hold the tenant and workspace scope.
 
 Two implementations ship:
 
@@ -96,7 +96,7 @@ The storage does not own the engine: dispose of it when the application stops, w
     storage = SqlStorage(engine, poll_interval=timedelta(seconds=0.1))
     ```
 
-- **Records are JSON.** Envelopes, runs, rule progress, scope states and dead letters are stored as the JSON of their Pydantic models, beside the columns that queries filter and order by. An event whose type the process does not know comes back as an `UnknownEvent`. Adding a field with a default to an event type needs no migration.
+- **Records are JSON.** Envelopes, runs, rule progress, scope states and dead letters are stored as the JSON of their Pydantic models, and a stored rule as the JSON of its rule and its provenance, beside the columns that queries filter and order by. An event whose type the process does not know comes back as an `UnknownEvent`. Adding a field with a default to an event type needs no migration.
 - **Reads of the log filter in the database.** An event's type has a column of its own, indexed with its workspace and `seq`, so reading some types reads only their envelopes, and a read of the last so many reads the log backwards from the end.
 - **Timestamps in columns are UTC.** They are stored and read back in UTC, because SQLite compares timestamps as text. Timestamps inside the JSON round-trip exactly as given.
 - **Leases are rows,** taken with a conditional `UPDATE` or else an `INSERT`, and they expire by the storage's clock. `SqlStorage(engine, clock=...)` takes a clock, as `InMemoryStorage` does.
@@ -116,6 +116,7 @@ Every table's name starts with `reflexr_`, and every primary key starts with the
 | `reflexr_schedules` | Each schedule's last tick |
 | `reflexr_leases` | Evaluation and run leases |
 | `reflexr_cursors` | The cursors of the log's other consumers, such as feedback mirrors |
+| `reflexr_rules` | Each stored rule's current version, active or archived, with its provenance |
 
 ## Migrations
 
@@ -160,7 +161,7 @@ Everything is scoped to a `WorkspaceRef`, a tenant and a workspace: the unit of 
             )
     ```
 
-- **Within a transaction,** the host also loads and saves rule progress and scope states (and clears a rule's states when it is reset), saves runs, lists a scope's unfinished runs in firing order, dead-letters evaluation errors, and records schedule ticks.
+- **Within a transaction,** the host also loads and saves rule progress and scope states (and clears a rule's states when it is reset), saves runs, lists a scope's unfinished runs in firing order, dead-letters evaluation errors, records schedule ticks, and reads and saves stored rules.
 - **`read(ref, after_seq=, before_seq=, types=, limit=, last=)` reads a window of the log,** the envelopes with `after_seq < seq < before_seq`, oldest first. `types` keeps those of some event types, `limit` the first so many that match, and `last` the last so many, still oldest first. Filter in the store rather than after reading, so that a tail read of a long log reads only its tail. `Workspace.read` checks the arguments first, so a storage never gets both `limit` and `last`, or a negative number.
 - **`subscribe(ref, after_seq=...)` replays, then follows.** One iterator yields the stored envelopes after `after_seq` and then each new one as it commits, so nothing falls between catching up and following along. The WebSocket stream, MCP notifications and the feedback mirror all read the log this way.
 - **Discovery spans workspaces.** `workspaces()` lists every workspace with a log, for the reactor to evaluate, and `due_runs(now=..., limit=..., policy=...)` returns the runs to attempt now that can start: pending and retrying runs that are due, and running runs whose lease (`run_lease(run_id)`) has lapsed. Storage does not see the rules, so the executor describes them with a `RunPolicy`, built by `RunPolicy.of(rules)`. A rule the policy does not name has every due run returned. The executor checks each run's place in its scope again when it claims it, so a storage that returns too much only costs claims that are declined, but one that returns too little leaves runs waiting: implement the filter exactly, with `RunPolicy.holds` saying which runs hold a scope. The policy names:
@@ -171,6 +172,7 @@ Everything is scoped to a `WorkspaceRef`, a tenant and a workspace: the unit of 
 - **Cancellation is safe.** A cancelled caller leaves no lock or connection behind; cancellation may be deferred until the current statement ends. A transaction cancelled before it commits rolls back. Anything can be cancelled at any await, by a rule's `timeout`, a stopped reactor, a closed WebSocket or an MCP client's cancel scope, which cancels again until the task ends ([ADR-0042](../adr/0042-cancel-safe-storage.md)). Callers should know two things:
   - A cancelled call may still have taken effect: a transaction may have committed, or `acquire_lease` taken the lease, before the cancellation is raised.
   - A wait for a pooled connection cannot be interrupted either, so a task that holds a transaction must not await a task it cancelled.
+- **Stored rules are saved a version at a time.** A `StoredRule` is a rule installed in one workspace at runtime ([RFC-0003](../rfcs/0003-managing-rules-at-runtime.md)): the rule, its version, its status (`active` or `archived`), and its provenance, opaque JSON kept as given. In a transaction, `stored_rule(name)` returns one, active or archived, and `stored_rules()` lists the active ones by name, in code-point order, as `stored_rules(ref)` does outside one. `save_stored_rule(stored)` saves a rule's next version, numbered from 1 per name, and archiving is a version too. Saving any other version raises `ValueError`, so a caller with an expected version reads the rule first, in the same transaction.
 - **Cursors only move forward.** `save_cursor(ref, name, seq)` records how far a named consumer of the log has got, and `cursor(ref, name)` reads it back, 0 if it has none. Saving a `seq` below the saved one leaves it, so a consumer that runs in several processes cannot move it back. A `FeedbackMirror` keeps one, as a rule keeps its progress, so a restarted mirror carries on where it was ([ADR-0040](../adr/0040-telemetry-that-composes-across-libraries.md)); `Workspace.cursor` and `Workspace.save_cursor` give an application's own consumers the same.
 
 The workspace behaviour suite states the rest precisely, including rollback, cancellation, isolation between workspaces, subscriptions that never miss an envelope, and lease expiry. It lives in the repository's [`tests/workspace/`](https://github.com/alexnodeland/reflexr/tree/main/tests/workspace) rather than in the package: its `storage` fixture runs every test on in-memory storage, SQLite and PostgreSQL, so copy the suite and add your storage to that fixture.

@@ -1,4 +1,4 @@
-"""The storage protocol: where a workspace's log, rule state and runs live.
+"""The storage protocol: where a workspace's log, rule state, runs and stored rules live.
 
 reflexr ships :class:`~reflexr.workspace.InMemoryStorage` for tests and examples, and
 ``reflexr.sql.SqlStorage`` for production. Applications with other needs implement
@@ -27,6 +27,7 @@ from reflexr.core import (
     RunStatus,
     ScopeKey,
     ScopeState,
+    StoredRule,
     TenantId,
     WorkspaceId,
     holds,
@@ -189,6 +190,22 @@ class Transaction(Protocol):
         """Save the time of a schedule's last tick."""
         ...
 
+    async def stored_rule(self, name: RuleName) -> StoredRule | None:
+        """Return a stored rule, active or archived, or None if no rule of that name is stored."""
+        ...
+
+    async def stored_rules(self) -> list[StoredRule]:
+        """Return the workspace's active stored rules, by name, in code-point order."""
+        ...
+
+    async def save_stored_rule(self, stored: StoredRule) -> None:
+        """Save a stored rule's next version, which archives it if its status is ``archived``.
+
+        Versions are numbered from 1 per name, so callers check an expected version by reading
+        :meth:`stored_rule` first; saving any version but the next raises ``ValueError``.
+        """
+        ...
+
 
 class Storage(Protocol):
     """Persistence for workspaces. Every method except discovery is scoped to one workspace.
@@ -268,6 +285,10 @@ class Storage(Protocol):
 
     async def schedules(self, workspace: WorkspaceRef) -> dict[str, datetime]:
         """Return the time of each schedule's last tick in a workspace."""
+        ...
+
+    async def stored_rules(self, workspace: WorkspaceRef) -> list[StoredRule]:
+        """Return a workspace's active stored rules, by name, in code-point order."""
         ...
 
     async def workspaces(self) -> list[WorkspaceRef]:

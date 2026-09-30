@@ -200,7 +200,7 @@ Serialized, the same rule is plain JSON, with a schema generated from the models
 }
 ```
 
-Rules are registered in code today. Stored rules, installed in one workspace at runtime, are designed in [RFC-0003](rfcs/0003-managing-rules-at-runtime.md), and core holds what fixes their bounds: `StoredRules`, the configuration (an `allow` hook shaped like `authorize`, which sees a `RuleChange`, the allowlisted actions with their params models, and the rule namespaces stored rules may use), and `check_stored`, which lists every way a rule breaks it or core's limits: a required throttle of at most 60 firings in any hour, no scope fields, predicates or `matches`, and bounded retries, timeout, windows, description and size. Storage, the commands and the surfaces follow.
+Rules are registered in code today. Stored rules, installed in one workspace at runtime, are designed in [RFC-0003](rfcs/0003-managing-rules-at-runtime.md), and core holds what fixes their bounds: `StoredRules`, the configuration (an `allow` hook shaped like `authorize`, which sees a `RuleChange`, the allowlisted actions with their params models, and the rule namespaces stored rules may use), and `check_stored`, which lists every way a rule breaks it or core's limits: a required throttle of at most 60 firings in any hour, no scope fields, predicates or `matches`, and bounded retries, timeout, windows, description and size. Storage keeps each stored rule's current version, a `StoredRule`, and the commands and the surfaces follow.
 
 ### Conditions
 
@@ -433,7 +433,7 @@ They read Prometheus through the data source uid `prometheus`, as stackr provisi
 - **`InMemoryStorage`**, for tests, examples and single-process prototypes.
 - **`SqlStorage`** (`reflexr.sql`), on PostgreSQL and SQLite with SQLAlchemy 2's asyncio extension, with Alembic migrations shipped in the package ([ADR-0030](adr/0030-sql-storage.md)).
 
-A transaction is scoped to one workspace (a `WorkspaceRef` of tenant and workspace) and serialized with every other transaction on it. Within it the host appends envelopes, loads and saves rule cursors and states, creates and updates runs, and dead-letters evaluation errors; it reads its own writes, commits when its block exits normally and rolls back if it raises or is cancelled. Every storage is cancel-safe: a cancelled caller leaves no lock or connection behind; cancellation may be deferred until the current statement ends ([ADR-0042](adr/0042-cancel-safe-storage.md)). Appending an id that is already in the log is an error, so callers look ids up first. Outside transactions, storage serves reads (`read`, which filters a window of the log by event type and takes its first or last so many, `subscribe`, runs, dead letters), discovery (`workspaces`, and `due_runs`, which returns the runs that can start, given a `RunPolicy` that says which rules are disabled, which run in firing order per scope and which of those a dead-lettered run blocks), leases with an injectable clock, schedule state, and the cursors of the log's other consumers, such as feedback mirrors: `cursor` and `save_cursor`, which only moves a cursor forward ([ADR-0040](adr/0040-telemetry-that-composes-across-libraries.md)).
+A transaction is scoped to one workspace (a `WorkspaceRef` of tenant and workspace) and serialized with every other transaction on it. Within it the host appends envelopes, loads and saves rule cursors and states, creates and updates runs, dead-letters evaluation errors, and reads and saves stored rules; it reads its own writes, commits when its block exits normally and rolls back if it raises or is cancelled. Every storage is cancel-safe: a cancelled caller leaves no lock or connection behind; cancellation may be deferred until the current statement ends ([ADR-0042](adr/0042-cancel-safe-storage.md)). Appending an id that is already in the log is an error, and so is saving a stored rule at any version but its next, so callers look ids and rules up first. Outside transactions, storage serves reads (`read`, which filters a window of the log by event type and takes its first or last so many, `subscribe`, runs, dead letters, active stored rules), discovery (`workspaces`, and `due_runs`, which returns the runs that can start, given a `RunPolicy` that says which rules are disabled, which run in firing order per scope and which of those a dead-lettered run blocks), leases with an injectable clock, schedule state, and the cursors of the log's other consumers, such as feedback mirrors: `cursor` and `save_cursor`, which only moves a cursor forward ([ADR-0040](adr/0040-telemetry-that-composes-across-libraries.md)).
 
 ```python
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -469,12 +469,14 @@ erDiagram
     WORKSPACE ||--o{ DEAD_LETTER : "per rule"
     WORKSPACE ||--o{ SCHEDULE : "last tick of each"
     WORKSPACE ||--o{ LEASE : "evaluation and runs"
+    WORKSPACE ||--o{ STORED_RULE : "current version of each"
 ```
 
 - **Rules live in code** (v0.1) and are identified by name. A rule's cursor row stores a hash of its definition; changing the definition resets its state and is recorded in the log.
+- **Stored rules** ([RFC-0003](rfcs/0003-managing-rules-at-runtime.md)) are one row per workspace and name: the current version, numbered from 1, whether it is active or archived, and the rule and its provenance.
 - **Rule state** is a JSON document per rule and scope, owned by the rule's condition, saved with its cursor.
 - **Runs** hold their status, attempts, next attempt time, causal chain, the trace id of each attempt, and for graphs the latest checkpoint.
-- **In SQL** each entity is a `reflexr_` table whose primary key starts with the tenant and the workspace. Envelopes, runs, rule progress, scope states and dead letters are stored as the JSON of their Pydantic models (`JSON`, not `JSONB`, so key order is kept), beside the columns queries filter and order by: an event's unique id and its type, a run's rule, scope, status, `fired_seq` and `next_attempt_at`. The workspace row holds the log's head and a counter that orders runs, dead letters, progress and schedules by creation. Timestamps in columns are stored in UTC ([ADR-0030](adr/0030-sql-storage.md)).
+- **In SQL** each entity is a `reflexr_` table whose primary key starts with the tenant and the workspace. Envelopes, runs, rule progress, scope states and dead letters are stored as the JSON of their Pydantic models (`JSON`, not `JSONB`, so key order is kept), and a stored rule as the JSON of its rule and its provenance, beside the columns queries filter and order by: an event's unique id and its type, a run's rule, scope, status, `fired_seq` and `next_attempt_at`, and a stored rule's version and status. The workspace row holds the log's head and a counter that orders runs, dead letters, progress and schedules by creation. Timestamps in columns are stored in UTC ([ADR-0030](adr/0030-sql-storage.md)).
 
 ## Aligned with artifactr
 
@@ -508,7 +510,7 @@ Python 3.12+. Runtime: `pydantic` (core); `opentelemetry-api` (telemetry and wor
 ## Testing
 
 - **Core:** the conformance fixtures, plus property tests that replaying any log reproduces its firings.
-- **Workspace:** one behaviour suite (publishing, evaluation, runs, retries, leases, schedules) against every storage: in memory, SQLite, and PostgreSQL when `REFLEXR_TEST_POSTGRES_URL` is set, as in CI's PostgreSQL job (`make pg-up test-pg` locally).
+- **Workspace:** one behaviour suite (publishing, evaluation, runs, retries, leases, schedules, stored rules) against every storage: in memory, SQLite, and PostgreSQL when `REFLEXR_TEST_POSTGRES_URL` is set, as in CI's PostgreSQL job (`make pg-up test-pg` locally).
 - **SQL:** the migrations checked against the models on both databases, and locking, polling, leases and stored values across processes.
 - **Agent:** scripted models built by `function_model`, which answers plain and streamed requests from one function, and pydantic-ai's `TestModel`; graph runs interrupted and resumed.
 - **Surfaces:** contract tests for every frame and endpoint, and an MCP client round trip.

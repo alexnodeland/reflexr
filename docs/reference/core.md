@@ -112,13 +112,15 @@ A rule's condition, scope, action and policies. See [Rules](../guides/rules.md).
 
 ## Stored rules
 
-What rules installed at runtime may do, and the limits every one is held to. See [RFC-0003](../rfcs/0003-managing-rules-at-runtime.md).
+What rules installed at runtime may do, the limits every one is held to, and how a workspace keeps one. See [RFC-0003](../rfcs/0003-managing-rules-at-runtime.md).
 
 ::: reflexr.core.StoredRules
 
 ::: reflexr.core.RuleChange
 
 ::: reflexr.core.check_stored
+
+::: reflexr.core.StoredRule
 
 ::: reflexr.core.MAX_STORED_FIRINGS_PER_HOUR
 

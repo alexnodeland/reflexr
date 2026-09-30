@@ -189,6 +189,7 @@ from reflexr.core.stored import (
     MAX_STORED_TIMEOUT,
     MAX_STORED_WINDOW,
     RuleChange,
+    StoredRule,
     StoredRules,
     check_stored,
 )
@@ -307,6 +308,7 @@ __all__ = [
     "ServerFrame",
     "SkipRun",
     "SourceActor",
+    "StoredRule",
     "StoredRules",
     "SystemActor",
     "SystemEvent",
