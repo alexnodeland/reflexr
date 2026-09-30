@@ -73,7 +73,7 @@ A rule's policy names the guardrails its requests use, as the proxy configures t
 
 ```python
 async def guardrails(tenant_id: str, workspace_id: str, rule: str) -> list[str]:
-    if rule == "error-spike" and await is_regulated(tenant_id):
+    if rule == "ops:error-spike" and await is_regulated(tenant_id):
         return ["presidio-pii", "prompt-injection"]
     return []
 ```
@@ -81,7 +81,7 @@ async def guardrails(tenant_id: str, workspace_id: str, rule: str) -> list[str]:
 When a guardrail blocks a request, the proxy answers HTTP 400. The gateway turns that into `GuardrailBlocked`, a permanent `RunFailure` ([ADR-0036](../adr/0036-typed-run-failures.md)), so the run is dead-lettered at once with the reason `guardrail_blocked`, whatever the rule's retry policy allows: retrying the same input would be blocked again. The message names the guardrail but never repeats what was blocked:
 
 ```json
-{"type": "run_dead_lettered", "run_id": "fir_823258f37c0bddf1", "rule": "error-spike",
+{"type": "reflexr:run_dead_lettered", "run_id": "fir_823258f37c0bddf1", "rule": "ops:error-spike",
  "attempts": 1, "error": "The model request was blocked by the presidio-pii guardrail.",
  "reason": "guardrail_blocked"}
 ```

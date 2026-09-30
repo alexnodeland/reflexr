@@ -179,7 +179,7 @@ async def test_a_schedule_can_target_workspaces_that_are_still_empty(
     storage: Storage, clock: FakeClock
 ) -> None:
     nightly = Schedule(name="nightly", cron="0 0 * * *", workspaces=(("acme", "prod"),))
-    report = Rule(name="report", when=on(Tick).where(schedule="nightly"), then=run("noop"))
+    report = Rule(name="app:report", when=on(Tick).where(schedule="nightly"), then=run("noop"))
     workspaces = build(storage, clock, nightly, rules=(report,))
     reactor = Reactor(workspaces, actions={"noop": noop})
     await reactor.tick()
@@ -192,7 +192,7 @@ async def test_ticks_let_absence_rules_fire_in_quiet_workspaces(
     storage: Storage, clock: FakeClock
 ) -> None:
     quiet = Rule(
-        name="quiet",
+        name="app:quiet",
         when=on(Heartbeat).absent(within=timedelta(minutes=1)),
         scope=by(F.service),
         then=run("noop"),
@@ -206,7 +206,7 @@ async def test_ticks_let_absence_rules_fire_in_quiet_workspaces(
         clock.advance(30)
         await reactor.settle()
     [paged] = await workspace.runs()
-    assert (paged.rule, paged.status) == ("quiet", "succeeded")
+    assert (paged.rule, paged.status) == ("app:quiet", "succeeded")
 
 
 async def test_a_workspace_reports_its_schedules_last_and_next_ticks(

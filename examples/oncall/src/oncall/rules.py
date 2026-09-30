@@ -13,7 +13,7 @@ SILENCE = timedelta(minutes=2)
 """How long a service may go without a heartbeat before it is paged."""
 
 triage_rule = Rule(
-    name="triage",
+    name="oncall:triage",
     description=(
         "Three or more alerts of severity 7 or more for one service within five minutes. "
         "Decide whether they are an incident, and open one if they are."
@@ -24,7 +24,7 @@ triage_rule = Rule(
 )
 
 runbook_rule = Rule(
-    name="runbook",
+    name="oncall:runbook",
     description=(
         "An incident was opened. Roll back a recent deploy of the service, or page the person "
         "on call if there is none; verify the service, then resolve the incident."
@@ -36,7 +36,7 @@ runbook_rule = Rule(
 )
 
 silence_rule = Rule(
-    name="silence",
+    name="oncall:silence",
     description="A service stopped sending heartbeats for two minutes. Page the person on call.",
     when=on(Heartbeat).absent(within=SILENCE),
     scope=by(F.service),

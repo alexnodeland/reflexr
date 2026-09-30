@@ -11,7 +11,7 @@
           "filter": {
             "kind": "on",
             "types": [
-              "service.error"
+              "app:service.error"
             ]
           },
           "pattern": {
@@ -26,7 +26,7 @@
           "seq": 1,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -34,7 +34,7 @@
           "seq": 2,
           "at": 2,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -42,7 +42,7 @@
           "seq": 3,
           "at": 3,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -50,7 +50,7 @@
           "seq": 4,
           "at": 4,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         }
@@ -68,7 +68,7 @@
         "errors": [],
         "facts": [
           {
-            "type": "rule_fired",
+            "type": "reflexr:rule_fired",
             "chain": "evt_4",
             "depth": 1
           }
@@ -85,8 +85,8 @@
           "filter": {
             "kind": "on",
             "types": [
-              "service.error",
-              "heartbeat"
+              "app:service.error",
+              "app:heartbeat"
             ]
           }
         },
@@ -101,7 +101,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "heartbeat",
+            "type": "app:heartbeat",
             "service": "auth"
           }
         },
@@ -109,7 +109,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "heartbeat",
+            "type": "app:heartbeat",
             "service": "auth"
           }
         }
@@ -134,7 +134,7 @@
           "filter": {
             "kind": "on",
             "types": [
-              "service.error"
+              "app:service.error"
             ]
           },
           "throttle": {
@@ -148,7 +148,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -156,7 +156,7 @@
           "seq": 2,
           "at": 10,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -164,7 +164,7 @@
           "seq": 3,
           "at": 70,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         }

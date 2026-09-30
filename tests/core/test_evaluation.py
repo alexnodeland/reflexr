@@ -28,7 +28,7 @@ MINUTE = timedelta(minutes=1)
 def quiet(start: str = "now") -> Rule:
     return Rule.model_validate(
         {
-            "name": "quiet",
+            "name": "app:quiet",
             "when": on(Heartbeat).absent(within=MINUTE),
             "scope": by(F.service),
             "then": run("page"),
@@ -38,7 +38,7 @@ def quiet(start: str = "now") -> Rule:
 
 
 def hb(seq: int, at: int, service: str = "auth") -> Envelope:
-    return envelope({"seq": seq, "at": at, "event": {"type": "heartbeat", "service": service}})
+    return envelope({"seq": seq, "at": at, "event": {"type": "app:heartbeat", "service": service}})
 
 
 def test_a_rule_starts_at_the_head_or_the_beginning() -> None:
@@ -79,32 +79,32 @@ def test_needs_lists_filtered_scopes_and_passing_deadlines() -> None:
     progress = begin(rule, head_seq=0)
     assert needs(rule, progress, []) == frozenset()
     first = evaluate(rule, progress, {}, [hb(1, 0), hb(2, 0, "billing")])
-    later = [envelope({"seq": 3, "at": 90, "event": {"type": "service.error", "service": "x"}})]
+    later = [envelope({"seq": 3, "at": 90, "event": {"type": "app:service.error", "service": "x"}})]
     assert needs(rule, first.progress, later) == {'["auth"]', '["billing"]'}
-    early = [envelope({"seq": 3, "at": 30, "event": {"type": "service.error", "service": "x"}})]
+    early = [envelope({"seq": 3, "at": 30, "event": {"type": "app:service.error", "service": "x"}})]
     assert needs(rule, first.progress, early) == frozenset()
 
 
 def test_needs_skips_what_evaluation_reports_as_errors() -> None:
     rule = Rule(
-        name="odd",
+        name="app:odd",
         when=on(ServiceError).where(PredicateFilter(name="explodes")),
         scope=by(F.service),
         then=run("page"),
     )
-    batch = [envelope({"seq": 1, "at": 0, "event": {"type": "service.error", "service": "a"}})]
+    batch = [envelope({"seq": 1, "at": 0, "event": {"type": "app:service.error", "service": "a"}})]
     assert needs(rule, begin(rule, head_seq=0), batch, predicates=PREDICATES) == frozenset()
 
 
 def test_needs_ignores_a_rules_facts_about_itself() -> None:
-    rule = Rule(name="self", when=on("rule_fired"), then=run("page"))
+    rule = Rule(name="app:self", when=on("reflexr:rule_fired"), then=run("page"))
     fired = envelope(
         {
             "seq": 1,
             "at": 0,
             "event": {
-                "type": "rule_fired",
-                "rule": "self",
+                "type": "reflexr:rule_fired",
+                "rule": "app:self",
                 "scope": {},
                 "scope_key": "[]",
                 "firing_id": "f",

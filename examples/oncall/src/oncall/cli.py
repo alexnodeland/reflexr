@@ -55,14 +55,14 @@ def parser() -> argparse.ArgumentParser:
     main.add_argument("--user", default="guest", help="who you are (demo authentication)")
     commands = main.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
-    alert = commands.add_parser("alert", help="publish alert.fired, as monitoring would")
+    alert = commands.add_parser("alert", help="publish oncall:alert.fired, as monitoring would")
     alert.add_argument("service")
     alert.add_argument("--severity", type=severity, required=True, metavar="1-10")
     alert.add_argument("--message", required=True)
-    deploy = commands.add_parser("deploy", help="publish deploy.completed, as CI would")
+    deploy = commands.add_parser("deploy", help="publish oncall:deploy.completed, as CI would")
     deploy.add_argument("service")
     deploy.add_argument("--version", required=True)
-    heartbeat = commands.add_parser("heartbeat", help="publish service.heartbeat")
+    heartbeat = commands.add_parser("heartbeat", help="publish oncall:service.heartbeat")
     heartbeat.add_argument("service")
 
     watch = commands.add_parser("watch", help="follow the log live, one line per event")
@@ -89,15 +89,19 @@ def event_of(args: argparse.Namespace) -> Frame:
     match args.command:
         case "alert":
             return {
-                "type": "alert.fired",
+                "type": "oncall:alert.fired",
                 "service": args.service,
                 "severity": args.severity,
                 "message": args.message,
             }
         case "deploy":
-            return {"type": "deploy.completed", "service": args.service, "version": args.version}
+            return {
+                "type": "oncall:deploy.completed",
+                "service": args.service,
+                "version": args.version,
+            }
         case _:
-            return {"type": "service.heartbeat", "service": args.service}
+            return {"type": "oncall:service.heartbeat", "service": args.service}
 
 
 def command_of(args: argparse.Namespace) -> Frame:
@@ -152,44 +156,54 @@ def one_line(text: str) -> str:
 def describe(event: Frame) -> tuple[str, str]:
     """A style and a few words of markup for an event."""
     match event:
-        case {"type": "incident.opened", "service": service, "severity": severity}:
+        case {"type": "oncall:incident.opened", "service": service, "severity": severity}:
             return (
                 "bold red",
                 f"INCIDENT OPENED {service} sev {severity}: {escape(event['summary'])}",
             )
-        case {"type": "incident.resolved", "service": service, "resolution": resolution}:
+        case {"type": "oncall:incident.resolved", "service": service, "resolution": resolution}:
             return "bold green", f"INCIDENT RESOLVED {service}: {escape(resolution)}"
-        case {"type": "alert.fired", "service": service, "severity": severity}:
+        case {"type": "oncall:alert.fired", "service": service, "severity": severity}:
             style = "bold yellow" if severity >= 7 else "yellow"
             return style, f"alert {service} sev {severity}: {escape(event['message'])}"
-        case {"type": "deploy.completed", "service": service, "version": version}:
+        case {"type": "oncall:deploy.completed", "service": service, "version": version}:
             return "blue", f"deploy {service} {escape(version)}"
-        case {"type": "service.heartbeat", "service": service}:
+        case {"type": "oncall:service.heartbeat", "service": service}:
             return "dim", f"heartbeat {service}"
-        case {"type": "rule_fired", "rule": rule, "scope": scope, "matched": matched}:
+        case {"type": "reflexr:rule_fired", "rule": rule, "scope": scope, "matched": matched}:
             seqs = ", ".join(str(seq) for seq in matched)
             return "bold magenta", f"rule {rule} fired for {scope_text(scope)} on seq {seqs}"
-        case {"type": "rule_errored", "rule": rule, "seq": seq, "error": error}:
+        case {"type": "reflexr:rule_errored", "rule": rule, "seq": seq, "error": error}:
             return "red", f"rule {rule} could not evaluate seq {seq}: {escape(error)}"
-        case {"type": "rule_reset", "rule": rule, "reason": reason, "generation": generation}:
+        case {
+            "type": "reflexr:rule_reset",
+            "rule": rule,
+            "reason": reason,
+            "generation": generation,
+        }:
             return "magenta", f"rule {rule} reset ({reason}), generation {generation}"
-        case {"type": "run_started", "run_id": run, "rule": rule, "attempt": attempt}:
+        case {"type": "reflexr:run_started", "run_id": run, "rule": rule, "attempt": attempt}:
             return "cyan", f"run {run} of {rule} started, attempt {attempt}"
-        case {"type": "run_progressed", "run_id": run, "step": step}:
+        case {"type": "reflexr:run_progressed", "run_id": run, "step": step}:
             return "cyan", f"run {run} finished step {step}"
-        case {"type": "run_retrying", "run_id": run, "attempt": attempt, "error": error}:
+        case {"type": "reflexr:run_retrying", "run_id": run, "attempt": attempt, "error": error}:
             return "yellow", f"run {run} failed attempt {attempt}, will retry: {escape(error)}"
-        case {"type": "run_succeeded", "run_id": run, "rule": rule}:
+        case {"type": "reflexr:run_succeeded", "run_id": run, "rule": rule}:
             return "bold cyan", f"run {run} of {rule} succeeded"
-        case {"type": "run_dead_lettered", "run_id": run, "attempts": attempts, "error": error}:
+        case {
+            "type": "reflexr:run_dead_lettered",
+            "run_id": run,
+            "attempts": attempts,
+            "error": error,
+        }:
             return "bold red", f"run {run} gave up after {attempts} attempts: {escape(error)}"
-        case {"type": "run_cancelled" | "run_skipped" as kind, "run_id": run}:
+        case {"type": "reflexr:run_cancelled" | "reflexr:run_skipped" as kind, "run_id": run}:
             reason = event.get("reason")
             ending = f": {escape(reason)}" if reason else ""
-            return "yellow", f"run {run} {kind.removeprefix('run_')}{ending}"
-        case {"type": "run_requeued", "run_id": run}:
+            return "yellow", f"run {run} {kind.removeprefix('reflexr:run_')}{ending}"
+        case {"type": "reflexr:run_requeued", "run_id": run}:
             return "cyan", f"run {run} requeued"
-        case {"type": "tick", "schedule": schedule}:
+        case {"type": "reflexr:tick", "schedule": schedule}:
             return "dim", f"tick {schedule}"
         case _:
             fields = {key: value for key, value in event.items() if key != "type"}
@@ -211,7 +225,7 @@ def render_run(run: Frame) -> str:
     done = run["status"] == "succeeded"
     style = {"succeeded": "green", "dead": "bold red", "retrying": "yellow"}.get(run["status"])
     status = f"[{style}]{run['status']}[/]" if style else run["status"]
-    line = f"{run['id']}  {run['rule']:<8} {scope_text(run['scope']):<16} {status}"
+    line = f"{run['id']}  {run['rule']:<15} {scope_text(run['scope']):<16} {status}"
     line += f", attempt {run['attempts']}" if run["attempts"] > 1 else ""
     line += f", after step {run['step']}" if run.get("step") and not done else ""
     error = f": {escape(one_line(run['error']))}" if run.get("error") and not done else ""

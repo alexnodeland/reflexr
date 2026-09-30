@@ -8,19 +8,19 @@
           "filter": {
             "kind": "on",
             "types": [
-              "rule_fired"
+              "reflexr:rule_fired"
             ]
           }
         },
-        "name": "watch"
+        "name": "app:watch"
       },
       "envelopes": [
         {
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "rule_fired",
-            "rule": "watch",
+            "type": "reflexr:rule_fired",
+            "rule": "app:watch",
             "scope": {},
             "scope_key": "[]",
             "firing_id": "fir_1",
@@ -33,8 +33,8 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "rule_fired",
-            "rule": "other",
+            "type": "reflexr:rule_fired",
+            "rule": "app:other",
             "scope": {},
             "scope_key": "[]",
             "firing_id": "fir_1",
@@ -63,7 +63,7 @@
           "filter": {
             "kind": "on",
             "types": [
-              "run_dead_lettered"
+              "reflexr:run_dead_lettered"
             ]
           }
         }
@@ -73,9 +73,9 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "run_dead_lettered",
+            "type": "reflexr:run_dead_lettered",
             "run_id": "fir_1",
-            "rule": "error-spike",
+            "rule": "app:error-spike",
             "attempts": 5,
             "error": "boom"
           }
@@ -103,7 +103,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "legacy.alert"
+                  "app:legacy.alert"
                 ]
               },
               {
@@ -121,7 +121,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "legacy.alert",
+            "type": "app:legacy.alert",
             "level": 4
           }
         },
@@ -129,7 +129,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "legacy.alert",
+            "type": "app:legacy.alert",
             "level": 1
           }
         }
@@ -153,7 +153,7 @@
           "filter": {
             "kind": "on",
             "types": [
-              "service.error"
+              "app:service.error"
             ]
           },
           "pattern": {
@@ -168,7 +168,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -176,7 +176,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           },
           "depth": 2
@@ -203,7 +203,7 @@
           "filter": {
             "kind": "on",
             "types": [
-              "heartbeat"
+              "app:heartbeat"
             ]
           },
           "pattern": {
@@ -216,14 +216,14 @@
             "service"
           ]
         },
-        "name": "watch"
+        "name": "app:watch"
       },
       "envelopes": [
         {
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "heartbeat",
+            "type": "app:heartbeat",
             "service": "auth"
           }
         },
@@ -231,8 +231,8 @@
           "seq": 2,
           "at": 300,
           "event": {
-            "type": "rule_fired",
-            "rule": "watch",
+            "type": "reflexr:rule_fired",
+            "rule": "app:watch",
             "scope": {},
             "scope_key": "[]",
             "firing_id": "fir_1",
@@ -261,8 +261,8 @@
           "filter": {
             "kind": "on",
             "types": [
-              "service.error",
-              "deploy.finished"
+              "app:service.error",
+              "app:deploy.finished"
             ]
           },
           "pattern": {
@@ -271,7 +271,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "deploy.finished"
+                  "app:deploy.finished"
                 ]
               },
               {
@@ -288,7 +288,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "deploy.finished",
+            "type": "app:deploy.finished",
             "service": "auth"
           }
         },
@@ -296,7 +296,7 @@
           "seq": 2,
           "at": 10,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         }

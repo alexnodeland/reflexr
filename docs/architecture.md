@@ -38,7 +38,7 @@ Neither library imports the other. They share conventions (tenants and workspace
 
 | Concept | What it is |
 |---|---|
-| **Event** | A Pydantic model subclass for one kind of fact (`service.error`, `deploy.finished`), registered by name. Stored in an **envelope** with its `seq`, time, actor and causation. |
+| **Event** | A Pydantic model subclass for one kind of fact (`ops:service.error`, `ops:deploy.finished`), registered under its owner's namespace and a name. Stored in an **envelope** with its `seq`, time, actor and causation. |
 | **Workspace** | A tenant-scoped unit with one append-only log of events (its stream), and the rules' cursors and runs over it. The unit of ordering, isolation and scale, as in artifactr. |
 | **Rule** | Typed data: a condition over events (`when`), a scope that partitions its state and ordering (`scope`), and the action it runs (`then`). |
 | **Firing** | The durable record that a rule's condition held for one scope at one point in the log, with the events that matched. Written atomically with the rule's cursor and state. |
@@ -110,9 +110,9 @@ save(evaluation)  # scope states, the new progress and cursor, and the firings' 
 ```
 
 - `needs` returns the scopes a batch reads: those of the envelopes that pass the rule's filter, and those whose `absence` deadline passes during the batch. Scopes the host has no state for are new.
-- `evaluate` folds the envelopes into the rule's per-scope state and returns an `Evaluation`: the changed scope states, the new `RuleProgress` (cursor, generation, definition hash, deadlines), the firings, the evaluation errors, and the `rule_fired` and `rule_errored` events to append, in order. It reads nothing but its arguments; time is the envelopes' `ts`.
+- `evaluate` folds the envelopes into the rule's per-scope state and returns an `Evaluation`: the changed scope states, the new `RuleProgress` (cursor, generation, definition hash, deadlines), the firings, the evaluation errors, and the `reflexr:rule_fired` and `reflexr:rule_errored` events to append, in order. It reads nothing but its arguments; time is the envelopes' `ts`.
 - `begin` gives a new rule its starting progress (the head of the log, or the beginning), and `reset` starts a new generation when a rule's definition changes or it is replayed.
-- The run lifecycle is pure too: `create_run`, `start`, `checkpoint`, `succeed`, `fail` (retry under the rule's `RetryPolicy`, or dead-letter), `cancel`, `skip`, `retry` (appending `run_requeued`), and `runnable`, which picks the runs of a scope that may start now.
+- The run lifecycle is pure too: `create_run`, `start`, `checkpoint`, `succeed`, `fail` (retry under the rule's `RetryPolicy`, or dead-letter), `cancel`, `skip`, `retry` (appending `reflexr:run_requeued`), and `runnable`, which picks the runs of a scope that may start now.
 - A firing joins the **causal chain** of the latest envelope it matched, and its run carries that chain ([ADR-0024](adr/0024-causal-chains-and-operator-actions.md)). For an absence, that is the last envelope the rule saw.
 
 Firing ids are derived from the rule, its generation, the scope and the `seq`, so evaluating the same log twice produces the same ids.
@@ -121,19 +121,25 @@ Because core is pure, its behaviour is pinned by a **conformance suite** of JSON
 
 ## Events and envelopes
 
-An event type is a Pydantic model that subclasses `Event`. Defining the class registers it under a name derived from the class name (`ServiceError` becomes `service_error`), or the name given explicitly, the same convention as artifactr's artifact types and pydantic-ai's `CustomEvent`:
+An event type is a Pydantic model that subclasses `Event` through a base that declares its owner's namespace ([ADR-0039](adr/0039-namespaced-event-types.md)). Defining the class registers it under the namespace, a `:` and a local name, derived from the class name (`ServiceError` becomes `service_error`) or given explicitly, as artifactr names its artifact types and pydantic-ai its events:
 
 ```python
-class ServiceError(Event, name="service.error"):
+class OpsEvent(Event, abstract=True, event_namespace="ops"):
+    """The application's events."""
+
+
+class ServiceError(OpsEvent, name="service.error"):  # ops:service.error
     service: str
     severity: int
     message: str
 
 
-class Deploy(Event, name="deploy.finished"):
+class Deploy(OpsEvent, name="deploy.finished"):  # ops:deploy.finished
     service: str
     version: str
 ```
+
+A namespace belongs to the base that declared it, once per process, so a library's, a bridge's and an application's types never clash, and every name says who owns it. reflexr's own facts are in the `reflexr` namespace: `reflexr:rule_fired`, `reflexr:tick`. A name without a namespace fails wherever it appears, with a hint naming the qualified one.
 
 A stored event is an `Envelope`, which is also its wire shape:
 
@@ -154,10 +160,11 @@ class Envelope(BaseModel):
 - **Application events form an open family**: any registered `Event` subclass. reflexr's own facts form a **closed** union, so pyright checks `match` blocks for exhaustiveness: `RuleFired`, `RuleErrored`, `RuleReset`, `RunStarted`, `RunProgressed`, `RunRetrying`, `RunSucceeded`, `RunDeadLettered`, `RunCancelled`, `RunSkipped`, `FeedbackGiven`, and `Tick` from schedules. An event type from a newer version validates as `UnknownEvent` and round-trips unchanged.
 - **Actors** match artifactr's kinds: `UserActor`, `AgentActor` (an agent or graph run, by rule and run), `ExternalAgentActor` (an MCP client), `SystemActor` (the reactor and schedules) and `EvaluatorActor` (a judge or decision model, by name and version), plus `SourceActor` for systems that publish events, such as a monitoring service.
 - **Type allowlist.** `Workspaces(storage, events=[ServiceError, Deploy, Heartbeat])` rejects publishing any other type, even one registered elsewhere in the process.
+- **Registries.** An `EventRegistry` is a set of namespaces, read as a mapping of their types by name. A base's `registry=` puts its namespace in one, and `registry.add(*bases)` includes another's; reflexr's namespace is in every registry, and `DEFAULT_REGISTRY` holds every namespace whose base names no other. `Workspaces(registry=...)` accepts, and checks rules against, only its registry's types, so applications in one process stay apart.
 
 ## Rules
 
-A rule is a Pydantic model: what to watch, how to partition it, and what to run ([ADR-0006](adr/0006-rules-as-typed-serializable-data.md)).
+A rule is a Pydantic model: what to watch, how to partition it, and what to run ([ADR-0006](adr/0006-rules-as-typed-serializable-data.md)). Its name is qualified like an event type's, `ops:error-spike`, and the `reflexr` namespace is reserved ([RFC-0003](rfcs/0003-managing-rules-at-runtime.md)).
 
 ```python
 from datetime import timedelta
@@ -165,7 +172,7 @@ from datetime import timedelta
 from reflexr import F, Rule, by, on, run
 
 error_spike = Rule(
-    name="error-spike",
+    name="ops:error-spike",
     when=on(ServiceError)
     .where(F.severity >= 7)
     .count(at_least=3, within=timedelta(minutes=1))
@@ -179,10 +186,10 @@ Serialized, the same rule is plain JSON, with a schema generated from the models
 
 ```json
 {
-  "name": "error-spike",
+  "name": "ops:error-spike",
   "when": {
     "filter": {"kind": "all", "of": [
-      {"kind": "on", "types": ["service.error"]},
+      {"kind": "on", "types": ["ops:service.error"]},
       {"kind": "where", "field": "severity", "op": "ge", "value": 7}
     ]},
     "pattern": {"kind": "count", "at_least": 3, "within": "PT1M"},
@@ -266,7 +273,7 @@ Where a rule starts ([ADR-0026](adr/0026-the-reactors-evaluation.md)):
 
 - A **new workspace** meets every registered rule at its first event.
 - A rule **added later** starts at the head of the log (`start="now"`, the default) or at its beginning (`start="beginning"`).
-- A rule whose **definition changed** starts afresh at the head, with a new generation and `rule_reset` in the log.
+- A rule whose **definition changed** starts afresh at the head, with a new generation and `reflexr:rule_reset` in the log.
 - **Replaying** (`workspace.replay_rule(rule, from_seq=, mode=)`) resets a rule to evaluate again. `"rebuild"` recomputes its state up to the head without firing, then carries on; `"refire"` fires again for the past, as new runs with new ids.
 - A **disabled** rule (`enabled=False`) stays registered and checked, but the reactor neither evaluates it nor claims its runs, so its cursor holds and its runs wait. Enabled again, it resumes from its cursor; `enabled` is not part of its definition, so this never resets it.
 
@@ -305,7 +312,7 @@ runbook = GraphAction(runbook_graph, name="runbook", state=RunbookState, inputs=
 ```
 
 - **Agents** are plain pydantic-ai `Agent`s with `deps_type=Reaction[...]`, wrapped in an `AgentAction`. With the `[litellm]` extra, `litellm_model("claude-sonnet")` routes an agent through the LiteLLM proxy, with default model settings like any other pydantic-ai model, and the `LiteLLMGateway` capability attaches each request's tenant, rule, run, chain and trace, the tenant's key and the rule's guardrails; a guardrail block dead-letters the run as `guardrail_blocked` ([ADR-0022](adr/0022-litellm-proxy-first.md)). By default its prompt describes the firing: the rule and its description, the scope, and the matched events. The `EventContext` capability gives the agent `read_events`, to read back through the workspace's log, and `emit_event`, to publish events of the types it is allowed, validated against their schemas, with refused calls retried by the model. The agent's output is the run's output. Each run is in its causal chain's conversation (pydantic-ai's `conversation_id`), and the capability attributes pydantic-ai's `invoke_agent` span to the tenant, workspace, rule, run and attempt. `usage_limits` bound each attempt.
-- **Graphs** are pydantic-graph graphs built with `GraphBuilder`, with the `Reaction` as their deps, wrapped in a `GraphAction(graph, state=, inputs=)`. reflexr drives them step by step and, at every boundary where nothing runs in parallel, except before a decision, which runs no code, saves the graph state and the next task to the run (`Reaction.checkpoint`, which appends `run_progressed`). A retry, or another executor after a crash, resumes after the last saved step instead of starting over; inside a fork it resumes from before the fork. A boundary is saved only if what it saves reads back as it was, and a checkpoint that no longer validates is set aside, on the attempt's span, and the graph starts over ([ADR-0043](adr/0043-graph-checkpoints.md)). Each step is an `execute_step {node}` span.
+- **Graphs** are pydantic-graph graphs built with `GraphBuilder`, with the `Reaction` as their deps, wrapped in a `GraphAction(graph, state=, inputs=)`. reflexr drives them step by step and, at every boundary where nothing runs in parallel, except before a decision, which runs no code, saves the graph state and the next task to the run (`Reaction.checkpoint`, which appends `reflexr:run_progressed`). A retry, or another executor after a crash, resumes after the last saved step instead of starting over; inside a fork it resumes from before the fork. A boundary is saved only if what it saves reads back as it was, and a checkpoint that no longer validates is set aside, on the attempt's span, and the graph starts over ([ADR-0043](adr/0043-graph-checkpoints.md)). Each step is an `execute_step {node}` span.
 - **Functions** are `async def` over a `Reaction`.
 
 A `Reaction` carries the workspace (acting as the run's `AgentActor`, so what it publishes records the run as its cause and joins the run's chain), the run (its scope, matched `seq`s, attempt and chain), the rule, the matched envelopes, and the application's `deps`. `reaction.emit(event)` publishes with an id derived from the run, its last checkpoint and its position since, so a retried attempt does not emit twice and a resumed graph never reuses an earlier id. An action returns the run's output (JSON, or a Pydantic model), or raises to fail the attempt; a rule's `timeout` bounds it. Raising `RunFailure(message, reason=, permanent=)` fails it with a stable reason code, recorded on the run, its facts and the `reflexr.runs` metric, and a permanent failure, such as a guardrail block, is dead-lettered without retrying ([ADR-0036](adr/0036-typed-run-failures.md)).
@@ -329,18 +336,18 @@ class Triage(Feedback, name="triage", targets={"run"}):
     reason: str | None = None
 ```
 
-Feedback is recorded as a `feedback_given` event (the type, the target and the validated value), so it is attributed, replayable, and something rules can watch. An evaluator's verdict is feedback given by an `EvaluatorActor`, so people's and evaluators' judgements can be compared directly. `Run.trace_ids` records each attempt's trace, so feedback on a run can be attached to it in Langfuse ([RFC-0002](rfcs/0002-observability-feedback-and-evaluation.md)).
+Feedback is recorded as a `reflexr:feedback_given` event (the type, the target and the validated value), so it is attributed, replayable, and something rules can watch. An evaluator's verdict is feedback given by an `EvaluatorActor`, so people's and evaluators' judgements can be compared directly. `Run.trace_ids` records each attempt's trace, so feedback on a run can be attached to it in Langfuse ([RFC-0002](rfcs/0002-observability-feedback-and-evaluation.md)).
 
 Evaluation backends see feedback as **scores**: one per field, named `{type}.{field}`, typed by the field (numbers are numeric, `bool` a yes/no, `Literal` and `Enum` categories, `str` text). The mapping and the ports are evalr's, shared with artifactr and with evalr's evaluators, so a person's scores and an evaluator's match by construction; `reflexr.scores` passes each type's registered name as the `{type}`. `FeedbackMirror(workspace, sink, cursor=...).follow()` follows a workspace's log and records each piece of feedback in a `ScoreSink`: feedback on a run is scored on the trace of its latest attempt, on a firing on the trace of the evaluation that recorded it, and on a chain on its session. Score ids are derived from the envelope in reflexr's own namespace, so mirroring again replaces rather than duplicates. A mirror keeps a named cursor in the workspace, saved after it records a piece of feedback and every 500 other envelopes, and carries on after it when it restarts; mirroring is at least once ([ADR-0040](adr/0040-telemetry-that-composes-across-libraries.md)). A score has no evaluator and names no span; where the feedback came from is its `source`, recorded as metadata. `sync_score_configs` creates each feedback type's missing score configs in a `ScoreConfigStore`, through evalr's. The sink, the store, `Score` and their Langfuse adapters are evalr's, and applications use them from evalr ([ADR-0045](adr/0045-scores-on-evalr.md)). `reflexr.scores` needs evalr, so it is used through the `langfuse` or `evals` extra, and the core, telemetry and workspace never import it.
 
-With the `[evals]` extra, feedback feeds evalr ([ADR-0020](adr/0020-evalr-shared-eval-kit.md)): a `LogFeedbackSource` turns one feedback type into evalr examples, with inputs the application builds from the run, firing or chain the feedback is about, for training and measuring judges, and leaves evaluators' own verdicts out unless asked; and an `EvaluatorAction` runs an evalr evaluator as a rule's action, so `Rule(when=on(RunSucceeded).where(rule="triage"), then=run(judge))` judges every triage run online and records the verdict as feedback from an `EvaluatorActor`. `replay_task` makes an evalr experiment task that replays an example's events against a candidate agent, graph or model in an isolated in-memory workspace. `rule_outcomes` and `time_to_resolution` compute the deterministic end-to-end measures from the log: each rule's dead-letter, retry and operator-intervention rates, and each chain's time from its first event to the event the application says resolves it.
+With the `[evals]` extra, feedback feeds evalr ([ADR-0020](adr/0020-evalr-shared-eval-kit.md)): a `LogFeedbackSource` turns one feedback type into evalr examples, with inputs the application builds from the run, firing or chain the feedback is about, for training and measuring judges, and leaves evaluators' own verdicts out unless asked; and an `EvaluatorAction` runs an evalr evaluator as a rule's action, so `Rule(when=on(RunSucceeded).where(rule="ops:triage"), then=run(judge))` judges every triage run online and records the verdict as feedback from an `EvaluatorActor`. `replay_task` makes an evalr experiment task that replays an example's events against a candidate agent, graph or model in an isolated in-memory workspace. `rule_outcomes` and `time_to_resolution` compute the deterministic end-to-end measures from the log: each rule's dead-letter, retry and operator-intervention rates, and each chain's time from its first event to the event the application says resolves it.
 
 ## Safety
 
 LLM workflows triggered by events can loop and can spend ([ADR-0010](adr/0010-loop-and-spend-safety.md)):
 
 - **No self-reaction.** A rule never sees reflexr's facts about itself (its own firings, errors and runs), though they still move its clock, so it cannot fire on its own activity.
-- **Causation depth.** An event emitted by a run carries the depth of its causal chain. Publishing beyond the workspace's limit (8 by default) is rejected, so a rule whose action triggers itself stops instead of running away. reflexr's facts about a firing or run are as deep as the run's events, and a firing whose facts would exceed the limit is refused and dead-lettered, so rules that trigger each other through `rule_fired` or `run_succeeded` stop too. Errors about other rules' errors are dead-lettered without becoming new facts ([ADR-0026](adr/0026-the-reactors-evaluation.md)).
+- **Causation depth.** An event emitted by a run carries the depth of its causal chain. Publishing beyond the workspace's limit (8 by default) is rejected, so a rule whose action triggers itself stops instead of running away. reflexr's facts about a firing or run are as deep as the run's events, and a firing whose facts would exceed the limit is refused and dead-lettered, so rules that trigger each other through `reflexr:rule_fired` or `reflexr:run_succeeded` stop too. Errors about other rules' errors are dead-lettered without becoming new facts ([ADR-0026](adr/0026-the-reactors-evaluation.md)).
 - **Throttles** on rules cap how often a rule can fire per scope.
 - **Emit allowlists** on the `EventContext` capability limit which event types an agent can publish.
 - **Concurrency limits** bound how many runs execute at once: `Reactor(concurrency=)` per reactor today, with limits per rule and per workspace still to come. Agent actions accept pydantic-ai `UsageLimits`.
@@ -354,7 +361,7 @@ LLM workflows triggered by events can loop and can spend ([ADR-0010](adr/0010-lo
 
 ## Schedules
 
-A schedule publishes `tick` events on a timetable ([ADR-0028](adr/0028-schedules-and-cronsim.md)):
+A schedule publishes `reflexr:tick` events on a timetable ([ADR-0028](adr/0028-schedules-and-cronsim.md)):
 
 ```python
 heartbeat_check = Schedule(name="heartbeat-check", every=timedelta(seconds=30))
@@ -396,7 +403,7 @@ await workspace.skip_run(run_id, reason="duplicate incident")
 - **Operations** (`retry_run`, `skip_run`, `cancel_run`, `replay_rule`) apply core's transitions in one transaction and append the resulting event, attributed to the handle's actor.
 - **Reads**: `read` (the window `after_seq < seq < before_seq`, of some `types`, the first `limit` or the last `last`, oldest first; storage filters, so a tail read of a long log reads only its tail), `subscribe`, `head_seq`, `run`, `runs` (newest first), `dead_letters`, `rule_progress`, `schedule_ticks`, and the statuses the surfaces report: `rule_statuses` (every registered rule: enabled, cursor, lag, generation, dead letters) and `schedule_statuses` (each schedule targeting the workspace: last and next tick).
 
-Every write is a span (`reflexr.publish {type}`, a producer span; `reflexr.feedback {type}`; `reflexr.skip_run` and so on) attributed to the tenant, workspace and actor and placed in its chain's session. The W3C trace context of the publishing span is stored on the envelope, so the runs it causes can link back to it. Each evaluation that finds new envelopes is a `reflexr.evaluate` span listing the rules that evaluated and the firings made, and the `rule_fired` facts carry its trace context. Each run attempt is an `invoke_workflow {rule}` span in the run's session, linked to the spans that published the envelopes it matched, and the run records each attempt's trace id. Metrics come from the registry in `reflexr.telemetry.metrics` ([Observability](guides/observability.md#metrics) lists them), always with tenant and workspace; a deployment keeps less detail with SDK views, which `reflexr.otel.configure_telemetry(metrics_detail=...)` installs ([ADR-0029](adr/0029-metric-detail-through-sdk-views.md)). The `[otel]` extra sets up the SDK, OTLP export and the open instrumentations in one call, and the `[langfuse]` extra adds Langfuse on the same tracer provider, with `langfuse_run` as the reactor's `run_context` so each run is filed under its chain's session. The setup composes with artifactr's ([ADR-0040](adr/0040-telemetry-that-composes-across-libraries.md)). `reflexr.otel.telemetry()` is reflexr's contribution: its metric views, a span filter for its traces (the scopes in `TRACE_SCOPES`), and the instrumentations it advises. `configure_telemetry(*contributions)` takes other libraries' contributions, such as `artifactr.otel.telemetry()`, adds its own, and reads them through the `TelemetryContribution` protocol, so neither library imports the other. `langfuse="scores"` sends Langfuse scores and trace attributes but no spans, for a Collector that sends it every trace. **Polling is untraced:** the reactor checks for work, and subscriptions and the feedback mirror read the log, inside `untraced()`, which makes every span started in it a child of a span that is never sampled. Under a parent-based sampler, the SDK's default, an idle application exports no spans, and the instrumentations' metrics are still recorded (a sampler such as `always_on` or `traceidratio` would trace polls again); the work a poll finds is traced where it happens, never inside `untraced()`.
+Every write is a span (`reflexr.publish {type}`, a producer span; `reflexr.feedback {type}`; `reflexr.skip_run` and so on) attributed to the tenant, workspace and actor and placed in its chain's session. The W3C trace context of the publishing span is stored on the envelope, so the runs it causes can link back to it. Each evaluation that finds new envelopes is a `reflexr.evaluate` span listing the rules that evaluated and the firings made, and the `reflexr:rule_fired` facts carry its trace context. Each run attempt is an `invoke_workflow {rule}` span in the run's session, linked to the spans that published the envelopes it matched, and the run records each attempt's trace id. Metrics come from the registry in `reflexr.telemetry.metrics` ([Observability](guides/observability.md#metrics) lists them), always with tenant and workspace; a deployment keeps less detail with SDK views, which `reflexr.otel.configure_telemetry(metrics_detail=...)` installs ([ADR-0029](adr/0029-metric-detail-through-sdk-views.md)). The `[otel]` extra sets up the SDK, OTLP export and the open instrumentations in one call, and the `[langfuse]` extra adds Langfuse on the same tracer provider, with `langfuse_run` as the reactor's `run_context` so each run is filed under its chain's session. The setup composes with artifactr's ([ADR-0040](adr/0040-telemetry-that-composes-across-libraries.md)). `reflexr.otel.telemetry()` is reflexr's contribution: its metric views, a span filter for its traces (the scopes in `TRACE_SCOPES`), and the instrumentations it advises. `configure_telemetry(*contributions)` takes other libraries' contributions, such as `artifactr.otel.telemetry()`, adds its own, and reads them through the `TelemetryContribution` protocol, so neither library imports the other. `langfuse="scores"` sends Langfuse scores and trace attributes but no spans, for a Collector that sends it every trace. **Polling is untraced:** the reactor checks for work, and subscriptions and the feedback mirror read the log, inside `untraced()`, which makes every span started in it a child of a span that is never sampled. Under a parent-based sampler, the SDK's default, an idle application exports no spans, and the instrumentations' metrics are still recorded (a sampler such as `always_on` or `traceidratio` would trace polls again); the work a poll finds is traced where it happens, never inside `untraced()`.
 
 ### Dashboards
 
@@ -473,7 +480,7 @@ erDiagram
 | Authorization | `Workspaces.open(..., authorize=)` refuses a workspace with `Forbidden`, for every surface | The same |
 | Log | One per workspace, envelopes with a gap-free `seq` and a `traceparent` | The same |
 | Actors | user, agent, external agent, system, evaluator | The same, plus source |
-| Types | `Artifact` subclasses registered by name | `Event` subclasses registered by name |
+| Types | `Artifact` subclasses registered by name | `Event` subclasses registered by qualified name, `namespace:name` |
 | Core | Sans-IO `commit`, conformance fixtures | Sans-IO `evaluate`, conformance fixtures |
 | Storage | Protocol, in-memory and SQL, leases, one behaviour suite, cancel-safe | The same |
 | Telemetry | `configure_telemetry(*contributions)`, `telemetry()`, `untraced()`, `langfuse="traces" \| "scores"` | The same, each taking the other's contribution |

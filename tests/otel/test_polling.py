@@ -28,7 +28,7 @@ from reflexr.workspace import Reaction, Reactor, Schedule, Workspace, Workspaces
 from tests.event_types import Deploy, ServiceError
 
 POLL = timedelta(milliseconds=5)
-RULES = [Rule(name="triage", when=on(ServiceError), then=run("respond"))]
+RULES = [Rule(name="app:triage", when=on(ServiceError), then=run("respond"))]
 SCHEDULES = [Schedule(name="hourly", every=timedelta(hours=1))]
 
 
@@ -168,7 +168,7 @@ async def test_the_work_a_poll_finds_is_traced_where_it_happens(app: App) -> Non
 
     async def ran() -> bool:
         with untraced():  # the test's own look, not the application's work
-            runs = await app.workspace.runs(rule="triage")
+            runs = await app.workspace.runs(rule="app:triage")
             head = await app.workspace.head_seq()
         return [r.status for r in runs] == ["succeeded"] and len(app.received) == head
 
@@ -177,7 +177,7 @@ async def test_the_work_a_poll_finds_is_traced_where_it_happens(app: App) -> Non
     await app.close()  # so the reactor's last evaluation, of the run's facts, has ended
     spans = app.spans()
     roots = {s.context.trace_id: s.name for s in spans if s.context and s.parent is None}
-    assert set(roots.values()) == {"POST /events", "reflexr.evaluate", "invoke_workflow triage"}
+    assert set(roots.values()) == {"POST /events", "reflexr.evaluate", "invoke_workflow app:triage"}
     assert request.get_span_context().trace_id in roots
     traces = {span.context.trace_id for span in spans if span.context}
     assert traces == set(roots), (

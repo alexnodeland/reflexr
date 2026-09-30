@@ -28,7 +28,7 @@ from tests.event_types import Deploy, ServiceError
 
 CLAUDE = ExternalAgentActor(client_id="claude-code", name="Claude Code")
 FORBIDDEN = "this workspace is not yours to use"
-deploys = Rule(name="deploys", when=on(Deploy), scope=by(F.service), then=run("note"))
+deploys = Rule(name="app:deploys", when=on(Deploy), scope=by(F.service), then=run("note"))
 
 
 class Useful(Feedback, name="mcp_useful", targets={"run"}):
@@ -98,7 +98,7 @@ async def test_agents_publish_read_and_operate(server: Server, workspaces: Works
             client,
             "publish_event",
             workspace_id="prod",
-            event={"type": "deploy.finished", "service": "auth"},
+            event={"type": "app:deploy.finished", "service": "auth"},
             id="d1",
         )
         assert (error, json.loads(published)["seq"]) == (False, 1)
@@ -106,10 +106,12 @@ async def test_agents_publish_read_and_operate(server: Server, workspaces: Works
             client,
             "publish_event",
             workspace_id="prod",
-            event={"type": "deploy.finished", "service": "billing"},
+            event={"type": "app:deploy.finished", "service": "billing"},
         )
         await Reactor(workspaces, actions={"note": note}).settle()
-        _, lines = await call(client, "read_events", workspace_id="prod", types=["deploy.finished"])
+        _, lines = await call(
+            client, "read_events", workspace_id="prod", types=["app:deploy.finished"]
+        )
         envelopes = [json.loads(line) for line in lines.splitlines()]
         assert [e["seq"] for e in envelopes] == [1, 2]
         assert envelopes[0]["actor"] == CLAUDE.model_dump(mode="json")
@@ -117,11 +119,11 @@ async def test_agents_publish_read_and_operate(server: Server, workspaces: Works
             1
         ] == "No events."
         [rule] = json.loads((await call(client, "list_rules"))[1])
-        assert rule["name"] == "deploys"
+        assert rule["name"] == "app:deploys"
         status = (await call(client, "rule_status", workspace_id="prod"))[1]
-        assert status == "- deploys: enabled, cursor 8, 0 behind, generation 0, 0 dead letters"
+        assert status == "- app:deploys: enabled, cursor 8, 0 behind, generation 0, 0 dead letters"
         assert (await call(client, "rule_status", workspace_id="empty"))[1] == (
-            "- deploys: enabled, cursor 0, 0 behind, generation 0, 0 dead letters"
+            "- app:deploys: enabled, cursor 0, 0 behind, generation 0, 0 dead letters"
         )
         schedules = await call(client, "schedule_status", workspace_id="prod")
         assert schedules == (False, "No schedule targets this workspace.")
@@ -154,7 +156,7 @@ async def test_agents_publish_read_and_operate(server: Server, workspaces: Works
         assert cancelled[0]
         assert cancelled[1].endswith(f"cannot cancel run {failing['id']}, which is skipped")
         replayed = json.loads(
-            (await call(client, "replay_rule", workspace_id="prod", rule="deploys"))[1]
+            (await call(client, "replay_rule", workspace_id="prod", rule="app:deploys"))[1]
         )
         assert replayed["progress"]["generation"] == 1
         feedback = await call(
@@ -168,9 +170,9 @@ async def test_agents_publish_read_and_operate(server: Server, workspaces: Works
         assert json.loads(feedback[1])["type"] == "recorded"
         assert (await call(client, "list_dead_letters", workspace_id="prod"))[1] == "None."
         bad = await call(
-            client, "publish_event", workspace_id="prod", event={"type": "deploy.finished"}
+            client, "publish_event", workspace_id="prod", event={"type": "app:deploy.finished"}
         )
-        assert (bad[0], "invalid deploy.finished event" in bad[1]) == (True, True)
+        assert (bad[0], "invalid app:deploy.finished event" in bad[1]) == (True, True)
         await asyncio.sleep(0.01)  # let the watcher forward the run facts
     uris = {str(event.uri) for event in bus.events}
     assert run_uri("acme", "prod", done["id"]) in uris
@@ -193,8 +195,8 @@ async def test_agents_read_the_log_from_its_end_and_backwards(
         assert await seqs() == list(range(1, 51)), "the first 50 by default"
         assert await seqs(limit=60) == list(range(1, 61))
         assert await seqs(last=3) == [58, 59, 60]
-        assert await seqs(last=2, types=["deploy.finished"]) == [41, 51]
-        assert await seqs(last=2, types=["deploy.finished"], before_seq=41) == [21, 31]
+        assert await seqs(last=2, types=["app:deploy.finished"]) == [41, 51]
+        assert await seqs(last=2, types=["app:deploy.finished"], before_seq=41) == [21, 31]
         assert await seqs(after_seq=5, before_seq=8) == [6, 7]
         both = await call(client, "read_events", workspace_id="prod", limit=1, last=1)
         assert both == (True, "Error executing tool read_events: give limit or last, not both")
@@ -256,11 +258,11 @@ async def test_authorize_decides_which_workspaces_a_client_may_use(
     mcp = ReflexrMcp(workspaces, resolve=Identity().resolve, authorize=authorize, bus=bus)
     run_id = {"run_id": done.id}
     tools: dict[str, dict[str, Any]] = {
-        "publish_event": {"event": {"type": "deploy.finished", "service": "auth"}},
+        "publish_event": {"event": {"type": "app:deploy.finished", "service": "auth"}},
         "read_events": {},
         "rule_status": {},
         "schedule_status": {},
-        "replay_rule": {"rule": "deploys"},
+        "replay_rule": {"rule": "app:deploys"},
         "list_runs": {},
         "get_run": run_id,
         "retry_run": run_id,
@@ -311,12 +313,12 @@ async def test_authorize_decides_which_workspaces_a_client_may_use(
 
 async def test_the_rule_status_lists_every_registered_rule_as_rest_does() -> None:
     storage = InMemoryStorage()
-    retired = Rule(name="retired", when=on(Deploy), then=run("note"))
+    retired = Rule(name="app:retired", when=on(Deploy), then=run("note"))
     before = Workspaces(storage, events=[Deploy], rules=[deploys, retired])
     await (await before.open("acme", "prod", actor=CLAUDE)).publish(Deploy(service="auth"))
     async with storage.transaction(WorkspaceRef("acme", "prod")) as transaction:
-        await transaction.dead_letter([EvaluationError(rule="deploys", seq=1, error="no")])
-    off = Rule(name="off", when=on(Deploy), then=run("note"), enabled=False)  # has never run
+        await transaction.dead_letter([EvaluationError(rule="app:deploys", seq=1, error="no")])
+    off = Rule(name="app:off", when=on(Deploy), then=run("note"), enabled=False)  # has never run
     workspaces = Workspaces(storage, events=[Deploy], rules=[deploys, off])
     workspace = await workspaces.open("acme", "prod", actor=CLAUDE)
     mcp = ReflexrMcp(workspaces, resolve=Identity().resolve)
@@ -329,10 +331,11 @@ async def test_the_rule_status_lists_every_registered_rule_as_rest_does() -> Non
         await mcp.aclose()
         await bare.aclose()
     assert status == (
-        "- deploys: enabled, cursor 0, 1 behind, generation 0, 1 dead letter\n"
-        "- off: disabled, cursor 0, 1 behind, generation 0, 0 dead letters"
+        "- app:deploys: enabled, cursor 0, 1 behind, generation 0, 1 dead letter\n"
+        "- app:off: disabled, cursor 0, 1 behind, generation 0, 0 dead letters"
     )
-    assert [s.rule for s in await workspace.rule_statuses()] == ["deploys", "off"]  # REST's list
+    statuses = await workspace.rule_statuses()
+    assert [s.rule for s in statuses] == ["app:deploys", "app:off"]  # REST's list
     assert none == "No rules are registered."
 
 

@@ -13,7 +13,7 @@ from reflexr.workspace import Reactor, Schedule, Workspaces
 from tests.event_types import Deploy
 from tests.fastapi.conftest import build, heartbeat, spike
 
-ERROR = {"type": "service.error", "service": "auth"}
+ERROR = {"type": "app:service.error", "service": "auth"}
 
 
 @pytest.fixture
@@ -43,11 +43,13 @@ async def test_producers_publish_events_one_at_a_time_or_in_batches(app: App) ->
     assert (wrong.status_code, wrong.json()["detail"]["type"]) == (422, "validation_failed")
     assert wrong.json()["detail"]["message"].endswith("it belongs to chain e1")
     refused = await client.post(
-        "/workspaces/prod/events", json={"event": {"type": "rule_fired", "rule": "x"}}
+        "/workspaces/prod/events", json={"event": {"type": "reflexr:rule_fired", "rule": "x"}}
     )
-    assert refused.status_code == 422  # not a valid rule_fired, so never reaches the workspace
-    unknown = await client.post("/workspaces/prod/events", json={"event": {"type": "pager"}})
+    assert refused.status_code == 422  # not a valid fact, so never reaches the workspace
+    unknown = await client.post("/workspaces/prod/events", json={"event": {"type": "app:pager"}})
     assert (unknown.status_code, unknown.json()["detail"]["type"]) == (404, "not_found")
+    bare = await client.post("/workspaces/prod/events", json={"event": {"type": "pager"}})
+    assert (bare.status_code, bare.json()["detail"]["type"]) == (422, "validation_failed")
 
 
 async def test_reads_filter_the_log_and_list_rules_runs_and_schedules(app: App) -> None:
@@ -55,24 +57,30 @@ async def test_reads_filter_the_log_and_list_rules_runs_and_schedules(app: App) 
     for _ in range(2):
         await client.post("/workspaces/prod/events", json={"event": ERROR})
     await client.post(
-        "/workspaces/prod/events", json={"event": {"type": "deploy.finished", "service": "auth"}}
+        "/workspaces/prod/events",
+        json={"event": {"type": "app:deploy.finished", "service": "auth"}},
     )
     await reactor.settle()
-    only = await client.get("/workspaces/prod/events", params={"type": ["deploy.finished"]})
+    only = await client.get("/workspaces/prod/events", params={"type": ["app:deploy.finished"]})
     assert [e["seq"] for e in only.json()] == [3]
+    bare = await client.get("/workspaces/prod/events", params={"type": ["deploy.finished"]})
+    assert (bare.status_code, bare.json()["detail"]["message"]) == (
+        422,
+        "event type 'deploy.finished' has no namespace; did you mean 'app:deploy.finished'?",
+    )
     limited = await client.get("/workspaces/prod/events", params={"limit": 2})
     assert len(limited.json()) == 2
-    assert [r["name"] for r in (await client.get("/rules")).json()] == ["spike"]
+    assert [r["name"] for r in (await client.get("/rules")).json()] == ["app:spike"]
     [status] = (await client.get("/workspaces/prod/rules")).json()
     assert status == {
-        "rule": "spike",
+        "rule": "app:spike",
         "enabled": True,
         "cursor": status["cursor"],
         "lag": 0,
         "generation": 0,
         "dead_letters": 0,
     }
-    [done] = (await client.get("/workspaces/prod/runs", params={"rule": "spike"})).json()
+    [done] = (await client.get("/workspaces/prod/runs", params={"rule": "app:spike"})).json()
     assert (done["status"], done["output"]) == ("succeeded", {"paged": "auth"})
     fetched = await client.get(f"/workspaces/prod/runs/{done['id']}")
     assert fetched.json()["id"] == done["id"]
@@ -88,7 +96,7 @@ async def test_reads_filter_the_log_and_list_rules_runs_and_schedules(app: App) 
     unevaluated = (await client.get("/workspaces/empty/rules")).json()
     assert unevaluated == [
         {
-            "rule": "spike",
+            "rule": "app:spike",
             "enabled": True,
             "cursor": 0,
             "lag": 0,
@@ -100,7 +108,7 @@ async def test_reads_filter_the_log_and_list_rules_runs_and_schedules(app: App) 
 
 async def test_the_log_is_read_from_its_end_and_backwards(app: App) -> None:
     client, _, _ = app
-    deploy = {"type": "deploy.finished", "service": "auth"}
+    deploy = {"type": "app:deploy.finished", "service": "auth"}
     for event in (ERROR, deploy, ERROR, deploy, ERROR, deploy):
         await client.post("/workspaces/prod/events", json={"event": event})
 
@@ -109,8 +117,8 @@ async def test_the_log_is_read_from_its_end_and_backwards(app: App) -> None:
         return [envelope["seq"] for envelope in response.json()]
 
     assert await seqs(last=2) == [5, 6]
-    assert await seqs(last=2, type=["deploy.finished"]) == [4, 6]
-    assert await seqs(last=2, type=["deploy.finished"], before_seq=4) == [2]
+    assert await seqs(last=2, type=["app:deploy.finished"]) == [4, 6]
+    assert await seqs(last=2, type=["app:deploy.finished"], before_seq=4) == [2]
     assert await seqs(after_seq=1, before_seq=4) == [2, 3]
     both = await client.get("/workspaces/prod/events", params={"limit": 1, "last": 1})
     assert (both.status_code, both.json()["detail"]) == (
@@ -190,9 +198,9 @@ def boom(event: Event) -> bool:
 
 async def test_the_rule_and_schedule_status_bodies_keep_their_json() -> None:
     fragile = Rule(
-        name="fragile", when=on(Deploy).where(PredicateFilter(name="boom")), then=run("page")
+        name="app:fragile", when=on(Deploy).where(PredicateFilter(name="boom")), then=run("page")
     )
-    off = spike.model_copy(update={"name": "off", "enabled": False})
+    off = spike.model_copy(update={"name": "app:off", "enabled": False})
     staging = Schedule(
         name="staging", every=timedelta(minutes=5), workspaces=(("acme", "staging"),)
     )
@@ -208,7 +216,8 @@ async def test_the_rule_and_schedule_status_bodies_keep_their_json() -> None:
         for _ in range(2):
             await client.post("/workspaces/prod/events", json={"event": ERROR})
         await client.post(
-            "/workspaces/prod/events", json={"event": {"type": "deploy.finished", "service": "a"}}
+            "/workspaces/prod/events",
+            json={"event": {"type": "app:deploy.finished", "service": "a"}},
         )
         await reactor.settle()
         clock.now += timedelta(seconds=65)
@@ -218,7 +227,7 @@ async def test_the_rule_and_schedule_status_bodies_keep_their_json() -> None:
         fresh = (await client.get("/workspaces/empty/schedules")).json()
     assert rules == [
         {
-            "rule": "spike",
+            "rule": "app:spike",
             "enabled": True,
             "cursor": 8,
             "lag": 0,
@@ -226,7 +235,7 @@ async def test_the_rule_and_schedule_status_bodies_keep_their_json() -> None:
             "dead_letters": 0,
         },
         {
-            "rule": "fragile",
+            "rule": "app:fragile",
             "enabled": True,
             "cursor": 8,
             "lag": 0,
@@ -234,7 +243,7 @@ async def test_the_rule_and_schedule_status_bodies_keep_their_json() -> None:
             "dead_letters": 1,
         },
         {
-            "rule": "off",
+            "rule": "app:off",
             "enabled": False,
             "cursor": 0,
             "lag": 8,

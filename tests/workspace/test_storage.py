@@ -28,12 +28,12 @@ OTHER = WorkspaceRef("globex", "prod")
 ANY_ORDER = RunPolicy()
 """No rule known: every due run is a candidate."""
 
-ORDERED = RunPolicy(ordered=frozenset({"triage"}))
-"""The runs of triage, which ``fired`` makes by default, run in order per scope."""
+ORDERED = RunPolicy(ordered=frozenset({"app:triage"}))
+"""The runs of app:triage, which ``fired`` makes by default, run in order per scope."""
 
 
 def triage(**changes: object) -> Rule:
-    fields = {"name": "triage", "when": on(ServiceError), "then": run("respond")}
+    fields = {"name": "app:triage", "when": on(ServiceError), "then": run("respond")}
     return Rule.model_validate({**fields, **changes})
 
 
@@ -68,18 +68,18 @@ async def test_reads_take_a_window_of_some_types_from_its_start_or_its_end(
     assert await seqs(after_seq=4, before_seq=5) == []
     assert await seqs(before_seq=0) == []
     assert await seqs(before_seq=100) == [1, 2, 3, 4, 5, 6]
-    assert await seqs(types={"deploy.finished"}) == [2, 4, 6]
-    assert await seqs(types=["service.error", "deploy.finished"], after_seq=4) == [5, 6]
-    assert await seqs(types={"heartbeat"}) == []
+    assert await seqs(types={"app:deploy.finished"}) == [2, 4, 6]
+    assert await seqs(types=["app:service.error", "app:deploy.finished"], after_seq=4) == [5, 6]
+    assert await seqs(types={"app:heartbeat"}) == []
     assert await seqs(types=()) == []
-    assert await seqs(limit=2, types={"service.error"}, after_seq=1) == [3, 5]
+    assert await seqs(limit=2, types={"app:service.error"}, after_seq=1) == [3, 5]
     assert await seqs(limit=0) == []
     assert await seqs(last=2) == [5, 6], "the tail, oldest first"
-    assert await seqs(last=2, types={"deploy.finished"}) == [4, 6]
+    assert await seqs(last=2, types={"app:deploy.finished"}) == [4, 6]
     assert await seqs(last=10, after_seq=3) == [4, 5, 6]
     assert await seqs(last=0) == []
-    tail = await seqs(last=2, types={"deploy.finished"})
-    assert await seqs(last=2, types={"deploy.finished"}, before_seq=tail[0]) == [2], (
+    tail = await seqs(last=2, types={"app:deploy.finished"})
+    assert await seqs(last=2, types={"app:deploy.finished"}, before_seq=tail[0]) == [2], (
         "paging backwards"
     )
 
@@ -98,7 +98,7 @@ async def test_a_transaction_that_raises_rolls_back(storage: Storage) -> None:
         async with storage.transaction(ACME) as transaction:
             await transaction.append([entry("e1")])
             await transaction.save_runs([fired("r1")])
-            await transaction.save_progress("triage", RuleProgress(cursor=1))
+            await transaction.save_progress("app:triage", RuleProgress(cursor=1))
             raise RuntimeError("boom")
 
     with pytest.raises(RuntimeError, match="boom"):
@@ -178,39 +178,39 @@ async def test_rule_progress_and_scope_states(storage: Storage) -> None:
     auth = ScopeState(scope={"service": "auth"})
     billing = ScopeState(scope={"service": "billing"})
     async with storage.transaction(ACME) as transaction:
-        assert await transaction.progress("triage") is None
-        await transaction.save_progress("triage", RuleProgress(cursor=3))
-        await transaction.save_states("triage", {'["auth"]': auth})
-        assert await transaction.progress("triage") == RuleProgress(cursor=3)
-        assert await transaction.states("triage", ['["auth"]', '["x"]']) == {'["auth"]': auth}
+        assert await transaction.progress("app:triage") is None
+        await transaction.save_progress("app:triage", RuleProgress(cursor=3))
+        await transaction.save_states("app:triage", {'["auth"]': auth})
+        assert await transaction.progress("app:triage") == RuleProgress(cursor=3)
+        assert await transaction.states("app:triage", ['["auth"]', '["x"]']) == {'["auth"]': auth}
     async with storage.transaction(ACME) as transaction:
-        await transaction.save_states("triage", {'["billing"]': billing})
-        both = await transaction.states("triage", ['["auth"]', '["billing"]'])
+        await transaction.save_states("app:triage", {'["billing"]': billing})
+        both = await transaction.states("app:triage", ['["auth"]', '["billing"]'])
         assert both == {'["auth"]': auth, '["billing"]': billing}
         assert await transaction.states("other", ['["auth"]']) == {}
-    assert await storage.progress(ACME) == {"triage": RuleProgress(cursor=3)}
+    assert await storage.progress(ACME) == {"app:triage": RuleProgress(cursor=3)}
 
 
 async def test_clearing_states_hides_committed_and_pending_ones(storage: Storage) -> None:
     auth = ScopeState(scope={"service": "auth"})
     billing = ScopeState(scope={"service": "billing"})
     async with storage.transaction(ACME) as transaction:
-        await transaction.save_states("triage", {'["auth"]': auth})
-        await transaction.save_states("paging", {'["auth"]': auth})
+        await transaction.save_states("app:triage", {'["auth"]': auth})
+        await transaction.save_states("app:paging", {'["auth"]': auth})
     async with storage.transaction(ACME) as transaction:
-        await transaction.save_states("triage", {'["billing"]': billing})
-        await transaction.clear_states("triage")
-        assert await transaction.states("triage", ['["auth"]', '["billing"]']) == {}
-        await transaction.save_states("triage", {'["billing"]': billing})
+        await transaction.save_states("app:triage", {'["billing"]': billing})
+        await transaction.clear_states("app:triage")
+        assert await transaction.states("app:triage", ['["auth"]', '["billing"]']) == {}
+        await transaction.save_states("app:triage", {'["billing"]': billing})
     async with storage.transaction(ACME) as transaction:
         keys = ['["auth"]', '["billing"]']
-        assert await transaction.states("triage", keys) == {'["billing"]': billing}
-        assert await transaction.states("paging", keys) == {'["auth"]': auth}
+        assert await transaction.states("app:triage", keys) == {'["billing"]': billing}
+        assert await transaction.states("app:paging", keys) == {'["auth"]': auth}
 
 
 async def test_runs_are_saved_and_listed_newest_first(storage: Storage) -> None:
     first, second = fired("r1", seq=1), fired("r2", scope="billing", seq=2)
-    third = fired("r3", rule="paging", seq=3)
+    third = fired("r3", rule="app:paging", seq=3)
     async with storage.transaction(ACME) as transaction:
         await transaction.save_runs([first, second, third])
         assert await transaction.run("r1") == first
@@ -220,7 +220,7 @@ async def test_runs_are_saved_and_listed_newest_first(storage: Storage) -> None:
         await transaction.save_runs([running])
     assert await storage.run(ACME, "r1") == running
     assert await storage.runs(ACME) == [third, second, running]
-    assert await storage.runs(ACME, rule="triage") == [second, running]
+    assert await storage.runs(ACME, rule="app:triage") == [second, running]
     assert await storage.runs(ACME, status="running") == [running]
     assert await storage.runs(ACME, scope_key='["billing"]') == [second]
     assert await storage.runs(ACME, limit=1) == [third]
@@ -234,7 +234,7 @@ async def test_scope_runs_are_unsucceeded_runs_in_firing_order(storage: Storage)
         await transaction.save_runs([done, later, other])
     async with storage.transaction(ACME) as transaction:
         await transaction.save_runs([earlier])
-        assert await transaction.scope_runs("triage", '["auth"]') == [earlier, later]
+        assert await transaction.scope_runs("app:triage", '["auth"]') == [earlier, later]
 
 
 async def test_due_runs_span_workspaces_oldest_first(storage: Storage) -> None:
@@ -254,13 +254,13 @@ async def test_due_runs_span_workspaces_oldest_first(storage: Storage) -> None:
 
 
 async def test_due_runs_leave_out_the_runs_of_disabled_rules(storage: Storage) -> None:
-    paging = fired("r1", rule="page")
+    paging = fired("r1", rule="app:page")
     triage = fired("r2", scope="db")
-    abandoned, _ = start(fired("r3", rule="page", scope="billing"), now=START)
+    abandoned, _ = start(fired("r3", rule="app:page", scope="billing"), now=START)
     async with storage.transaction(ACME) as transaction:
         await transaction.save_runs([paging, triage, abandoned])
     assert len(await storage.due_runs(now=START, limit=10, policy=ANY_ORDER)) == 3
-    disabled = RunPolicy(disabled=frozenset({"page"}))
+    disabled = RunPolicy(disabled=frozenset({"app:page"}))
     assert await storage.due_runs(now=START, limit=10, policy=disabled) == [(ACME, triage)]
     assert await storage.due_runs(now=START, limit=1, policy=disabled) == [(ACME, triage)]
 
@@ -282,13 +282,13 @@ async def test_running_runs_are_due_when_their_lease_lapses(
 def test_a_run_policy_describes_its_rules() -> None:
     rules = [
         triage(),
-        triage(name="notify", ordering="none", on_dead_letter="block"),
-        triage(name="page", on_dead_letter="block", enabled=False),
+        triage(name="app:notify", ordering="none", on_dead_letter="block"),
+        triage(name="app:page", on_dead_letter="block", enabled=False),
     ]
     assert RunPolicy.of(rules) == RunPolicy(
-        disabled=frozenset({"page"}),
-        ordered=frozenset({"triage", "page"}),
-        blocking=frozenset({"page"}),
+        disabled=frozenset({"app:page"}),
+        ordered=frozenset({"app:triage", "app:page"}),
+        blocking=frozenset({"app:page"}),
     )
 
 
@@ -301,7 +301,7 @@ async def due_ids(
 async def test_an_ordered_rules_due_runs_are_the_first_of_each_scope(storage: Storage) -> None:
     first, second = fired("r1", seq=1), fired("r2", seq=2)
     billing = fired("r3", scope="billing", seq=3)
-    unordered = [fired("r4", rule="notify", seq=4), fired("r5", rule="notify", seq=5)]
+    unordered = [fired("r4", rule="app:notify", seq=4), fired("r5", rule="app:notify", seq=5)]
     async with storage.transaction(ACME) as transaction:
         await transaction.save_runs([first, second, billing, *unordered])
     async with storage.transaction(OTHER) as transaction:
@@ -369,7 +369,7 @@ async def test_runs_fired_at_the_same_seq_start_in_the_order_they_were_created(
         await transaction.save_runs([original])
     async with storage.transaction(ACME) as transaction:
         await transaction.save_runs([replayed, fired("r0", seq=4)])
-        assert await transaction.scope_runs("triage", '["auth"]') == [
+        assert await transaction.scope_runs("app:triage", '["auth"]') == [
             fired("r0", seq=4),
             original,
             replayed,
@@ -381,12 +381,12 @@ async def test_runs_fired_at_the_same_seq_start_in_the_order_they_were_created(
 
 
 async def test_dead_letters_are_kept_per_rule(storage: Storage) -> None:
-    triage = EvaluationError(rule="triage", seq=1, error="no service")
-    paging = EvaluationError(rule="paging", seq=2, error="boom")
+    triage = EvaluationError(rule="app:triage", seq=1, error="no service")
+    paging = EvaluationError(rule="app:paging", seq=2, error="boom")
     async with storage.transaction(ACME) as transaction:
         await transaction.dead_letter([triage, paging])
     assert await storage.dead_letters(ACME) == [triage, paging]
-    assert await storage.dead_letters(ACME, rule="paging") == [paging]
+    assert await storage.dead_letters(ACME, rule="app:paging") == [paging]
 
 
 async def test_subscribers_see_stored_then_new_envelopes(storage: Storage) -> None:

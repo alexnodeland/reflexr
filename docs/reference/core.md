@@ -8,7 +8,7 @@
 
 ## Events
 
-Event types, their registry, and the envelope each stored event travels in. See [Events and envelopes](../guides/events.md).
+Event types, their namespaces and registries, and the envelope each stored event travels in. See [Events and envelopes](../guides/events.md).
 
 ::: reflexr.core.Event
 
@@ -20,9 +20,13 @@ Event types, their registry, and the envelope each stored event travels in. See 
 
 ::: reflexr.core.Causation
 
-::: reflexr.core.event_types
+::: reflexr.core.EventRegistry
 
-::: reflexr.core.get_event_type
+::: reflexr.core.DEFAULT_REGISTRY
+
+::: reflexr.core.EventName
+
+::: reflexr.core.check_event_name
 
 ::: reflexr.core.load_event
 

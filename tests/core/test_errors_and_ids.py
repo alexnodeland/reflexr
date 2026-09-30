@@ -37,6 +37,6 @@ def test_rejections_have_stable_codes_and_payloads() -> None:
 def test_identifiers() -> None:
     assert new_id("run").startswith("run_")
     assert new_event_id().startswith("evt_")
-    assert firing_id("r", 0, "[]", 5) == firing_id("r", 0, "[]", 5)
-    assert firing_id("r", 1, "[]", 5) != firing_id("r", 0, "[]", 5)
-    assert firing_id("r", 0, "[]", 5).startswith("fir_")
+    assert firing_id("app:r", 0, "[]", 5) == firing_id("app:r", 0, "[]", 5)
+    assert firing_id("app:r", 1, "[]", 5) != firing_id("app:r", 0, "[]", 5)
+    assert firing_id("app:r", 0, "[]", 5).startswith("fir_")

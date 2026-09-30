@@ -125,9 +125,16 @@ workspaces = Workspaces(storage, registry=ONCALL, events=EVENTS)
 ### reflexr's facts, compatibility, reserved publishers and relayr
 
 - **reflexr's facts are `reflexr:*`.** The `reflexr` namespace is never published, which replaces the check on `SYSTEM_EVENTS`.
-- **A clean break.** There are no aliases, and the protocol stays `reflexr.v1`, since nothing is released. Migration 0004 rewrites the thirteen facts' names in `event_type` and in the envelope's `event.type`, in Python batches to stay dialect-neutral ([ADR-0030](0030-sql-storage.md)); its downgrade reverses it. An application's stored types are its to rename, in its own migration. Rules on facts reset once, since their definition hash changes ([ADR-0026](0026-the-reactors-evaluation.md)).
+- **A clean break.** There are no aliases, and the protocol stays `reflexr.v1`, since nothing is released. Migration 0004 rewrites the thirteen facts' names in `event_type` and in the envelope's `event.type`, in Python batches to stay dialect-neutral ([ADR-0030](0030-sql-storage.md)); its downgrade reverses it. An application's stored types are its to rename, in its own migration. Every rule gets a new name ([RFC-0003](../rfcs/0003-managing-rules-at-runtime.md)), so every rule starts again as its `start` says, at the head by default, losing its open windows ([ADR-0026](0026-the-reactors-evaluation.md)), and the executor cancels the unfinished runs of the old names, as it does for any rule no longer registered ([ADR-0041](0041-executing-runs.md)).
 - **Reserved publishers (#72)** will be a policy on `Workspaces`, beside `events=` and `emitted=`, keyed by namespace, with per-type exceptions. A library exports its entry for the application to pass. #72 designs the values, and may fold `emitted=` into it.
 - **relayr bridges artifactr's events as `artifactr:<type>`,** and `run_ended` as `artifactr:turn_ended`. An application's projections of `app_event`s and artifact kinds are its own types, in its own namespace.
+
+### Amendment (2026-09-29): what the implementation found
+
+- **The keyword is `event_namespace=`.** Pydantic's model metaclass takes the class body as a parameter named `namespace`, so a class keyword of that name never reaches the class. `event_namespace=` matches the `event_type` and `event_namespace` class attributes, and keeps event namespaces apart from rule namespaces: `class OncallEvent(Event, abstract=True, event_namespace="oncall")`.
+- **The migration is 0005**, not 0004, which is [ADR-0040](0040-telemetry-that-composes-across-libraries.md)'s. It pages by primary key in Python, not in SQL, because PostgreSQL's only setter for a JSON path is `jsonb_set`, and JSONB reorders keys, which the stored envelopes avoid.
+- **The builder checks fields against `DEFAULT_REGISTRY`**, as it checked the one registry, so a type in another registry has its fields checked by `Rule.check` when its `Workspaces` is built.
+- **`AnyEvent`'s schema leaves `event.type` a plain string.** The same schema describes stored envelopes, and an application's envelopes stored before it renames its types keep their old names, which round-trip as `UnknownEvent`.
 
 ## Options considered
 
@@ -425,10 +432,10 @@ No matching change. artifactr's own events are a closed union that nothing else 
 
 ## Action items
 
-1. [ ] Core: `EventName` and its hint; `namespace=` and `registry=` on abstract bases; the namespace table; `EventRegistry` and `DEFAULT_REGISTRY`, in place of `event_types()` and `get_event_type()`; reflexr's facts as `reflexr:*`.
-2. [ ] Workspace: `Workspaces(registry=)`, and the checks in `Workspace.read` and `_check_publishable`; MCP's run facts by the `reflexr:run_` prefix.
-3. [ ] SQL: migration 0004, tested on SQLite and PostgreSQL.
-4. [ ] Schemas: regenerate both, with `EventName`'s pattern.
-5. [ ] oncall: the `oncall` namespace, keeping ADR-0031's local names.
-6. [ ] Docs: the protocol, the architecture, the guides and the getting-started page.
+1. [x] Core: `EventName` and its hint; `event_namespace=` and `registry=` on abstract bases; the namespace table; `EventRegistry` and `DEFAULT_REGISTRY`, in place of `event_types()` and `get_event_type()`; reflexr's facts as `reflexr:*`.
+2. [x] Workspace: `Workspaces(registry=)`, and the checks in `Workspace.read` and `_check_publishable`; MCP's run facts by the `reflexr:run_` prefix.
+3. [x] SQL: migration 0005, tested on SQLite and PostgreSQL.
+4. [x] Schemas: regenerate both, with `EventName`'s pattern.
+5. [x] oncall: the `oncall` namespace, keeping ADR-0031's local names.
+6. [x] Docs: the protocol, the architecture, the guides and the getting-started page.
 7. [ ] Then: #72 on namespace keys, relayr's phase 1 with `artifactr:` names, and RFC-0002's tracking item in stackr.

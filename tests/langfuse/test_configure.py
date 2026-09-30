@@ -32,14 +32,16 @@ def test_langfuse_is_configured_on_the_same_tracer_provider() -> None:
     ) as telemetry:
         assert isinstance(telemetry.langfuse, Langfuse)
         tracer = telemetry.tracer_provider.get_tracer("reflexr")
-        with tracer.start_as_current_span("reflexr.publish deploy.finished"):
+        with tracer.start_as_current_span("reflexr.publish app:deploy.finished"):
             pass
         with telemetry.tracer_provider.get_tracer("some.library").start_as_current_span("noise"):
             pass
         telemetry.tracer_provider.force_flush()
         telemetry.langfuse.flush()
     assert [s.name for s in collector.get_finished_spans()] == [
-        "reflexr.publish deploy.finished",
+        "reflexr.publish app:deploy.finished",
         "noise",
     ]
-    assert [s.name for s in langfuse.get_finished_spans()] == ["reflexr.publish deploy.finished"]
+    assert [s.name for s in langfuse.get_finished_spans()] == [
+        "reflexr.publish app:deploy.finished"
+    ]

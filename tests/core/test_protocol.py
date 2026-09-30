@@ -29,7 +29,7 @@ SERVER: TypeAdapter[ServerFrame] = TypeAdapter(ServerFrame)
 
 def test_client_frames_round_trip_by_their_type() -> None:
     frames: list[ClientFrame] = [
-        Hello(protocol=PROTOCOL, resume_after_seq=4, types=("service.error",)),
+        Hello(protocol=PROTOCOL, resume_after_seq=4, types=("app:service.error",)),
         Hello(protocol=PROTOCOL, from_head=True),
         CommandFrame(command_id="c1", command=Publish(event=ServiceError(service="auth"), id="e1")),
         CommandFrame(
@@ -38,7 +38,7 @@ def test_client_frames_round_trip_by_their_type() -> None:
                 feedback_type="quality", target=RunTarget(run_id="fir_1"), value={"score": 3}
             ),
         ),
-        CommandFrame(command_id="c3", command=ReplayRule(rule="triage", mode="refire")),
+        CommandFrame(command_id="c3", command=ReplayRule(rule="app:triage", mode="refire")),
     ]
     for frame in frames:
         assert CLIENT.validate_json(CLIENT.dump_json(frame)) == frame
@@ -64,9 +64,9 @@ def test_commands_are_strict_and_events_of_unknown_types_are_kept() -> None:
     with pytest.raises(ValidationError, match="an event needs a string 'type'"):
         Publish.model_validate({"event": {"service": "auth"}})
     with pytest.raises(
-        ValidationError, match=r"invalid service\.error event: service: Field required"
+        ValidationError, match=r"invalid app:service\.error event: service: Field required"
     ):
-        Publish.model_validate({"event": {"type": "service.error"}})
+        Publish.model_validate({"event": {"type": "app:service.error"}})
 
 
 def test_server_frames_round_trip_by_their_type() -> None:

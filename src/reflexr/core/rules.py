@@ -3,7 +3,7 @@
 A rule is data, so it can be listed, stored, diffed, validated and written by an agent::
 
     error_spike = Rule(
-        name="error-spike",
+        name="ops:error-spike",
         when=on(ServiceError).where(F.severity >= 7).count(at_least=3, within=minute),
         scope=by(F.service),
         then=run("triage"),
@@ -20,7 +20,7 @@ from collections.abc import Collection, Mapping
 from datetime import datetime, timedelta
 from typing import Any, Literal, Protocol
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from reflexr.core.conditions import (
     Admitted,
@@ -42,7 +42,8 @@ from reflexr.core.errors import InvalidRule
 from reflexr.core.events import SYSTEM_EVENTS, Event
 from reflexr.core.ids import RuleName, ScopeKey
 
-_RULE_NAME = r"^[a-z0-9][a-z0-9._-]*$"
+_RULE_NAME = r"^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9._-]*$"
+"""A qualified rule name: a namespace, a ``:`` and a name, such as ``oncall:triage``."""
 
 
 class Scope(BaseModel):
@@ -125,6 +126,8 @@ class Rule(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: RuleName = Field(pattern=_RULE_NAME, max_length=100)
+    """A namespace, a ``:`` and a name, such as ``oncall:triage``. ``reflexr`` is reserved."""
+
     description: str = ""
     when: Condition
     scope: Scope = Scope()
@@ -148,6 +151,13 @@ class Rule(BaseModel):
     A disabled rule stays registered and checked, but its cursor holds, it records no firings,
     and its pending and retrying runs wait. Enabling it again resumes from its cursor.
     """
+
+    @field_validator("name")
+    @classmethod
+    def _unreserved(cls, name: str) -> str:
+        if name.startswith("reflexr:"):
+            raise ValueError("the reflexr namespace is reserved")
+        return name
 
     def definition(self) -> str:
         """Return a hash of what the rule decides (its condition and scope).

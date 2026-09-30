@@ -12,7 +12,7 @@ from typing import Annotated, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from reflexr.core.errors import UnsupportedProtocol, ValidationFailed
-from reflexr.core.events import AnyEvent, Envelope
+from reflexr.core.events import AnyEvent, Envelope, EventName
 from reflexr.core.feedback import FeedbackTarget
 from reflexr.core.ids import EventId, RuleName, RunId, WorkspaceId
 from reflexr.core.runs import Run
@@ -143,7 +143,7 @@ class Hello(_Model):
     """Start at the head of the log instead, replaying nothing. ``resume_after_seq`` must then
     be 0; a client that reconnects resumes from ``welcome.head_seq`` with it."""
 
-    types: tuple[str, ...] | None = None
+    types: tuple[EventName, ...] | None = None
     """The event types to receive; ``None`` means every type. ``replay_complete`` always
     arrives, since it is decided on the whole log."""
 

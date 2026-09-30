@@ -44,13 +44,17 @@ from reflexr import Event, F, Rule, SourceActor, by, on, run
 from reflexr.workspace import InMemoryStorage, Reaction, Reactor, Workspaces
 
 
-class ServiceError(Event, name="service.error"):  # an event type: a Pydantic model
+class OpsEvent(Event, abstract=True, event_namespace="ops"):  # the application's namespace
+    pass
+
+
+class ServiceError(OpsEvent, name="service.error"):  # an event type, ops:service.error
     service: str
     severity: int
 
 
 error_spike = Rule(  # a rule: typed, serializable data
-    name="error-spike",
+    name="ops:error-spike",
     when=on(ServiceError).where(F.severity >= 7).count(at_least=3, within=timedelta(minutes=1)),
     scope=by(F.service),
     then=run("page"),

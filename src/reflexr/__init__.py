@@ -4,13 +4,16 @@ Applications publish events into tenant-scoped workspaces. Rules watch each work
 when a rule's condition holds, it runs a workflow: a pydantic-ai agent, a pydantic-graph graph,
 or a plain async function::
 
-    class ServiceError(Event, name="service.error"):
+    class OpsEvent(Event, abstract=True, event_namespace="ops"): ...
+
+
+    class ServiceError(OpsEvent, name="service.error"):  # ops:service.error
         service: str
         severity: int
 
 
     error_spike = Rule(
-        name="error-spike",
+        name="ops:error-spike",
         when=on(ServiceError).where(F.severity >= 7).count(at_least=3, within=minute),
         scope=by(F.service),
         then=run("triage"),

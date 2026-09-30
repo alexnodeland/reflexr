@@ -1,9 +1,10 @@
 """The feedback mirror: a subscriber on a workspace's log that sends feedback to a score sink.
 
-Each ``feedback_given`` becomes one score per scored field, attached to the trace it is about:
+Each ``reflexr:feedback_given`` becomes one score per scored field, attached to the trace it is
+about:
 
 - a run: the trace of the run's latest attempt
-- a firing: the trace of the evaluation that recorded it, from its ``rule_fired`` envelope
+- a firing: the trace of the evaluation that recorded it, from its ``reflexr:rule_fired`` envelope
 - a causal chain, or anything without a trace: the session, which is the chain
 
 Score ids are derived from the envelope's id and the field, so mirroring the same log again
@@ -39,7 +40,7 @@ _SCORE_IDS = uuid.UUID("5b8f2a1e-7c3d-4e9a-b6f0-2d1c8e4a7b93")
 """The namespace of score ids."""
 
 FIRING_SEARCH = 1000
-"""How far after the envelope a rule fired at the mirror looks for its ``rule_fired``."""
+"""How far after the envelope a rule fired at the mirror looks for its ``reflexr:rule_fired``."""
 
 SAVE_EVERY = 500
 """How many envelopes without feedback a mirror follows before it saves its cursor anyway, so a
@@ -101,7 +102,7 @@ class FeedbackMirror:
         return scores
 
     async def scores(self, envelope: Envelope) -> list[Score]:
-        """Return the scores of a ``feedback_given`` envelope.
+        """Return the scores of a ``reflexr:feedback_given`` envelope.
 
         There are none for other events, or for a feedback type this process does not
         register.

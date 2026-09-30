@@ -53,14 +53,14 @@ async def page(reaction: Reaction[AppDeps]) -> dict[str, str]:
 
 
 heartbeat_lost = Rule(
-    name="heartbeat-lost",
+    name="ops:heartbeat-lost",
     when=on(Heartbeat).absent(within=timedelta(minutes=5)),
     scope=by(F.service),
     then=run("page"),
 )
 ```
 
-What an action returns is the run's output, recorded on the run and in its `run_succeeded` event: JSON-compatible data, a Pydantic model (stored as its JSON), or `None`. A function has no name of its own that reflexr reads, so rules refer to it by the name you register it under: `run("page")`.
+What an action returns is the run's output, recorded on the run and in its `reflexr:run_succeeded` event: JSON-compatible data, a Pydantic model (stored as its JSON), or `None`. A function has no name of its own that reflexr reads, so rules refer to it by the name you register it under: `run("page")`.
 
 Raising fails the attempt, which is retried under the rule's retry policy ([Retries and dead letters](reactor.md#retries-and-dead-letters)). To say why, raise `RunFailure` with a reason code, which is recorded on the run and counted in metrics; make it `permanent=True` when retrying cannot help, and the run is dead-lettered at once ([ADR-0036](../adr/0036-typed-run-failures.md)):
 
@@ -85,7 +85,7 @@ async def notify_owners(reaction: Reaction[AppDeps]) -> None:
             await reaction.checkpoint(owner, sorted(done))
 ```
 
-Each checkpoint appends `run_progressed` with the step's name. If the attempt is no longer the run's current one (it was cancelled, or another executor took it over), `checkpoint` raises `InvalidState`, and the action should stop.
+Each checkpoint appends `reflexr:run_progressed` with the step's name. If the attempt is no longer the run's current one (it was cancelled, or another executor took it over), `checkpoint` raises `InvalidState`, and the action should stop.
 
 ## Agents
 
@@ -124,7 +124,7 @@ async def latest_deploy(ctx: RunContext[Reaction[AppDeps]], service: str) -> str
 triage = AgentAction(triage_agent, name="triage", usage_limits=UsageLimits(request_limit=10))
 
 error_spike = Rule(
-    name="error-spike",
+    name="ops:error-spike",
     description="Three severe errors from one service within a minute.",
     when=on(ServiceError).where(F.severity >= 7).count(at_least=3, within=timedelta(minutes=1)),
     scope=by(F.service),
@@ -137,12 +137,12 @@ error_spike = Rule(
 By default the prompt describes the firing: the rule, its description, the scope, the attempt and the matched events, each rendered as a line the model can read:
 
 ```text
-Rule "error-spike" fired for {"service": "auth"}. This is attempt 1.
+Rule "ops:error-spike" fired for {"service": "auth"}. This is attempt 1.
 The rule: Three severe errors from one service within a minute.
 The events that made it fire, oldest first:
-<event seq="2" type="service.error" at="2026-01-01T00:00:00+00:00" by="source">{"message": "token check failed", "service": "auth", "severity": 8, "type": "service.error"}</event>
-<event seq="3" type="service.error" at="2026-01-01T00:00:00+00:00" by="source">{"message": "token check failed", "service": "auth", "severity": 8, "type": "service.error"}</event>
-<event seq="4" type="service.error" at="2026-01-01T00:00:00+00:00" by="source">{"message": "login timeout", "service": "auth", "severity": 8, "type": "service.error"}</event>
+<event seq="2" type="ops:service.error" at="2026-01-01T00:00:00+00:00" by="source">{"message": "token check failed", "service": "auth", "severity": 8, "type": "ops:service.error"}</event>
+<event seq="3" type="ops:service.error" at="2026-01-01T00:00:00+00:00" by="source">{"message": "token check failed", "service": "auth", "severity": 8, "type": "ops:service.error"}</event>
+<event seq="4" type="ops:service.error" at="2026-01-01T00:00:00+00:00" by="source">{"message": "login timeout", "service": "auth", "severity": 8, "type": "ops:service.error"}</event>
 
 Respond to this firing.
 ```
@@ -228,7 +228,7 @@ g.add(
 runbook = GraphAction(g.build(), inputs=lambda reaction: str(reaction.scope["service"]))
 
 deploy_regression = Rule(
-    name="deploy-regression",
+    name="ops:deploy-regression",
     when=sequence(on(Deploy), on(ServiceError), within=timedelta(minutes=10)),
     scope=by(F.service),
     then=run(runbook),
@@ -243,7 +243,7 @@ deploy_regression = Rule(
 | `state` | the state type's constructor | Builds the graph's initial state from the reaction |
 | `input_types` | `{}` | Input types by node id, for the steps and forks whose type reflexr cannot read or infer, such as stream steps and forks after a transform ([below](#input-types)); an explicit type always wins |
 
-After each step, the action saves the graph's state and the next task to the run, and appends `run_progressed` with the step's name. If `roll_back` fails the first time, the run waits to retry with `diagnose` as its last saved step, and the retry starts at `roll_back`: `diagnose` does not run again. The run's `run_progressed` events show every saved boundary, across both attempts:
+After each step, the action saves the graph's state and the next task to the run, and appends `reflexr:run_progressed` with the step's name. If `roll_back` fails the first time, the run waits to retry with `diagnose` as its last saved step, and the retry starts at `roll_back`: `diagnose` does not run again. The run's `reflexr:run_progressed` events show every saved boundary, across both attempts:
 
 ```text
 ['__start__', 'diagnose', 'roll_back', 'report', '__end__']

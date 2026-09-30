@@ -19,7 +19,7 @@ from reflexr.evals import (
 from reflexr.workspace import InMemoryStorage, Reaction, Reactor, Workspace, Workspaces
 from tests.event_types import Deploy, ServiceError
 
-triage = Rule(name="triage", when=on(ServiceError), scope=by(F.service), then=run("triage"))
+triage = Rule(name="app:triage", when=on(ServiceError), scope=by(F.service), then=run("triage"))
 
 
 class TriageQuality(Feedback, name="triage_quality", targets={"run", "firing", "chain"}):
@@ -62,7 +62,7 @@ def build(context: FeedbackContext[TriageQuality]) -> TriageInput:
 
 async def test_feedback_becomes_examples_with_the_context_it_is_about() -> None:
     workspace = await setup()
-    [done] = await workspace.runs(rule="triage")
+    [done] = await workspace.runs(rule="app:triage")
     on_run = await workspace.give_feedback(
         TriageQuality(correct=True), on=RunTarget(run_id=done.id)
     )
@@ -99,7 +99,7 @@ async def test_feedback_becomes_examples_with_the_context_it_is_about() -> None:
 
 async def test_input_builders_may_be_async_and_read_the_log() -> None:
     workspace = await setup()
-    [done] = await workspace.runs(rule="triage")
+    [done] = await workspace.runs(rule="app:triage")
     await workspace.give_feedback(TriageQuality(correct=True), on=RunTarget(run_id=done.id))
 
     async def reread(context: FeedbackContext[TriageQuality]) -> TriageInput:
@@ -125,8 +125,8 @@ async def judged_run(reaction: Reaction[None]) -> RunTarget:
 
 def judge_rule(action: EvaluatorAction[None, TriageInput, TriageQuality]) -> Rule:
     return Rule(
-        name="judge-triage",
-        when=on(RunSucceeded).where(rule="triage"),
+        name="app:judge-triage",
+        when=on(RunSucceeded).where(rule="app:triage"),
         then=run(action),
     )
 
@@ -143,13 +143,13 @@ async def test_evaluators_run_as_rules_and_record_their_verdicts() -> None:
         target=judged_run,
     )
     workspace = await setup(judge_rule(judge), actions={judge.name: judge})
-    [judged] = await workspace.runs(rule="judge-triage")
+    [judged] = await workspace.runs(rule="app:judge-triage")
     assert judged.status == "succeeded"
     assert isinstance(judged.output, dict)
     assert judged.output["value"] == {"correct": True}
     [verdict] = [e for e in await workspace.read() if isinstance(e.event, FeedbackGiven)]
     assert verdict.actor == EvaluatorActor(name="rollbacks", version="2")
-    [triaged] = await workspace.runs(rule="triage")
+    [triaged] = await workspace.runs(rule="app:triage")
     assert verdict.event == FeedbackGiven(
         feedback_type="triage_quality", target=RunTarget(run_id=triaged.id), value={"correct": True}
     )
@@ -184,14 +184,14 @@ async def test_an_evaluator_that_hands_off_records_nothing() -> None:
         name="judge",
     )
     workspace = await setup(judge_rule(judge), actions={"judge": judge})
-    [judged] = await workspace.runs(rule="judge-triage")
+    [judged] = await workspace.runs(rule="app:judge-triage")
     assert judged.output == {"handed_off": "unsure"}
     assert not [e for e in await workspace.read() if isinstance(e.event, FeedbackGiven)]
 
 
 async def test_the_source_passes_evalrs_feedback_source_contract() -> None:
     workspace = await setup()
-    [done] = await workspace.runs(rule="triage")
+    [done] = await workspace.runs(rule="app:triage")
     await workspace.give_feedback(TriageQuality(correct=True), on=RunTarget(run_id=done.id))
     await workspace.give_feedback(
         TriageQuality(correct=False), on=ChainTarget(correlation_id=done.correlation_id)

@@ -25,7 +25,7 @@ from opentelemetry.trace import Span, SpanKind, TracerProvider
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from reflexr.core import (
-    SYSTEM_EVENTS,
+    DEFAULT_REGISTRY,
     Actor,
     Causation,
     ChainTarget,
@@ -33,6 +33,7 @@ from reflexr.core import (
     EvaluationError,
     Event,
     EventId,
+    EventRegistry,
     Feedback,
     FeedbackGiven,
     FeedbackTarget,
@@ -56,8 +57,8 @@ from reflexr.core import (
     WorkspaceId,
     begin,
     cancel,
+    check_event_name,
     checkpoint,
-    event_types,
     new_event_id,
     reset,
     retry,
@@ -135,10 +136,13 @@ class Workspaces:
     Args:
         storage: Where workspaces are kept.
         events: The event types clients may publish. Others are rejected even if they are
-            registered, so clients cannot publish arbitrary types. ``None`` accepts every
-            registered type. reflexr's own events can never be published.
+            registered, so clients cannot publish arbitrary types. ``None`` accepts every type
+            in ``registry``. reflexr's own events can never be published.
         emitted: Event types only runs may publish, such as an incident a triage agent opens.
             Clients, over REST, the WebSocket or MCP, are refused them.
+        registry: The namespaces whose types these workspaces accept. ``events`` and ``emitted``
+            must be in it. Applications in one process each use their own, so neither
+            accepts the other's types.
         rules: The rules every workspace evaluates. Each is checked against the event types
             and predicates when the workspaces are created, so a mistake fails at startup. A
             disabled rule is registered and checked too, but the reactor leaves it be.
@@ -152,7 +156,8 @@ class Workspaces:
 
     Raises:
         InvalidRule: If a rule refers to an event type, field or predicate that does not exist.
-        ValueError: If two rules, or two schedules, have the same name.
+        ValueError: If two rules, or two schedules, have the same name, or a type in ``events``
+            or ``emitted`` is not in ``registry``.
     """
 
     def __init__(
@@ -161,6 +166,7 @@ class Workspaces:
         *,
         events: Iterable[type[Event]] | None = None,
         emitted: Iterable[type[Event]] = (),
+        registry: EventRegistry = DEFAULT_REGISTRY,
         rules: Iterable[Rule] = (),
         predicates: Predicates | None = None,
         schedules: Iterable[Schedule] = (),
@@ -169,9 +175,13 @@ class Workspaces:
         tracer_provider: TracerProvider | None = None,
         meter_provider: MeterProvider | None = None,
     ) -> None:
-        accepted = None if events is None else {t.event_type: t for t in events}
+        chosen_types = {t.event_type: t for t in events or ()}
         from_runs = {t.event_type: t for t in emitted}
-        known = {**(event_types() if accepted is None else accepted), **from_runs}
+        for name, event_type in {**chosen_types, **from_runs}.items():
+            if registry.get(name) is not event_type:
+                raise ValueError(f"{name} is not in the registry these workspaces use")
+        accepted = registry if events is None else chosen_types
+        known = {**accepted, **from_runs}
         chosen = dict(predicates or {})
         named: dict[RuleName, Rule] = {}
         for rule in rules:
@@ -186,7 +196,7 @@ class Workspaces:
             timetables[schedule.name] = schedule
         self._context = _Context(
             storage=storage,
-            types=None if accepted is None else frozenset(accepted),
+            accepted=accepted,
             emitted=frozenset(from_runs),
             rules=named,
             predicates=chosen,
@@ -269,7 +279,7 @@ class Workspaces:
 @dataclass(frozen=True)
 class _Context:
     storage: Storage
-    types: frozenset[str] | None
+    accepted: Mapping[str, type[Event]]
     emitted: frozenset[str]
     rules: Mapping[RuleName, Rule]
     predicates: Predicates
@@ -498,7 +508,7 @@ class Workspace:
     async def checkpoint_run(
         self, run_id: RunId, *, attempt: int, step: str, state: JsonValue
     ) -> Run:
-        """Save a running run's progress after a completed step, and append ``run_progressed``.
+        """Save a running run's progress after a step, and append ``reflexr:run_progressed``.
 
         Actions call this through :meth:`Reaction.checkpoint
         <reflexr.workspace.Reaction.checkpoint>`, so a retry resumes after the last step.
@@ -608,6 +618,8 @@ class Workspace:
             ValidationFailed: If both ``limit`` and ``last`` are given, or a number is negative.
         """
         _check_page(after_seq=after_seq, before_seq=before_seq, limit=limit, last=last)
+        for name in types or ():
+            _check_name(name)
         return await self._context.storage.read(
             self._ref,
             after_seq=after_seq,
@@ -731,17 +743,16 @@ class Workspace:
     # ─── internals ────────────────────────────────────────────────────────────
 
     def _check_publishable(self, event: Event) -> None:
+        name = _check_name(type_of(event))
         if isinstance(event, UnknownEvent):
-            raise NotFound("event type", event.unknown_type)
-        if isinstance(event, SYSTEM_EVENTS):
-            raise Forbidden(f"{type_of(event)} events are recorded by reflexr, not published")
-        name = type_of(event)
+            raise NotFound("event type", name)
+        if name.startswith("reflexr:"):
+            raise Forbidden(f"{name} events are recorded by reflexr, not published")
         if name in self._context.emitted:
             if self._cause is None:
                 raise Forbidden(f"{name} events are published by runs, not clients")
             return
-        types = self._context.types
-        if types is not None and name not in types:
+        if name not in self._context.accepted:
             raise NotFound("event type", name)
 
     async def _chain(self, transaction: Transaction, correlation_id: str | None) -> str | None:
@@ -845,6 +856,13 @@ class Workspace:
             workspace_id=self.workspace_id,
             attributes=attributes,
         )
+
+
+def _check_name(name: str) -> str:
+    try:
+        return check_event_name(name)
+    except ValueError as error:
+        raise ValidationFailed(str(error), []) from None
 
 
 def _check_page(

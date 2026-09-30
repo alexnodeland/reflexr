@@ -52,14 +52,22 @@ async def test_runs_requests_and_queries_are_traced(
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://oncall") as client:
             for version in ("v1", "v2"):
-                await publish(client, type="deploy.completed", service="api", version=version)
+                await publish(
+                    client, type="oncall:deploy.completed", service="api", version=version
+                )
             for _ in range(3):
-                await publish(client, type="alert.fired", service="api", severity=9, message="5xx")
+                await publish(
+                    client, type="oncall:alert.fired", service="api", severity=9, message="5xx"
+                )
             await system.reactor.settle()
-            assert await log(client, "incident.resolved")
+            assert await log(client, "oncall:incident.resolved")
     telemetry.tracer_provider.force_flush()
     names = {span.name for span in spans.get_finished_spans()}
-    assert {"invoke_workflow triage", "invoke_agent triage", "invoke_workflow runbook"} <= names
+    assert {
+        "invoke_workflow oncall:triage",
+        "invoke_agent triage",
+        "invoke_workflow oncall:runbook",
+    } <= names
     assert "POST /v1/workspaces/{workspace_id}/events" in names, "requests are traced"
     assert any(name.startswith("INSERT") for name in names), "queries are traced"
 

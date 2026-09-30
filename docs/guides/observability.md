@@ -91,29 +91,29 @@ Every span reflexr records says where and who: `reflexr.tenant.id` and `reflexr.
 An incident spreads over several traces, because publishing an event, deciding about it and acting on it happen at different times, often in different processes:
 
 - **Publishing** happens in the producer's trace: an HTTP request, a webhook handler or a script. The envelope stores the W3C trace context of its `reflexr.publish` span as `traceparent`.
-- **Each evaluation** of new envelopes is a `reflexr.evaluate` trace of its own, and the `rule_fired` facts it appends carry its `traceparent`, so feedback on a firing can find the evaluation that made it.
+- **Each evaluation** of new envelopes is a `reflexr.evaluate` trace of its own, and the `reflexr:rule_fired` facts it appends carry its `traceparent`, so feedback on a firing can find the evaluation that made it.
 - **Each run attempt** is an `invoke_workflow {rule}` trace of its own, **linked** to the publishing spans of the envelopes that made the rule fire. Its trace id is added to the run's `trace_ids`, one per attempt, which is how feedback on a run finds its traces.
 
 ```mermaid
 graph LR
-    publish["reflexr.publish service.error<br/>the producer's trace"]
+    publish["reflexr.publish ops:service.error<br/>the producer's trace"]
     evaluate["reflexr.evaluate<br/>a trace per evaluation"]
-    attempt["invoke_workflow error-spike<br/>a trace per attempt"]
-    fired[("rule_fired<br/>traceparent")]
+    attempt["invoke_workflow ops:error-spike<br/>a trace per attempt"]
+    fired[("reflexr:rule_fired<br/>traceparent")]
     run[("Run.trace_ids")]
     evaluate --> fired
     attempt --> run
     attempt -. "a link per matched envelope" .-> publish
 ```
 
-Inside an attempt of the `error-spike` rule, whose `triage` action is an agent with the `EventContext` capability and pydantic-ai's instrumentation, the trace looks like this:
+Inside an attempt of the `ops:error-spike` rule, whose `triage` action is an agent with the `EventContext` capability and pydantic-ai's instrumentation, the trace looks like this:
 
 ```text
-invoke_workflow error-spike              the reactor, linked to the three service.error publishes
+invoke_workflow ops:error-spike          the reactor, linked to the three ops:service.error publishes
 └── invoke_agent triage                  pydantic-ai, with reflexr's attribution
     ├── chat claude-sonnet-5-5           pydantic-ai: one per model request
     ├── execute_tool emit_event          pydantic-ai
-    │   └── reflexr.publish incident.opened
+    │   └── reflexr.publish ops:incident.opened
     └── chat claude-sonnet-5-5
 ```
 
@@ -230,7 +230,7 @@ reactor = Reactor(workspaces, actions=actions, deps=deps, run_context=langfuse_r
 ```
 
 - **Whole traces.** Langfuse's default keeps only LLM spans. With `langfuse="traces"`, Langfuse also keeps every span a library's contribution keeps: for reflexr, the scopes in `reflexr.telemetry.TRACE_SCOPES`, which are reflexr's, pydantic-graph's, the MCP SDK's and the FastAPI, SQLAlchemy, asyncpg and httpx instrumentations'. So a run's trace in Langfuse shows its steps, queries and HTTP calls around the model calls. `langfuse_client(...)` installs the same filter for reflexr alone, `should_export_span`.
-- **Sessions, users and names.** `langfuse_run` sets each attempt's trace attributes on every span in it: the chain as the session, the person whose event made the rule fire as the user (when a person published it), the rule's name as the trace name, tags for the tenant, the workspace and the rule (`tenant:acme`, `workspace:prod`, `rule:error-spike`), and reflexr's ids (run, scope and attempt) as metadata. Values are made ASCII and cut to 200 characters, as Langfuse requires; `run_attributes(reaction)` returns them, should you want them elsewhere.
+- **Sessions, users and names.** `langfuse_run` sets each attempt's trace attributes on every span in it: the chain as the session, the person whose event made the rule fire as the user (when a person published it), the rule's name as the trace name, tags for the tenant, the workspace and the rule (`tenant:acme`, `workspace:prod`, `rule:ops:error-spike`), and reflexr's ids (run, scope and attempt) as metadata. Values are made ASCII and cut to 200 characters, as Langfuse requires; `run_attributes(reaction)` returns them, should you want them elsewhere.
 - **Feedback as scores.** See [Scores](evaluation.md#scores).
 
 Configuring the SDK yourself, create the client with `langfuse_client(tracer_provider=...)`: it adds Langfuse's span processor, with the filter, to your provider. Keys and the base URL come from the `LANGFUSE_*` environment variables or from keyword arguments, which are passed to `Langfuse(...)`; with `configure_telemetry`, pass them as `langfuse_options`.

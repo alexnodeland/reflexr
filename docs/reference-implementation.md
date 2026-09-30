@@ -6,9 +6,9 @@
 
 | Piece | Source | What it shows |
 |---|---|---|
-| Events | [`events.py`](https://github.com/alexnodeland/reflexr/blob/main/examples/oncall/src/oncall/events.py) | Five `Event` types: `alert.fired`, `deploy.completed` and `service.heartbeat`, which producers publish, and `incident.opened` and `incident.resolved`, which the workflows emit |
-| Rules | [`rules.py`](https://github.com/alexnodeland/reflexr/blob/main/examples/oncall/src/oncall/rules.py) | `triage`, a count of severe alerts per service within five minutes; `runbook`, every opened incident per service, with its own retry policy; `silence`, no heartbeat from a service for two minutes; and a `Schedule` whose ticks keep time moving |
-| Triage agent | [`triage.py`](https://github.com/alexnodeland/reflexr/blob/main/examples/oncall/src/oncall/triage.py) | A pydantic-ai `Agent` over `Reaction[OncallDeps]` with the `EventContext` capability, allowed to emit `incident.opened` only, with a structured verdict, usage limits, and the LiteLLM gateway when a proxy is configured |
+| Events | [`events.py`](https://github.com/alexnodeland/reflexr/blob/main/examples/oncall/src/oncall/events.py) | Five `Event` types: `oncall:alert.fired`, `oncall:deploy.completed` and `oncall:service.heartbeat`, which producers publish, and `oncall:incident.opened` and `oncall:incident.resolved`, which the workflows emit |
+| Rules | [`rules.py`](https://github.com/alexnodeland/reflexr/blob/main/examples/oncall/src/oncall/rules.py) | `oncall:triage`, a count of severe alerts per service within five minutes; `oncall:runbook`, every opened incident per service, with its own retry policy; `oncall:silence`, no heartbeat from a service for two minutes; and a `Schedule` whose ticks keep time moving |
+| Triage agent | [`triage.py`](https://github.com/alexnodeland/reflexr/blob/main/examples/oncall/src/oncall/triage.py) | A pydantic-ai `Agent` over `Reaction[OncallDeps]` with the `EventContext` capability, allowed to emit `oncall:incident.opened` only, with a structured verdict, usage limits, and the LiteLLM gateway when a proxy is configured |
 | Runbook graph | [`runbook.py`](https://github.com/alexnodeland/reflexr/blob/main/examples/oncall/src/oncall/runbook.py) | A pydantic-graph `GraphBuilder` graph with a decision, checkpointed after every step, that reads the log and emits through the `Reaction` |
 | Paging | [`actions.py`](https://github.com/alexnodeland/reflexr/blob/main/examples/oncall/src/oncall/actions.py) | A plain async function, idempotent by its run id, and the table of actions by the names rules use |
 | Services | [`services.py`](https://github.com/alexnodeland/reflexr/blob/main/examples/oncall/src/oncall/services.py) | The pager and deployer the workflows act on: in-memory fakes, given to every action as `reaction.deps` |
@@ -20,15 +20,15 @@
 
 ```mermaid
 graph LR
-    alert[/alert.fired/] --> triage{{"triage<br/>3 alerts of severity 7+<br/>for a service in 5 min"}}
+    alert[/"oncall:alert.fired"/] --> triage{{"triage<br/>3 alerts of severity 7+<br/>for a service in 5 min"}}
     triage --> agent["triage agent<br/>pydantic-ai"]
-    agent -- emit_event --> opened[/incident.opened/]
+    agent -- emit_event --> opened[/"oncall:incident.opened"/]
     opened --> runbook{{"runbook<br/>each incident,<br/>per service"}}
     runbook --> graph["runbook graph<br/>pydantic-graph"]
-    deploy[/deploy.completed/] -. read from the log .-> graph
-    graph --> resolved[/incident.resolved/]
-    heartbeat[/service.heartbeat/] --> silence{{"silence<br/>no heartbeat from<br/>a service for 2 min"}}
-    tick[/"tick, every 30 s"/] -. moves time .-> silence
+    deploy[/"oncall:deploy.completed"/] -. read from the log .-> graph
+    graph --> resolved[/"oncall:incident.resolved"/]
+    heartbeat[/"oncall:service.heartbeat"/] --> silence{{"silence<br/>no heartbeat from<br/>a service for 2 min"}}
+    tick[/"reflexr:tick, every 30 s"/] -. moves time .-> silence
     silence --> page["page<br/>function"]
     page --> alert
 ```

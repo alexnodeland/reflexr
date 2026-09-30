@@ -27,8 +27,8 @@ from tests.scores.kinds import Accuracy, Helpfulness
 
 CURSOR = "langfuse"
 
-deploys = Rule(name="deploys", when=on(Deploy), then=run("note"))
-audit = Rule(name="audit", when=on(Deploy), then=run("note"))
+deploys = Rule(name="app:deploys", when=on(Deploy), then=run("note"))
+audit = Rule(name="app:audit", when=on(Deploy), then=run("note"))
 
 
 async def note(reaction: Reaction[None]) -> None:
@@ -43,7 +43,7 @@ async def fired(traced: bool) -> tuple[Workspace, str, str]:
     deploy = (await workspace.publish(Deploy(service="auth"))).envelope
     await Reactor(workspaces, actions={"note": note}).settle()
     # The audit rule fires first at the same deploy, so the mirror must look past its fact.
-    [done] = await workspace.runs(rule="deploys")
+    [done] = await workspace.runs(rule="app:deploys")
     return workspace.as_actor(UserActor(id="ada")), done.id, deploy.id
 
 
@@ -65,7 +65,7 @@ async def test_run_and_firing_feedback_is_scored_on_their_traces() -> None:
         done.trace_ids[-1],
     )
     assert rating.session_id is None
-    fired_at = next(e for e in await workspace.read() if e.event_type == "rule_fired")
+    fired_at = next(e for e in await workspace.read() if e.event_type == "reflexr:rule_fired")
     assert correct.trace_id is not None
     assert fired_at.traceparent is not None
     assert correct.trace_id in fired_at.traceparent

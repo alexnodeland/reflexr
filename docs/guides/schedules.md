@@ -1,6 +1,6 @@
 # Schedules
 
-A schedule publishes `tick` events into workspaces on a timetable: every so often, or on a cron expression in a time zone. Rules watch ticks like any other event, so a nightly report or a weekday reminder is a schedule and a rule. Ticks also move rules' clocks forward in workspaces where nothing else is happening, which is what lets an `absence` rule notice silence on time. This page covers defining schedules, watching their ticks, keeping time moving, and what happens after downtime ([ADR-0028](../adr/0028-schedules-and-cronsim.md)).
+A schedule publishes `reflexr:tick` events into workspaces on a timetable: every so often, or on a cron expression in a time zone. Rules watch ticks like any other event, so a nightly report or a weekday reminder is a schedule and a rule. Ticks also move rules' clocks forward in workspaces where nothing else is happening, which is what lets an `absence` rule notice silence on time. This page covers defining schedules, watching their ticks, keeping time moving, and what happens after downtime ([ADR-0028](../adr/0028-schedules-and-cronsim.md)).
 
 ## Defining a schedule
 
@@ -59,7 +59,7 @@ from reflexr.core import Tick
 from reflexr.workspace import Reaction
 
 standup_reminder = Rule(
-    name="standup-reminder",
+    name="ops:standup-reminder",
     when=on(Tick).where(schedule="standup"),
     then=run("remind"),
 )
@@ -84,7 +84,7 @@ A schedule fixes that. Its ticks move every rule's clock forward on a timetable,
 from reflexr import F, by
 
 heartbeat_lost = Rule(
-    name="heartbeat-lost",
+    name="ops:heartbeat-lost",
     when=on(Heartbeat).absent(within=timedelta(minutes=5)),
     scope=by(F.service),
     then=run("page"),

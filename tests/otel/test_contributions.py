@@ -81,7 +81,7 @@ def publish(handle: TelemetryHandle) -> None:
         1,
         tenant_id="t1",
         workspace_id="w1",
-        attributes={EVENT_TYPE: "deploy.finished"},
+        attributes={EVENT_TYPE: "app:deploy.finished"},
     )
 
 

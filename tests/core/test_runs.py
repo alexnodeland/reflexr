@@ -31,8 +31,8 @@ SECOND = timedelta(seconds=1)
 
 def rule(**changes: object) -> Rule:
     fields: dict[str, object] = {
-        "name": "r",
-        "when": on("service.error"),
+        "name": "app:r",
+        "when": on("app:service.error"),
         "then": run("act"),
         "retry": RetryPolicy(max_attempts=2, backoff=SECOND),
     }
@@ -42,7 +42,7 @@ def rule(**changes: object) -> Rule:
 def fired(seq: int = 1) -> Run:
     firing = Firing(
         id=f"fir_{seq}",
-        rule="r",
+        rule="app:r",
         scope_key="[]",
         scope={},
         seq=seq,

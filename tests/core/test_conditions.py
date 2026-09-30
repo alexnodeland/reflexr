@@ -70,22 +70,22 @@ def test_where_narrows_the_filter_and_checks_fields() -> None:
     condition = on(ServiceError).where(F.severity >= 7).where(service="auth")
     assert isinstance(condition.filter, AllFilter)
     assert [type(f) for f in condition.filter.of] == [OnFilter, WhereFilter, WhereFilter]
-    with pytest.raises(ValueError, match=r"no field 'sevrity' on service\.error"):
+    with pytest.raises(ValueError, match=r"no field 'sevrity' on app:service\.error"):
         on(ServiceError).where(F.sevrity >= 7)
     with pytest.raises(ValueError, match=r"no field 'labels\.nope'"):
         on(ServiceError).where(AnyFilter(of=(NotFilter(filter=F.labels.nope.eq(1)),)))
     # Types given by name and unregistered types cannot be checked.
-    on("legacy.alert").where(F.anything.eq(1))
+    on("app:legacy.alert").where(F.anything.eq(1))
     on(ServiceError).where(PredicateFilter(name="p"))
 
 
 def test_where_checks_a_field_on_the_types_of_its_own_conjunction() -> None:
-    severe = AllFilter(of=(OnFilter(types=("service.error",)), F.severity >= 7))
-    either = AnyFilter(of=(severe, OnFilter(types=("deploy.finished",))))
+    severe = AllFilter(of=(OnFilter(types=("app:service.error",)), F.severity >= 7))
+    either = AnyFilter(of=(severe, OnFilter(types=("app:deploy.finished",))))
     on(ServiceError, Deploy).where(either)
     after = sequence(on(Deploy), on(ServiceError).where(F.severity >= 7), within=MINUTE)
     after.where(service="auth")
-    with pytest.raises(ValueError, match=r"no field 'severity' on deploy\.finished"):
+    with pytest.raises(ValueError, match=r"no field 'severity' on app:deploy\.finished"):
         after.where(F.severity >= 7)
 
 
@@ -133,29 +133,32 @@ def test_field_helpers() -> None:
 
 
 def test_filters_admit_event_types() -> None:
-    errors, deploys = OnFilter(types=("service.error",)), OnFilter(types=("deploy.finished",))
-    both = OnFilter(types=("service.error", "service.error", "deploy.finished"))
+    errors, deploys = (
+        OnFilter(types=("app:service.error",)),
+        OnFilter(types=("app:deploy.finished",)),
+    )
+    both = OnFilter(types=("app:service.error", "app:service.error", "app:deploy.finished"))
     severe = F.severity >= 7
-    assert admitted(both) == ("service.error", "deploy.finished")
+    assert admitted(both) == ("app:service.error", "app:deploy.finished")
     assert admitted(severe) is None
-    assert admitted(severe, ("service.error",)) == ("service.error",)
-    assert admitted(AllFilter(of=(both, errors))) == ("service.error",)
-    assert admitted(AnyFilter(of=(errors, deploys))) == ("service.error", "deploy.finished")
+    assert admitted(severe, ("app:service.error",)) == ("app:service.error",)
+    assert admitted(AllFilter(of=(both, errors))) == ("app:service.error",)
+    assert admitted(AnyFilter(of=(errors, deploys))) == ("app:service.error", "app:deploy.finished")
     assert admitted(AnyFilter(of=(errors, severe))) is None
     # A not removes what its filter accepts whatever the fields, wherever it stands.
-    assert admitted(AllFilter(of=(NotFilter(filter=deploys), both))) == ("service.error",)
+    assert admitted(AllFilter(of=(NotFilter(filter=deploys), both))) == ("app:service.error",)
     assert admitted(AllFilter(of=(both, NotFilter(filter=severe)))) == admitted(both)
     either = AnyFilter(of=(deploys, AllFilter(of=(errors, severe))))
-    assert admitted(AllFilter(of=(both, NotFilter(filter=either)))) == ("service.error",)
+    assert admitted(AllFilter(of=(both, NotFilter(filter=either)))) == ("app:service.error",)
     assert admitted(NotFilter(filter=errors)) is None
     assert where_fields(AllFilter(of=(severe, AnyFilter(of=(errors, deploys))))) == [
-        ("severity", ("service.error", "deploy.finished"))
+        ("severity", ("app:service.error", "app:deploy.finished"))
     ]
     assert where_fields(AnyFilter(of=(AllFilter(of=(errors, severe)), deploys))) == [
-        ("severity", ("service.error",))
+        ("severity", ("app:service.error",))
     ]
     assert where_fields(AllFilter(of=(errors, NotFilter(filter=severe)))) == [
-        ("severity", ("service.error",))
+        ("severity", ("app:service.error",))
     ]
     assert where_fields(NotFilter(filter=severe)) == [("severity", None)]
     assert where_fields(PredicateFilter(name="p")) == []

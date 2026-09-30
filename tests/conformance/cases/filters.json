@@ -8,7 +8,7 @@
           "filter": {
             "kind": "on",
             "types": [
-              "service.error"
+              "app:service.error"
             ]
           }
         }
@@ -18,7 +18,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -26,7 +26,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "deploy.finished",
+            "type": "app:deploy.finished",
             "service": "auth"
           }
         },
@@ -34,7 +34,7 @@
           "seq": 3,
           "at": 2,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "billing"
           }
         }
@@ -66,8 +66,8 @@
           "filter": {
             "kind": "on",
             "types": [
-              "service.error",
-              "deploy.finished"
+              "app:service.error",
+              "app:deploy.finished"
             ]
           }
         }
@@ -77,7 +77,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -85,7 +85,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "deploy.finished",
+            "type": "app:deploy.finished",
             "service": "auth"
           }
         },
@@ -93,7 +93,7 @@
           "seq": 3,
           "at": 2,
           "event": {
-            "type": "heartbeat",
+            "type": "app:heartbeat",
             "service": "auth"
           }
         }
@@ -126,7 +126,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -150,7 +150,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 6
           }
@@ -159,7 +159,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 7
           }
@@ -168,7 +168,7 @@
           "seq": 3,
           "at": 2,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 8
           }
@@ -177,7 +177,7 @@
           "seq": 4,
           "at": 3,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 9
           }
@@ -211,7 +211,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -235,7 +235,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 5
           }
@@ -244,7 +244,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 6
           }
@@ -253,7 +253,7 @@
           "seq": 3,
           "at": 2,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 7
           }
@@ -281,7 +281,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -305,7 +305,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "region": "eu"
           }
@@ -314,7 +314,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "region": "us"
           }
@@ -323,7 +323,7 @@
           "seq": 3,
           "at": 2,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "billing"
           }
         }
@@ -350,7 +350,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -368,7 +368,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "region": "de"
           }
@@ -377,7 +377,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "region": "eu"
           }
@@ -386,7 +386,7 @@
           "seq": 3,
           "at": 2,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "region": "us"
           }
@@ -420,7 +420,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -449,7 +449,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 9
           }
@@ -470,7 +470,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "flag"
+                  "app:flag"
                 ]
               },
               {
@@ -488,7 +488,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "flag",
+            "type": "app:flag",
             "on": true
           }
         }
@@ -508,7 +508,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "flag"
+                  "app:flag"
                 ]
               },
               {
@@ -526,7 +526,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "flag",
+            "type": "app:flag",
             "on": true
           }
         },
@@ -534,7 +534,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "flag",
+            "type": "app:flag",
             "on": false
           }
         }
@@ -561,7 +561,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -582,7 +582,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -590,7 +590,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "search"
           }
         },
@@ -598,7 +598,7 @@
           "seq": 3,
           "at": 2,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "billing"
           }
         }
@@ -631,7 +631,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -649,7 +649,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "tags": [
               "db",
@@ -661,7 +661,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "tags": [
               "api"
@@ -691,7 +691,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -709,7 +709,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "message": "db timeout"
           }
@@ -718,7 +718,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "message": "ok"
           }
@@ -746,7 +746,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -764,7 +764,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 5
           }
@@ -785,7 +785,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -803,7 +803,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "message": "db: slow"
           }
@@ -812,7 +812,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "message": "a db: x"
           }
@@ -840,7 +840,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -858,7 +858,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 5
           }
@@ -879,7 +879,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -897,7 +897,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "extra": {
               "code": 1
@@ -908,7 +908,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "extra": {}
           }
@@ -936,7 +936,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -954,7 +954,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "extra": {
               "code": 1
@@ -965,7 +965,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "extra": {}
           }
@@ -993,7 +993,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -1022,7 +1022,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "extra": {}
           }
@@ -1052,13 +1052,13 @@
                   {
                     "kind": "on",
                     "types": [
-                      "deploy.finished"
+                      "app:deploy.finished"
                     ]
                   },
                   {
                     "kind": "on",
                     "types": [
-                      "service.error"
+                      "app:service.error"
                     ]
                   }
                 ]
@@ -1072,7 +1072,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "deploy.finished",
+            "type": "app:deploy.finished",
             "service": "auth"
           }
         },
@@ -1080,7 +1080,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 8
           }
@@ -1108,7 +1108,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -1126,7 +1126,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         }
@@ -1146,8 +1146,8 @@
               {
                 "kind": "on",
                 "types": [
-                  "deploy.finished",
-                  "service.error"
+                  "app:deploy.finished",
+                  "app:service.error"
                 ]
               },
               {
@@ -1168,7 +1168,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "deploy.finished",
+            "type": "app:deploy.finished",
             "service": "auth"
           }
         },
@@ -1176,7 +1176,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 8
           }
@@ -1185,7 +1185,7 @@
           "seq": 3,
           "at": 2,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 3
           }
@@ -1219,7 +1219,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -1237,7 +1237,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "labels": {
               "env": "staging"
@@ -1248,7 +1248,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         }
@@ -1275,7 +1275,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -1313,7 +1313,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -1321,7 +1321,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "billing",
             "severity": 9
           }
@@ -1330,7 +1330,7 @@
           "seq": 3,
           "at": 2,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "region": "us"
           }
@@ -1339,7 +1339,7 @@
           "seq": 4,
           "at": 3,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "billing"
           }
         }
@@ -1372,7 +1372,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -1388,7 +1388,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 2
           }
@@ -1397,7 +1397,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 3
           }
@@ -1406,7 +1406,7 @@
           "seq": 3,
           "at": 2,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth",
             "severity": 4
           }
@@ -1440,7 +1440,7 @@
               {
                 "kind": "on",
                 "types": [
-                  "service.error"
+                  "app:service.error"
                 ]
               },
               {
@@ -1456,7 +1456,7 @@
           "seq": 1,
           "at": 0,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         },
@@ -1464,7 +1464,7 @@
           "seq": 2,
           "at": 1,
           "event": {
-            "type": "service.error",
+            "type": "app:service.error",
             "service": "auth"
           }
         }

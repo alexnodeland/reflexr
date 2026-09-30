@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from reflexr.core import (
+    DEFAULT_REGISTRY,
     ActionRef,
     AllFilter,
     AnyFilter,
@@ -21,7 +22,6 @@ from reflexr.core import (
     Scope,
     SequencePattern,
     by,
-    event_types,
     on,
     run,
     scope_key,
@@ -39,7 +39,7 @@ class Triage:
 
 def spike(**changes: object) -> Rule:
     fields: dict[str, object] = {
-        "name": "error-spike",
+        "name": "app:error-spike",
         "when": on(ServiceError).where(F.severity >= 7).count(at_least=3, within=MINUTE),
         "scope": by(F.service),
         "then": run(Triage()),
@@ -70,9 +70,13 @@ def test_retry_policies_back_off_exponentially() -> None:
     assert policy.next_attempt(4, NOW) is None
 
 
-def test_rule_names_are_checked() -> None:
-    with pytest.raises(ValidationError):
-        spike(name="Has Spaces")
+def test_rule_names_are_qualified() -> None:
+    assert spike(name="oncall:triage.v2").name == "oncall:triage.v2"
+    for name in ("Has Spaces", "error-spike", "app:", "App:spike", "a:b:c"):
+        with pytest.raises(ValidationError, match="should match pattern"):
+            spike(name=name)
+    with pytest.raises(ValidationError, match="the reflexr namespace is reserved"):
+        spike(name="reflexr:spike")
 
 
 def test_the_definition_changes_only_with_what_the_rule_decides() -> None:
@@ -89,10 +93,10 @@ def test_turning_a_rule_off_and_on_keeps_its_definition() -> None:
 
 
 def test_a_valid_rule_passes_its_check() -> None:
-    spike().check(events=event_types(), actions={"triage"})
+    spike().check(events=DEFAULT_REGISTRY, actions={"triage"})
     watch = Rule(
-        name="dead-letters",
-        when=on("run_dead_lettered"),
+        name="app:dead-letters",
+        when=on("reflexr:run_dead_lettered"),
         then=run("page"),
     )
     watch.check(events={}, actions={"page"})
@@ -100,28 +104,30 @@ def test_a_valid_rule_passes_its_check() -> None:
 
 def test_the_check_lists_every_problem() -> None:
     rule = Rule(
-        name="broken",
-        when=on("service.error", "nope")
+        name="app:broken",
+        when=on("app:service.error", "app:nope")
         .where(NotFilter(filter=PredicateFilter(name="missing")), F.labels.env.eq("prod"))
         .distinct("fingerprint", within=MINUTE),
         scope=by("region"),
         then=run("absent"),
     )
     with pytest.raises(InvalidRule) as invalid:
-        rule.check(events={"service.error": ServiceError, "heartbeat": Heartbeat}, actions=())
+        rule.check(
+            events={"app:service.error": ServiceError, "app:heartbeat": Heartbeat}, actions=()
+        )
     assert invalid.value.problems == [
-        "no event type 'nope'",
+        "no event type 'app:nope'",
         "no predicate 'missing'",
         "no action 'absent'",
     ]
     heartbeats = Rule.model_validate(
         {
-            "name": "quiet",
+            "name": "app:quiet",
             "when": {
                 "filter": {
                     "kind": "all",
                     "of": [
-                        {"kind": "on", "types": ["heartbeat"]},
+                        {"kind": "on", "types": ["app:heartbeat"]},
                         {"kind": "where", "field": "severity", "op": "eq", "value": 1},
                     ],
                 }
@@ -130,38 +136,38 @@ def test_the_check_lists_every_problem() -> None:
             "then": {"action": "page"},
         }
     )
-    with pytest.raises(InvalidRule, match="rule 'quiet' is invalid") as invalid:
-        heartbeats.check(events=event_types(), actions={"page"})
+    with pytest.raises(InvalidRule, match="rule 'app:quiet' is invalid") as invalid:
+        heartbeats.check(events=DEFAULT_REGISTRY, actions={"page"})
     assert invalid.value.problems == [
-        "no field 'severity' on heartbeat",
-        "no field 'region' on heartbeat",
+        "no field 'severity' on app:heartbeat",
+        "no field 'region' on app:heartbeat",
     ]
 
 
 def test_sequence_steps_are_checked_too() -> None:
     rule = Rule(
-        name="regression",
+        name="app:regression",
         when=sequence(on(Deploy), on(ServiceError).where(PredicateFilter(name="p")), within=MINUTE),
         scope=by(F.service),
         then=run("rollback"),
     )
     with pytest.raises(InvalidRule) as invalid:
-        rule.check(events=event_types(), actions={"rollback"})
+        rule.check(events=DEFAULT_REGISTRY, actions={"rollback"})
     assert invalid.value.problems == ["no predicate 'p'"]  # once, though two places name it
-    rule.check(events=event_types(), actions={"rollback"}, predicates={"p"})
+    rule.check(events=DEFAULT_REGISTRY, actions={"rollback"}, predicates={"p"})
 
 
-ERRORS = OnFilter(types=("service.error",))
-DEPLOYS = OnFilter(types=("deploy.finished",))
+ERRORS = OnFilter(types=("app:service.error",))
+DEPLOYS = OnFilter(types=("app:deploy.finished",))
 SEVERE = F.severity >= 7
 
 
 def problems(filter: Filter, **condition: object) -> list[str]:
     """Check a rule with this filter, and return its problems."""
     when = Condition.model_validate({"filter": filter, **condition})
-    rule = Rule(name="checked", when=when, scope=by(F.service), then=run("act"))
+    rule = Rule(name="app:checked", when=when, scope=by(F.service), then=run("act"))
     try:
-        rule.check(events=event_types(), actions={"act"})
+        rule.check(events=DEFAULT_REGISTRY, actions={"act"})
     except InvalidRule as invalid:
         return invalid.problems
     return []
@@ -177,31 +183,31 @@ def test_a_field_is_checked_on_the_types_of_its_own_conjunction() -> None:
     assert problems(AnyFilter(of=(AllFilter(of=(ERRORS, SEVERE)), DEPLOYS))) == []
     # where(x) & (on(A) | on(B)): x is compared on both.
     assert problems(AllFilter(of=(SEVERE, AnyFilter(of=(ERRORS, DEPLOYS))))) == [
-        "no field 'severity' on deploy.finished"
+        "no field 'severity' on app:deploy.finished"
     ]
     # A where inside an any is compared on what the enclosing conjunction admits.
-    either = AnyFilter(of=(SEVERE, OnFilter(types=("deploy.finished",))))
+    either = AnyFilter(of=(SEVERE, OnFilter(types=("app:deploy.finished",))))
     assert problems(AllFilter(of=(ERRORS, either))) == []
 
 
 def test_a_not_neither_admits_nor_hides_types() -> None:
-    both = OnFilter(types=("service.error", "deploy.finished"))
+    both = OnFilter(types=("app:service.error", "app:deploy.finished"))
     assert problems(AllFilter(of=(both, NotFilter(filter=DEPLOYS), SEVERE))) == []
     assert problems(AllFilter(of=(ERRORS, NotFilter(filter=F.nope.eq(1))))) == [
-        "no field 'nope' on service.error"
+        "no field 'nope' on app:service.error"
     ]
     # With no on to go by, a where cannot be checked: a negated on keeps types out, no more.
     assert problems(AllFilter(of=(NotFilter(filter=DEPLOYS), SEVERE))) == []
     assert problems(NotFilter(filter=AllFilter(of=(DEPLOYS, SEVERE)))) == [
-        "no field 'severity' on deploy.finished"
+        "no field 'severity' on app:deploy.finished"
     ]
 
 
 def test_sequence_steps_see_only_what_passed_the_filter() -> None:
-    both = OnFilter(types=("service.error", "deploy.finished"))
+    both = OnFilter(types=("app:service.error", "app:deploy.finished"))
     steps: tuple[Filter, ...] = (DEPLOYS, SEVERE)
     pattern = SequencePattern(steps=steps, within=MINUTE)
-    assert problems(both, pattern=pattern) == ["no field 'severity' on deploy.finished"]
+    assert problems(both, pattern=pattern) == ["no field 'severity' on app:deploy.finished"]
     narrowed = SequencePattern(steps=(DEPLOYS, AllFilter(of=(ERRORS, SEVERE))), within=MINUTE)
     assert problems(both, pattern=narrowed) == []
     assert problems(ERRORS, pattern=pattern) == []

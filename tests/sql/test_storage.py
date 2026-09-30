@@ -233,7 +233,7 @@ async def test_reactors_in_two_processes_fire_and_run_each_firing_once(schema: D
     async def note(reaction: Reaction[None]) -> None:
         calls[reaction.run.id] += 1
 
-    rule = Rule(name="deploys", when=on(Deploy), then=run("note"))
+    rule = Rule(name="app:deploys", when=on(Deploy), then=run("note"))
     processes = [Workspaces(process(schema), events=[Deploy], rules=[rule]) for _ in range(2)]
     workspace = await processes[0].open("acme", "prod", actor=MONITOR)
     for i in range(10):

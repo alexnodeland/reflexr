@@ -44,12 +44,12 @@ ACME = WorkspaceRef("acme", "prod")
 MINUTE = timedelta(minutes=1)
 
 spike = Rule(
-    name="spike",
+    name="app:spike",
     when=on(ServiceError).count(at_least=3, within=MINUTE),
     scope=by(F.service),
     then=run("triage"),
 )
-deploys = Rule(name="deploys", when=on(Deploy), then=run("note"))
+deploys = Rule(name="app:deploys", when=on(Deploy), then=run("note"))
 
 
 async def noop(reaction: Reaction[None]) -> None:
@@ -79,14 +79,14 @@ async def test_rules_fire_once_and_create_runs(build: Build) -> None:
     [pending] = await workspace.runs()
     third = (await workspace.read())[2]
     assert (pending.rule, pending.scope, pending.status) == (
-        "spike",
+        "app:spike",
         {"service": "auth"},
         "pending",
     )
     assert (pending.matched, pending.correlation_id, pending.depth) == ((1, 2, 3), third.id, 0)
     fired = (await workspace.read(after_seq=3))[0]
     assert fired.event == RuleFired(
-        rule="spike",
+        rule="app:spike",
         scope={"service": "auth"},
         scope_key=pending.scope_key,
         firing_id=pending.id,
@@ -94,7 +94,7 @@ async def test_rules_fire_once_and_create_runs(build: Build) -> None:
     )
     assert (fired.actor, fired.correlation_id) == (REACTOR, third.id)
     assert fired.causation == Causation(firing_id=pending.id, run_id=pending.id, depth=1)
-    assert (await workspace.rule_progress())["spike"].cursor == 4
+    assert (await workspace.rule_progress())["app:spike"].cursor == 4
 
 
 async def test_a_new_workspace_meets_every_rule_at_its_first_event(build: Build) -> None:
@@ -107,10 +107,10 @@ async def test_a_new_workspace_meets_every_rule_at_its_first_event(build: Build)
 async def test_a_rule_added_later_starts_at_the_head_or_the_beginning(build: Build) -> None:
     workspace = await open_(build([deploys]))
     await workspace.publish(Deploy(service="auth"))
-    backlog = Rule(name="backlog", when=on(Deploy), then=run("note"), start="beginning")
-    late = Rule(name="late", when=on(Deploy), then=run("note"))
+    backlog = Rule(name="app:backlog", when=on(Deploy), then=run("note"), start="beginning")
+    late = Rule(name="app:late", when=on(Deploy), then=run("note"))
     assert await Reactor(build([deploys, backlog, late]), actions=ACTIONS).evaluate() == 2
-    assert sorted(r.rule for r in await workspace.runs()) == ["backlog", "deploys"]
+    assert sorted(r.rule for r in await workspace.runs()) == ["app:backlog", "app:deploys"]
 
 
 async def test_a_disabled_rule_holds_its_cursor_and_resumes_from_it(
@@ -123,24 +123,24 @@ async def test_a_disabled_rule_holds_its_cursor_and_resumes_from_it(
     await workspace.publish(Deploy(service="auth"))
     assert await Reactor(workspaces, actions=ACTIONS).settle() == Settled(firings=1, attempts=1)
     progress = await workspace.rule_progress()
-    assert (progress["spike"].cursor, progress["deploys"].cursor) == (0, 7)
+    assert (progress["app:spike"].cursor, progress["app:deploys"].cursor) == (0, 7)
     fired = [e.event for e in await workspace.read() if isinstance(e.event, RuleFired)]
-    assert [f.rule for f in fired] == ["deploys"]
+    assert [f.rule for f in fired] == ["app:deploys"]
     lags = {str(attributes[a.RULE]) for attributes, _ in telemetry.points("reflexr.evaluation.lag")}
-    assert lags == {"deploys"}  # behind by choice is not a lag
+    assert lags == {"app:deploys"}  # behind by choice is not a lag
     # Enabled again, it resumes from its cursor: the errors it missed still count.
     assert await Reactor(build([spike, deploys]), actions=ACTIONS).evaluate() == 1
-    assert (await workspace.rule_progress())["spike"].generation == 0  # nothing was reset
+    assert (await workspace.rule_progress())["app:spike"].generation == 0  # nothing was reset
     assert not [e for e in await workspace.read() if isinstance(e.event, RuleReset)]
 
 
 async def test_a_disabled_rule_added_later_starts_when_it_is_enabled(build: Build) -> None:
     workspace = await open_(build([deploys]))
     await workspace.publish(Deploy(service="auth"))
-    late = Rule(name="late", when=on(Deploy), then=run("note"), start="beginning")
+    late = Rule(name="app:late", when=on(Deploy), then=run("note"), start="beginning")
     off = late.model_copy(update={"enabled": False})
     assert await Reactor(build([deploys, off]), actions=ACTIONS).evaluate() == 1
-    assert "late" not in await workspace.rule_progress()
+    assert "app:late" not in await workspace.rule_progress()
     # Enabled, it starts where its start says: here, at the beginning.
     assert await Reactor(build([deploys, late]), actions=ACTIONS).evaluate() == 1
 
@@ -152,21 +152,23 @@ async def test_a_disabled_rules_backlog_is_skipped_by_replaying_it_from_the_head
     workspace = await open_(build([off]))
     await errors(workspace)
     operator = workspace.as_actor(UserActor(id="ada"))
-    await operator.replay_rule("spike", from_seq=await workspace.head_seq())
+    await operator.replay_rule("app:spike", from_seq=await workspace.head_seq())
     assert await Reactor(build([spike]), actions=ACTIONS).evaluate() == 0
     await errors(workspace)
     assert await Reactor(build([spike]), actions=ACTIONS).evaluate() == 1
 
 
 async def test_rules_react_to_each_others_facts_in_one_pass(build: Build) -> None:
-    noticed = Rule(name="noticed", when=on(RuleFired).where(rule="deploys"), then=run("note"))
+    noticed = Rule(
+        name="app:noticed", when=on(RuleFired).where(rule="app:deploys"), then=run("note")
+    )
     workspaces = build([deploys, noticed])
     workspace = await open_(workspaces)
     await Reactor(workspaces, actions=ACTIONS).evaluate()
     await workspace.publish(Deploy(service="auth"))
     assert await Reactor(workspaces, actions=ACTIONS).evaluate() == 2
     runs = {r.rule: r for r in await workspace.runs()}
-    assert (runs["deploys"].depth, runs["noticed"].depth) == (0, 1)
+    assert (runs["app:deploys"].depth, runs["app:noticed"].depth) == (0, 1)
 
 
 async def test_a_changed_rule_starts_afresh_at_the_head(build: Build, storage: Storage) -> None:
@@ -180,11 +182,11 @@ async def test_a_changed_rule_starts_afresh_at_the_head(build: Build, storage: S
     await errors(workspace, n=1)
     assert await reactor.evaluate() == 0  # the two earlier errors no longer count
     [reset] = [e for e in await workspace.read() if isinstance(e.event, RuleReset)]
-    assert reset.event == RuleReset(rule="spike", generation=1, reason="changed", from_seq=3)
+    assert reset.event == RuleReset(rule="app:spike", generation=1, reason="changed", from_seq=3)
     assert (reset.actor, reset.correlation_id) == (REACTOR, reset.id)
     await errors(workspace, n=2)
     assert await reactor.evaluate() == 1
-    assert (await workspace.rule_progress())["spike"].generation == 1
+    assert (await workspace.rule_progress())["app:spike"].generation == 1
 
 
 async def test_replaying_rebuilds_or_refires(build: Build) -> None:
@@ -195,12 +197,12 @@ async def test_replaying_rebuilds_or_refires(build: Build) -> None:
     await errors(workspace)
     await reactor.evaluate()
     operator = workspace.as_actor(UserActor(id="ada"))
-    rebuilt = await operator.replay_rule("spike")
+    rebuilt = await operator.replay_rule("app:spike")
     assert (rebuilt.cursor, rebuilt.silent_through, rebuilt.generation) == (0, 4, 1)
     assert await reactor.evaluate() == 0  # the state is rebuilt without firing again
     await errors(workspace, n=3)
     assert await reactor.evaluate() == 1
-    refired = await operator.replay_rule("spike", from_seq=0, mode="refire")
+    refired = await operator.replay_rule("app:spike", from_seq=0, mode="refire")
     assert refired.silent_through == 0
     assert await reactor.evaluate() == 2  # both counts fire again, as new runs
     runs = await workspace.runs()
@@ -218,8 +220,8 @@ async def test_replaying_checks_the_rule_and_position(build: Build) -> None:
     with pytest.raises(NotFound, match="rule nope"):
         await workspace.replay_rule("nope")
     with pytest.raises(ValidationFailed, match="between 0 and the head of the log, 0"):
-        await workspace.replay_rule("spike", from_seq=1)
-    progress = await workspace.replay_rule("spike")  # never evaluated: it starts from scratch
+        await workspace.replay_rule("app:spike", from_seq=1)
+    progress = await workspace.replay_rule("app:spike")  # never evaluated: it starts from scratch
     assert (progress.cursor, progress.generation) == (0, 1)
 
 
@@ -230,7 +232,7 @@ async def test_firings_beyond_the_depth_limit_are_refused(build: Build) -> None:
     deep = workspace.caused_by(Causation(firing_id="f", run_id="f", depth=3), correlation_id="c")
     await deep.publish(Deploy(service="auth"), correlation_id=None)
     assert await Reactor(workspaces, actions=ACTIONS).evaluate() == 0
-    [letter] = await workspace.dead_letters(rule="deploys")
+    [letter] = await workspace.dead_letters(rule="app:deploys")
     assert "causation depth 4, beyond the limit of 3" in letter.error
     errored = (await workspace.read())[-1]
     assert isinstance(errored.event, RuleErrored)
@@ -242,7 +244,7 @@ async def test_evaluation_errors_are_dead_lettered_for_their_rule(build: Build) 
         raise RuntimeError("no")
 
     fragile = Rule(
-        name="fragile", when=on(Deploy).where(PredicateFilter(name="boom")), then=run("note")
+        name="app:fragile", when=on(Deploy).where(PredicateFilter(name="boom")), then=run("note")
     )
     workspaces = build([fragile, deploys], predicates={"boom": boom})
     workspace = await open_(workspaces)
@@ -252,14 +254,14 @@ async def test_evaluation_errors_are_dead_lettered_for_their_rule(build: Build) 
         await Reactor(workspaces, actions=ACTIONS).evaluate() == 1
     )  # the other rule is unaffected
     [letter] = await workspace.dead_letters()
-    assert (letter.rule, letter.seq) == ("fragile", 1)
+    assert (letter.rule, letter.seq) == ("app:fragile", 1)
 
 
 async def test_absence_fires_when_the_log_moves_past_its_deadline(
     build: Build, storage: Storage, clock: FakeClock
 ) -> None:
     quiet = Rule(
-        name="quiet",
+        name="app:quiet",
         when=on(Heartbeat).absent(within=timedelta(minutes=5)),
         scope=by(F.service),
         then=run("page"),
@@ -331,7 +333,7 @@ async def test_a_reactor_that_loses_its_lease_stops(clock: FakeClock) -> None:
         await workspace.publish(Deploy(service="auth"))
     # The lease is taken, renewed once after the first batch, and lost after the second.
     assert await Reactor(workspaces, actions=ACTIONS, batch_size=1).evaluate() == 2
-    assert (await workspace.rule_progress())["deploys"].cursor == 2
+    assert (await workspace.rule_progress())["app:deploys"].cursor == 2
 
 
 class StopsInATransaction(InMemoryStorage):
@@ -354,7 +356,7 @@ async def test_a_stopped_reactor_stops_evaluating_after_its_current_batch(
     clock: FakeClock,
 ) -> None:
     storage = StopsInATransaction(clock)
-    audit = Rule(name="audit", when=on(Deploy), then=run("note"))
+    audit = Rule(name="app:audit", when=on(Deploy), then=run("note"))
     workspaces = Workspaces(storage, rules=[deploys, audit], clock=clock)
     handles = [
         await workspaces.open("acme", name, actor=SourceActor(name="monitor"))
@@ -368,7 +370,7 @@ async def test_a_stopped_reactor_stops_evaluating_after_its_current_batch(
     # The batch that was evaluating when the stop came finished, and nothing after it began,
     # not even the firing's run.
     progress = [await w.rule_progress() for w in handles]
-    cursors = sorted((p["deploys"].cursor, p["audit"].cursor) for p in progress)
+    cursors = sorted((p["app:deploys"].cursor, p["app:audit"].cursor) for p in progress)
     assert cursors == [(0, 0), (1, 0)]
     assert [r.status for w in handles for r in await w.runs()] == ["pending"]
 
@@ -385,21 +387,23 @@ async def test_batches_are_bounded(build: Build) -> None:
 
 
 async def test_rules_are_checked_when_the_workspaces_are_built(storage: Storage) -> None:
-    with pytest.raises(InvalidRule, match="no event type 'heartbeat'"):
+    with pytest.raises(InvalidRule, match="no event type 'app:heartbeat'"):
         Workspaces(
-            storage, events=[Deploy], rules=[Rule(name="r", when=on(Heartbeat), then=run("a"))]
+            storage, events=[Deploy], rules=[Rule(name="app:r", when=on(Heartbeat), then=run("a"))]
         )
     with pytest.raises(InvalidRule, match="no predicate 'boom'"):
         Workspaces(
             storage,
             rules=[
-                Rule(name="r", when=on(Deploy).where(PredicateFilter(name="boom")), then=run("a"))
+                Rule(
+                    name="app:r", when=on(Deploy).where(PredicateFilter(name="boom")), then=run("a")
+                )
             ],
         )
-    with pytest.raises(ValueError, match="two rules are named 'deploys'"):
+    with pytest.raises(ValueError, match="two rules are named 'app:deploys'"):
         Workspaces(storage, rules=[deploys, deploys])
     workspaces = Workspaces(storage, rules=[deploys], predicates={"p": lambda e: True})
-    assert (list(workspaces.rules), list(workspaces.predicates)) == (["deploys"], ["p"])
+    assert (list(workspaces.rules), list(workspaces.predicates)) == (["app:deploys"], ["p"])
 
 
 async def test_evaluation_is_traced_and_measured(build: Build, telemetry: Telemetry) -> None:
@@ -415,7 +419,7 @@ async def test_evaluation_is_traced_and_measured(build: Build, telemetry: Teleme
     assert dict(span.attributes or {}) == {
         a.TENANT_ID: "acme",
         a.WORKSPACE_ID: "prod",
-        a.EVALUATED_RULES: ("spike",),
+        a.EVALUATED_RULES: ("app:spike",),
         a.FIRING_COUNT: 1,
     }
     fired = next(e for e in await workspace.read() if isinstance(e.event, RuleFired))

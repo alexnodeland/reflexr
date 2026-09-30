@@ -17,7 +17,7 @@ async def note(reaction: Reaction[None]) -> None:
 
 
 async def test_feedback_reaches_langfuse_on_its_trace(backend: Backend) -> None:
-    rule = Rule(name="deploys", when=on(Deploy), then=run("note"))
+    rule = Rule(name="app:deploys", when=on(Deploy), then=run("note"))
     workspaces = Workspaces(InMemoryStorage(), rules=[rule], tracer_provider=TracerProvider())
     ws = await workspaces.open("acme", "prod", actor=SourceActor(name="ci"))
     await ws.publish(Deploy(service="auth"))

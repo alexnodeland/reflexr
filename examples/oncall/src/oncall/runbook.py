@@ -78,7 +78,7 @@ async def diagnose(
 ) -> RollbackPlan | EscalationPlan:
     """Look for a recent deploy of the service in the log, and the version before it."""
     service = ctx.inputs.service
-    opened = ctx.deps.events[-1]  # the incident.opened envelope that fired the runbook
+    opened = ctx.deps.events[-1]  # the oncall:incident.opened envelope that fired the runbook
     earlier = await ctx.deps.workspace.read(
         before_seq=opened.seq, types=[DeployCompleted.event_type]
     )
