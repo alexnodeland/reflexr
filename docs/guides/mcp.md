@@ -1,6 +1,6 @@
 # External agents over MCP
 
-Agents outside your application, such as a coding assistant, an on-call copilot or another service, can feed and operate workspaces over the [Model Context Protocol](https://modelcontextprotocol.io). `reflexr.mcp` (the `mcp` extra) serves one: publishing, reading and administration are tools, runs are resources, and a run's progress arrives as resource-updated notifications. Every tool goes through the same command handler as REST and the WebSocket, so an external agent is an actor like any other, with the same rules and the same attribution ([ADR-0044](../adr/0044-surfaces.md)).
+Agents outside your application, such as a coding assistant, an on-call copilot or another service, can feed and operate workspaces over the [Model Context Protocol](https://modelcontextprotocol.io). `reflexr.mcp` (the `mcp` extra) serves one: publishing, reading and administration are tools, runs are resources, and a run's progress arrives as resource-updated notifications. Every tool goes through the same command handler as REST and the WebSocket, so an external agent is an actor like any other, with the same rules and the same attribution, and a change it retries is made once ([ADR-0044](../adr/0044-surfaces.md), [ADR-0047](../adr/0047-commands-carried-out-once-per-id.md)).
 
 ## Mounting the server
 
@@ -38,7 +38,7 @@ Clients connect to `https://your-host/mcp/` with any MCP client that speaks Stre
 
 | `ReflexrMcp` argument | Meaning |
 |---|---|
-| `workspaces` | Opens tenant-scoped workspaces, and holds the rules the tools list and replay |
+| `workspaces` | Opens tenant-scoped workspaces, holds the rules the tools list and replay, and carries out every tool's command, once per `command_id` ([Retries](#retries)) |
 | `resolve` | Authenticates each request and returns the client's tenant and `ExternalAgentActor` |
 | `authorize` | Whether a client may use a workspace of its tenant: the router's hook, asked on every tool call, resource read and resource subscription that names a workspace. `None`, the default, allows every one |
 | `name` | The server's name, `"reflexr"` by default |
@@ -78,7 +78,7 @@ It is asked on every tool call and resource read that names a workspace, before 
 
 ## Tools
 
-The server's instructions tell the client what it is talking to: event logs, one per workspace, watched by rules that run agents and workflows. Its tools cover everything the [stream protocol](../protocol.md#mcp) does:
+The server's instructions tell the client what it is talking to: event logs, one per workspace, watched by rules that run agents and workflows. They also ask it to give each change a `command_id`. Its tools cover everything the [stream protocol](../protocol.md#mcp) does:
 
 | Tool | Does |
 |---|---|
@@ -100,6 +100,8 @@ The server's instructions tell the client what it is talking to: event logs, one
 | `list_dead_letters(workspace_id, rule=None)` | The envelopes rules could not evaluate, as JSON lines |
 | `give_feedback(workspace_id, feedback_type, target, value=None)` | Typed feedback on a run, a firing or a chain ([Feedback and evaluation](evaluation.md#giving-feedback)) |
 
+Each tool that changes something, `publish_event`, `replay_rule`, `install_rule`, `update_rule`, `archive_rule`, `retry_run`, `skip_run`, `cancel_run` and `give_feedback`, also takes an optional `command_id` ([Retries](#retries)).
+
 Commands answer with their outcome as JSON, such as `{"type":"published","seq":1,"id":"alert-7","duplicate":false}`. A rejection is a tool error carrying its message: retrying a run that succeeded answers `Error executing tool retry_run: cannot retry run fir_ce4679d4c7453919, which is succeeded`, and publishing one of reflexr's own events answers `reflexr:run_succeeded events are recorded by reflexr, not published`. A `validation_failed` rejection that lists problems has them after its message, as JSON, as REST's body has them in `errors`: publishing `{"type": "ops:service.error", "severity": 8}`, without its `service`, answers `invalid ops:service.error event: [{"loc": ["service"], "msg": "Field required", "type": "missing"}]`.
 
 Events a client publishes are attributed to its `ExternalAgentActor`, so people, the reactor and other clients see who did what:
@@ -110,6 +112,23 @@ Events a client publishes are attributed to its `ExternalAgentActor`, so people,
 
 The same rules apply as everywhere else: the `Workspaces` event allowlist decides what a client may publish, reflexr's own events are refused, and a publish is idempotent by its id.
 
+## Retries
+
+Agents retry tool calls, and transports drop replies. Give each call that changes something a `command_id` of the client's choosing, and the same id when retrying it: the server carries the command out once, and answers the retry with the first result, including a rejection. It is the `command_id` of REST's command frames, and one memory serves every surface, keyed by the tenant, the workspace, the client and the id ([Deduplication](../protocol.md#deduplication)). A call without a `command_id` is carried out every time, and one with an empty `command_id` is refused, as REST refuses it.
+
+```python
+feedback = {
+    "workspace_id": "prod",
+    "feedback_type": "triage_quality",
+    "target": {"kind": "run", "run_id": run_id},
+    "value": {"correct": True, "severity": "high"},
+}
+first = await client.call_tool("give_feedback", {**feedback, "command_id": "c_7"})
+again = await client.call_tool("give_feedback", {**feedback, "command_id": "c_7"})  # given once
+```
+
+A publish with an event `id` is idempotent without a `command_id`, and so is a change to a stored rule that has already been made: both are deduplicated by the log, whichever process a retry reaches.
+
 ## Stored rules
 
 When the application turns [stored rules](rules.md#stored-rules) on, a client can install, update and archive them in a workspace, as relayr does for a rule a person accepted in chat. The three tools are served only then: without `stored_rules` they could only refuse, so a client's list of tools doesn't carry them. `rule` is the whole rule, as the [rules schema](../reference/schema.md) has it, and the tool's input schema carries it, so a client can draft one; `provenance` is JSON that reflexr keeps with the rule and its `reflexr:rule_installed` fact, and does not read. Each tool answers with the command's `rule_version` outcome:
@@ -118,7 +137,7 @@ When the application turns [stored rules](rules.md#stored-rules) on, a client ca
 {"type": "rule_version", "rule": "chat:prod-deploy-failures", "version": 1, "seq": 812, "duplicate": false}
 ```
 
-The configuration's `allow` hook is asked about each change after `authorize`, and each change is checked as over REST: a rule the fixed limits refuse answers every problem at once, `rule chat:prod-deploy-failures cannot be stored: ["when.throttle is required", "timeout is required"]`, and a rule someone else changed since the `expected_version` a client gives answers `rule chat:prod-deploy-failures is at version 2, not 1`. The tools take no `command_id`, as no MCP tool does: a change retried after it succeeded changes nothing and answers `"duplicate": true`, whatever its `expected_version`, so retrying is safe. Give `expected_version` so a retry after someone else's change is refused rather than applied.
+The configuration's `allow` hook is asked about each change after `authorize`, and each change is checked as over REST: a rule the fixed limits refuse answers every problem at once, `rule chat:prod-deploy-failures cannot be stored: ["when.throttle is required", "timeout is required"]`, and a rule someone else changed since the `expected_version` a client gives answers `rule chat:prod-deploy-failures is at version 2, not 1`. A change retried with its `command_id` answers with its first result ([Retries](#retries)); one retried under a new `command_id`, or none, after it succeeded, changes nothing and answers `"duplicate": true`, whatever its `expected_version`. Give `expected_version` so a retry after someone else's change is refused rather than applied.
 
 A stored rule belongs to the workspace it is installed in. `rule_status` lists it after the code rules, with its version, and `get_rule` returns it; another workspace, or another tenant's workspace of the same id, has no rule of that name. `list_rules` lists the code rules only.
 

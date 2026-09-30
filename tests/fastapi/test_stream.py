@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from starlette.testclient import WebSocketTestSession
 from starlette.websockets import WebSocketDisconnect
 
+from reflexr.workspace import Workspaces
 from tests.fastapi.conftest import STORED_RULES, build, chat_rule, command
 
 STREAM = "/v1/workspaces/prod/stream"
@@ -157,6 +158,18 @@ def test_commands_invalid_frames_and_rejections(client: TestClient) -> None:
         assert (rejected["ok"], rejected["rejection"]["type"]) == (False, "not_found")
 
 
+def test_a_repeated_command_id_returns_the_first_result(client: TestClient) -> None:
+    with client.websocket_connect(STREAM) as ws:
+        ws.send_json(hello())
+        until(ws, "replay_complete")
+        ws.send_json(command("c1", type="publish", event=ERROR))
+        frames = [ws.receive_json(), ws.receive_json()]
+        [first] = [f for f in frames if f["type"] == "command_result"]
+        ws.send_json(command("c1", type="publish", event=ERROR))
+        assert ws.receive_json() == first, "and no second event"
+    assert len(client.get("/v1/workspaces/prod/events").json()) == 1
+
+
 def test_stored_rules_are_installed_updated_and_archived_over_the_stream() -> None:
     app, _, _ = build(stored_rules=STORED_RULES)
     changes = ["reflexr:rule_installed", "reflexr:rule_archived"]
@@ -205,10 +218,10 @@ def test_stored_rules_are_installed_updated_and_archived_over_the_stream() -> No
 
 
 def test_a_command_that_crashes_reports_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def explode(*args: Any) -> None:
+    async def explode(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("bug")
 
-    monkeypatch.setattr("reflexr.fastapi.router.execute", explode)
+    monkeypatch.setattr(Workspaces, "execute", explode)
     app, _, _ = build()
     with TestClient(app) as client, client.websocket_connect(STREAM) as ws:
         ws.send_json(hello())

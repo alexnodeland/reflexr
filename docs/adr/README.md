@@ -45,8 +45,9 @@ Each record captures one decision: the context that forced it, the options consi
 | [0041](0041-executing-runs.md) | Executing runs | Accepted |
 | [0042](0042-cancel-safe-storage.md) | Cancel-safe storage | Accepted |
 | [0043](0043-graph-checkpoints.md) | Graph checkpoints | Accepted |
-| [0044](0044-surfaces.md) | Surfaces | Accepted |
+| [0044](0044-surfaces.md) | Surfaces | Accepted; partly superseded by 0047 |
 | [0045](0045-scores-on-evalr.md) | Scores on evalr | Accepted |
 | [0046](0046-one-docs-build.md) | One docs build | Accepted |
+| [0047](0047-commands-carried-out-once-per-id.md) | Commands carried out once per id | Accepted |
 
 To add a record, copy [`template.md`](template.md) to the next number and add a row above.

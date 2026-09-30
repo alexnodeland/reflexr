@@ -1,6 +1,6 @@
 # Stream protocol v1
 
-> **Status:** implemented. The frames and commands are in `reflexr.core.protocol`, and their JSON Schema is generated into [`schemas/reflexr.v1.json`](https://github.com/alexnodeland/reflexr/blob/main/schemas/reflexr.v1.json); one handler, `reflexr.workspace.execute`, carries out every command. REST and the WebSocket are served by `reflexr.fastapi`, and MCP by `reflexr.mcp` (phase 5 of [RFC-0001](rfcs/0001-v0.1-implementation-plan.md)). The structure is settled by [ADR-0016](adr/0016-tenants-and-workspaces-like-artifactr.md), [ADR-0005](adr/0005-per-rule-cursors.md) and [ADR-0044](adr/0044-surfaces.md). Its shape deliberately matches artifactr's thread protocol, so one client library can speak both.
+> **Status:** implemented. The frames and commands are in `reflexr.core.protocol`, and their JSON Schema is generated into [`schemas/reflexr.v1.json`](https://github.com/alexnodeland/reflexr/blob/main/schemas/reflexr.v1.json); one handler, `Workspaces.execute`, carries out every command, once per `command_id`. REST and the WebSocket are served by `reflexr.fastapi`, and MCP by `reflexr.mcp` (phase 5 of [RFC-0001](rfcs/0001-v0.1-implementation-plan.md)). The structure is settled by [ADR-0016](adr/0016-tenants-and-workspaces-like-artifactr.md), [ADR-0005](adr/0005-per-rule-cursors.md), [ADR-0044](adr/0044-surfaces.md) and [ADR-0047](adr/0047-commands-carried-out-once-per-id.md). Its shape deliberately matches artifactr's thread protocol, so one client library can speak both.
 
 Clients publish events into a workspace, read its log with resume, and operate rules and runs. The same commands are available over REST, over a WebSocket, and as MCP tools, and every surface hands them to the same handler, so they behave identically.
 
@@ -8,7 +8,7 @@ Every event type and rule name is qualified by its owner's namespace: `ops:servi
 
 ## Commands
 
-A command is a JSON object with a `type`. Over REST and WebSocket it travels in a frame that carries a client-chosen `command_id`; a retried `command_id` returns the original result without running again.
+A command is a JSON object with a `type`. Over REST and WebSocket it travels in a frame that carries a client-chosen `command_id`, which an MCP tool takes as an argument; a retried `command_id` returns the original result without running again ([Deduplication](#deduplication)).
 
 ```json
 {"type": "command", "command_id": "cmd_7", "command": {"type": "publish", "event": {"type": "ops:service.error", "service": "auth", "severity": 8, "message": "token check failed"}}}
@@ -31,6 +31,12 @@ Run commands answer with `run`: the run as it now is; `replay_rule` answers with
 Stored rules are off unless the application configures them, and then its `allow` hook is asked about each change after `authorize`: without either, the change is `forbidden`, as it is for a code rule's name. `provenance` is an opaque JSON object of at most 4 KiB, kept on the rule and its fact. A rule that fails `Rule.check` or `check_stored`, or provenance over 4 KiB, is `validation_failed`, with every problem in `errors`. Updating or archiving a name no stored rule has is `not_found`. A change that would leave the rule as it is appends nothing and answers `duplicate: true`, checked before `expected_version`, so a retried change is no conflict; its `seq` is the head of the log.
 
 Rejections carry a stable `type` and a `message`: `not_found`, `invalid_state`, `validation_failed` (with Pydantic's `errors`), `forbidden`, `depth_exceeded` (a publish beyond the causation limit), and `unsupported_protocol`.
+
+### Deduplication
+
+Every surface hands a command with its id to `Workspaces.execute`, which carries it out the first time the id is seen and remembers the result in the workspaces' `CommandResults`. A command is known by the tenant and workspace it was sent to, the sender (its actor's `participant`, so a changed display name does not matter) and its `command_id`; a repeated id returns the first result, outcome or rejection, whatever command it comes with. By default the workspaces remember the 10,000 most recent results in their process (`InMemoryCommandResults`), so a retry that reaches another process, or arrives after the result was forgotten, runs again, and so does one that arrives while the first is still being carried out.
+
+Beyond that memory, the log deduplicates what carries an id, whichever process a retry reaches: a `publish` with an event `id` appends once, and a stored-rule change that would leave the rule as it is answers `duplicate: true`.
 
 ## REST
 
@@ -123,12 +129,14 @@ reflexr's own events, alongside the application's:
 |---|---|
 | Tools `publish_event`, `read_events` | Publish and read, with the same idempotency, window, filter and tail as REST. `read_events` returns 50 when given neither `limit` nor `last`. |
 | Tools `list_rules`, `rule_status`, `get_rule`, `replay_rule` | Inspect and replay rules. `list_rules`, like `GET /v1/rules`, gives every code rule to every authenticated client of any tenant. `rule_status` reports what `GET /v1/workspaces/{workspace_id}/rules` does, as a line per rule, and `get_rule` returns what `GET /v1/workspaces/{workspace_id}/rules/{rule}` does. |
-| Tools `install_rule`, `update_rule`, `archive_rule` | Change a stored rule: the commands, with their fields as arguments, answering `rule_version` as JSON. Served only when stored rules are on. Like every MCP tool, they take no `command_id`: a retried change answers as a `duplicate`, and changes nothing; give `expected_version` so a retry after someone else's change is refused rather than applied. |
+| Tools `install_rule`, `update_rule`, `archive_rule` | Change a stored rule: the commands, with their fields as arguments, answering `rule_version` as JSON. Served only when stored rules are on. A change retried under a new `command_id`, or none, answers as a `duplicate`, and changes nothing; give `expected_version` so a retry after someone else's change is refused rather than applied. |
 | Tool `schedule_status` | Each schedule targeting the workspace, with its last and next tick, as `GET /v1/workspaces/{workspace_id}/schedules` reports them. |
 | Tools `list_runs`, `get_run`, `retry_run`, `skip_run`, `cancel_run`, `list_dead_letters` | Operate runs. `list_runs` and `list_dead_letters` take the filters REST's reads do. |
 | Tool `give_feedback` | Typed feedback on a run, a firing or a chain. |
 | Resource template `reflexr://{tenant_id}/{workspace_id}/runs/{run_id}` | A run's current JSON, with resource-updated notifications as it progresses. Readable only by clients of that tenant, in a workspace `authorize` allows. |
 | `subscriptions/listen` and resource-updated notifications | Published for every run fact in each workspace a client has used through a tool. A `listen` request that names a run of another tenant, or of a workspace `authorize` refuses, fails with `INVALID_PARAMS` and the message a read of it would fail with; the error's data carries the URI and the `forbidden` rejection. |
+
+Every tool that changes something (`publish_event`, `give_feedback`, `retry_run`, `skip_run`, `cancel_run`, `replay_rule`, `install_rule`, `update_rule` and `archive_rule`) takes an optional `command_id`, the command frame's idempotency key: a retry with the same id returns the first result ([Deduplication](#deduplication)). A call without one is carried out every time, and an empty one is refused, as in a command frame. The MCP request id cannot serve, since a retry is a new request.
 
 ## Versioning and schema
 

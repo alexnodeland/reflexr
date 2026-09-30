@@ -72,7 +72,7 @@ Dependencies point one way. Each layer is usable without the ones above it, and 
 | `reflexr.telemetry` | core, opentelemetry-api | Attribute names, the metric registry and its cardinality policy, and the tracer and instruments. Never configures the SDK. |
 | `reflexr.scores` (needs evalr, from the `langfuse` or `evals` extra) | core, telemetry, workspace, evalr's core | Feedback types as score configs and feedback as scores, through evalr's mapping with each type's registered name, and the `FeedbackMirror` that follows a log into evalr's `ScoreSink` port. |
 | `reflexr.evals` (extra) | workspace, evalr | evalr's `FeedbackSource` over a workspace's log, `EvaluatorAction`, which runs an evalr evaluator as a rule's action and records its verdicts as feedback, replay experiments and the end-to-end measures. |
-| `reflexr.workspace` | core, telemetry, cronsim | `Workspaces`, `Workspace` and the rule and schedule statuses it reports, the storage protocol, in-memory storage, the `Reactor` (evaluation, execution and schedules), the action port and `Reaction`, and function actions. |
+| `reflexr.workspace` | core, telemetry, cronsim | `Workspaces`, `Workspace` and the rule and schedule statuses it reports, `Workspaces.execute`, which carries out commands once per id, and its `CommandResults` port, the storage protocol, in-memory storage, the `Reactor` (evaluation, execution and schedules), the action port and `Reaction`, and function actions. |
 | `reflexr.agent` | workspace, pydantic-ai, pydantic-graph | Agent actions with the `EventContext` capability, graph actions with checkpoints (adapters of the action port), and `function_model` for tests. |
 | `reflexr.sql` (extra) | workspace, SQLAlchemy 2 async, Alembic | `SqlStorage` on PostgreSQL and SQLite, and its packaged migrations. |
 | `reflexr.fastapi` (extra) | workspace, FastAPI | HTTP ingest, REST reads and administration, and the WebSocket stream protocol, over one command handler. |
@@ -90,6 +90,7 @@ The core is the hexagon; everything it talks to is behind a port, a small protoc
 |---|---|
 | `Storage` (driven) | `InMemoryStorage`; `SqlStorage` on PostgreSQL, Supabase's Postgres or SQLite |
 | `Clock` (driven) | `utc_now`; fake clocks in tests |
+| `CommandResults` (driven) | `InMemoryCommandResults`, the 10,000 most recent results in the process |
 | The OpenTelemetry API (driven) | Any SDK and exporter, such as OTLP to stackr's Collector |
 | Actions (driven) | Functions; pydantic-ai agents and pydantic-graph graphs; evaluators |
 | pydantic-ai's `Model` (driven) | Any provider, or the LiteLLM proxy |
@@ -382,7 +383,7 @@ Each workspace remembers each schedule's last tick, saved in the transaction tha
 
 ## Surfaces
 
-Every surface is a thin adapter over a `Workspace` handle ([ADR-0044](adr/0044-surfaces.md)). What a surface reports, such as a rule's or a schedule's status, the handle computes, so every surface reports the same and only translates it. The wire formats are in [`protocol.md`](protocol.md).
+Every surface is a thin adapter over a `Workspace` handle ([ADR-0044](adr/0044-surfaces.md)). It authenticates, opens the workspace for the client, turns its input into commands, and hands each to `Workspaces.execute(workspace, command, command_id=...)`, which returns its `command_result` and never raises. Each result is remembered in a `CommandResults` port, keyed by tenant, workspace, the actor's `participant` and `command_id`, so a retried command returns its first result on every surface; an MCP tool call without a `command_id` gets a new one ([ADR-0047](adr/0047-commands-carried-out-once-per-id.md)). What a surface reports, such as a rule's or a schedule's status, the handle computes, so every surface reports the same and only translates it. The wire formats are in [`protocol.md`](protocol.md).
 
 | Surface | Package | What it offers |
 |---|---|---|
@@ -395,7 +396,7 @@ Authentication is the host's: each surface takes a resolver that returns the ten
 
 ## Workspace handles
 
-`Workspaces(storage, events=[...], emitted=[...], rules=[...], predicates={...}, stored_rules=..., schedules=[...], clock=..., max_depth=8, tracer_provider=..., meter_provider=...)` holds the code rules, checked at construction, and what stored rules may do, and opens handles; each `Workspace` is bound to one tenant, workspace and actor. `Reactor(workspaces)` evaluates the rules.
+`Workspaces(storage, events=[...], emitted=[...], rules=[...], predicates={...}, stored_rules=..., schedules=[...], clock=..., max_depth=8, tracer_provider=..., meter_provider=..., results=...)` holds the code rules, checked at construction, and what stored rules may do, opens handles, and carries out the protocol's commands through them, once per id; each `Workspace` is bound to one tenant, workspace and actor. `Reactor(workspaces)` evaluates the rules.
 
 ```python
 workspace = await workspaces.open("acme", "prod", actor=UserActor(id="ada"))
@@ -498,6 +499,7 @@ erDiagram
 | pydantic-ai | A capability plus a deps type (`ArtifactWorkspace`, `Session`) | A capability plus a deps type (`EventContext`, `Reaction`) |
 | WebSocket | `hello`, replay, `replay_complete`, close codes | The same shape |
 | MCP | Tenant in resource URIs | The same |
+| Commands | `Runner.execute(workspace, command, command_id=)` returns the `command_result`, remembered in a `CommandResults` port by tenant, workspace, participant and id; every MCP tool that changes something takes `command_id` | The same, as `Workspaces.execute` |
 
 Some code is shared verbatim, at the same path under `src/artifactr/`, and each copy says so. A change to one is made to both:
 
@@ -536,4 +538,5 @@ Every decision is an ADR in [`adr/`](adr/README.md), whose index lists them with
 - **Resuming inside parallel branches.** Graph checkpoints are proven for sequential steps; a run that crashes inside a fork restarts from the last checkpoint before it.
 - **Retention.** Compacting old envelopes, and what a rule replaying past the retained log starts from.
 - **Subscribers in other processes.** SQL subscriptions poll for commits made elsewhere; PostgreSQL `LISTEN/NOTIFY` could wake them at once, with polling kept for SQLite ([ADR-0030](adr/0030-sql-storage.md)).
+- **Cross-process deduplication.** `InMemoryCommandResults` remembers results in one process, and a retry that arrives while the first attempt is still being carried out runs again. A `CommandResults` over shared storage, with a claim on a command while it runs, would close both gaps ([ADR-0047](adr/0047-commands-carried-out-once-per-id.md)). The log already deduplicates a publish by its event id, and a stored-rule change already made, whichever process a retry reaches.
 - **Hot workspaces.** A workspace's appends are serialized. Partitioning one workspace's log by key may be needed for high-volume sources.

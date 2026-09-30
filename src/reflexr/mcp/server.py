@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
 from mcp.server.mcpserver import Context, MCPServer
@@ -15,7 +15,7 @@ from mcp.server.subscriptions import InMemorySubscriptionBus, ResourceUpdated, S
 from mcp.shared.exceptions import MCPError
 from mcp.types import INVALID_PARAMS, SubscriptionsListenRequestParams
 from opentelemetry import trace
-from pydantic import JsonValue
+from pydantic import Field, JsonValue
 from starlette.applications import Starlette
 from starlette.requests import Request
 
@@ -29,7 +29,6 @@ from reflexr.core import (
     Forbidden,
     GiveFeedback,
     InstallRule,
-    Outcome,
     Publish,
     Rejection,
     ReplayRule,
@@ -41,6 +40,7 @@ from reflexr.core import (
     UpdateRule,
     WorkspaceId,
     load_event,
+    new_id,
 )
 from reflexr.core import scope_key as key_of
 from reflexr.telemetry import actor_attributes, workspace_attributes
@@ -50,7 +50,6 @@ from reflexr.workspace import (
     ScheduleStatus,
     Workspace,
     Workspaces,
-    execute,
 )
 
 type McpContext = Context[Any, Request]
@@ -67,8 +66,23 @@ ResolveClient = Callable[[McpContext], Awaitable[tuple[TenantId, ExternalAgentAc
 INSTRUCTIONS = (
     "This server is a set of event logs, one per workspace, watched by rules that run agents "
     "and workflows. Publish events to trigger them, read the log to see what happened, and "
-    "operate runs and rules. Events you publish are attributed to you."
+    "operate runs and rules. Events you publish are attributed to you. Give each change a "
+    "command_id of your own, and the same one if you retry it, so that it is made once."
 )
+
+_CommandId = Annotated[
+    str | None,
+    Field(
+        min_length=1,
+        description="An id of your choosing for this change. A retry with the same id returns "
+        "the first result instead of making the change again.",
+    ),
+]
+"""A command tool's optional ``command_id``: the idempotency key of REST's command frames.
+
+An empty one is refused, as REST refuses it: a model that fills optional strings with ``""``
+would otherwise get its first change's result back for every change.
+"""
 
 _RUN_FACTS = frozenset(
     t.event_type for t in SYSTEM_EVENTS if t.event_type.startswith("reflexr:run_")
@@ -112,16 +126,18 @@ class ReflexrMcp:
     """An MCP server over reflexr workspaces.
 
     Mount :meth:`http_app` in the application, and run :meth:`lifespan` in the application's
-    lifespan. Every tool goes through the same command handler as REST and the WebSocket,
-    attributed to the client's :class:`~reflexr.core.ExternalAgentActor`.
+    lifespan. Every tool that changes something goes through :meth:`Workspaces.execute`, as REST
+    and the WebSocket do, attributed to the client's :class:`~reflexr.core.ExternalAgentActor`.
 
     The MCP SDK traces each request itself; the server adds the tenant, workspace and actor to
     those spans. Building the SDK's server configures logging for the whole process; this
     server undoes that, so logging stays the application's.
 
     Args:
-        workspaces: Opens tenant-scoped workspaces, and holds the rules. The tools that install,
-            update and archive stored rules are served only if it has ``stored_rules``.
+        workspaces: Opens tenant-scoped workspaces, holds the rules, and carries out every
+            tool's command, once per ``command_id``, so a retry is safe, as on REST. The tools
+            that install, update and archive stored rules are served only if it has
+            ``stored_rules``.
         resolve: Authenticates each request.
         authorize: Whether a client may use a workspace of its tenant, asked on every tool call,
             resource read and resource subscription that names a workspace; allows everything
@@ -243,10 +259,24 @@ class ReflexrMcp:
         """Open a workspace for a tool, whose refusal is a tool error."""
         return await _tool(self._open(ctx, workspace_id))
 
-    async def _execute(self, ctx: Context, workspace_id: WorkspaceId, command: Command) -> str:
+    async def _execute(
+        self, ctx: Context, workspace_id: WorkspaceId, command: Command, command_id: str | None
+    ) -> str:
+        """Carry out a tool's command, once per ``command_id``, and return its outcome as JSON.
+
+        A command without one gets a new id, so it is carried out, and remembered, like any.
+
+        Raises:
+            ToolError: If the command is rejected, now or when it was first carried out.
+        """
         workspace = await self._workspace(ctx, workspace_id)
-        outcome: Outcome = await _tool(execute(workspace, command))
-        return outcome.model_dump_json()
+        if command_id is None:
+            command_id = new_id("cmd")
+        result = await self._workspaces.execute(workspace, command, command_id=command_id)
+        if result.rejection is not None:
+            raise _tool_error(result.rejection)
+        assert result.outcome is not None, "a result has an outcome or a rejection"
+        return result.outcome.model_dump_json()
 
     def _register(self) -> None:
         server = self.server
@@ -258,6 +288,7 @@ class ReflexrMcp:
             ctx: Context,
             id: str | None = None,
             correlation_id: str | None = None,
+            command_id: _CommandId = None,
         ) -> str:
             """Publish an event, an object with its ``type`` and fields.
 
@@ -269,7 +300,7 @@ class ReflexrMcp:
             except Rejection as rejection:
                 raise _tool_error(rejection.payload()) from rejection
             command = Publish(event=loaded, id=id, correlation_id=correlation_id)
-            return await self._execute(ctx, workspace_id, command)
+            return await self._execute(ctx, workspace_id, command, command_id)
 
         @server.tool()
         async def read_events(
@@ -339,10 +370,11 @@ class ReflexrMcp:
             ctx: Context,
             from_seq: int = 0,
             mode: Literal["rebuild", "refire"] = "rebuild",
+            command_id: _CommandId = None,
         ) -> str:
             """Evaluate a rule again from ``from_seq``: rebuild its state quietly, or refire."""
             command = ReplayRule(rule=rule, from_seq=from_seq, mode=mode)
-            return await self._execute(ctx, workspace_id, command)
+            return await self._execute(ctx, workspace_id, command, command_id)
 
         # Only where stored rules are on: elsewhere these tools could only refuse, yet two of
         # them would put the rules schema in every client's list of tools.
@@ -354,6 +386,7 @@ class ReflexrMcp:
                 rule: Rule,
                 ctx: Context,
                 provenance: dict[str, Any] | None = None,
+                command_id: _CommandId = None,
             ) -> str:
                 """Install a stored rule in a workspace: version 1, or the next of an archived rule.
 
@@ -363,7 +396,7 @@ class ReflexrMcp:
                 ``duplicate``.
                 """
                 command = InstallRule(rule=rule, provenance=provenance or {})
-                return await self._execute(ctx, workspace_id, command)
+                return await self._execute(ctx, workspace_id, command, command_id)
 
             @server.tool()
             async def update_rule(
@@ -372,6 +405,7 @@ class ReflexrMcp:
                 ctx: Context,
                 expected_version: int | None = None,
                 provenance: dict[str, Any] | None = None,
+                command_id: _CommandId = None,
             ) -> str:
                 """Replace an active stored rule, named by ``rule``'s name, with a new version.
 
@@ -383,7 +417,7 @@ class ReflexrMcp:
                 command = UpdateRule(
                     rule=rule, expected_version=expected_version, provenance=provenance or {}
                 )
-                return await self._execute(ctx, workspace_id, command)
+                return await self._execute(ctx, workspace_id, command, command_id)
 
             @server.tool()
             async def archive_rule(
@@ -392,6 +426,7 @@ class ReflexrMcp:
                 ctx: Context,
                 expected_version: int | None = None,
                 reason: str | None = None,
+                command_id: _CommandId = None,
             ) -> str:
                 """Archive a stored rule, so it stops, and cancel its unfinished runs.
 
@@ -399,7 +434,7 @@ class ReflexrMcp:
                 ``duplicate``.
                 """
                 command = ArchiveRule(rule=rule, expected_version=expected_version, reason=reason)
-                return await self._execute(ctx, workspace_id, command)
+                return await self._execute(ctx, workspace_id, command, command_id)
 
         @server.tool()
         async def list_runs(
@@ -426,24 +461,35 @@ class ReflexrMcp:
             return (await _tool(workspace.run(run_id))).model_dump_json()
 
         @server.tool()
-        async def retry_run(workspace_id: str, run_id: str, ctx: Context) -> str:
+        async def retry_run(
+            workspace_id: str, run_id: str, ctx: Context, command_id: _CommandId = None
+        ) -> str:
             """Make a run runnable now, with a fresh retry budget if it had finished."""
-            return await self._execute(ctx, workspace_id, RetryRun(run_id=run_id))
+            return await self._execute(ctx, workspace_id, RetryRun(run_id=run_id), command_id)
 
         @server.tool()
         async def skip_run(
-            workspace_id: str, run_id: str, ctx: Context, reason: str | None = None
+            workspace_id: str,
+            run_id: str,
+            ctx: Context,
+            reason: str | None = None,
+            command_id: _CommandId = None,
         ) -> str:
             """Give up on a waiting or dead-lettered run, unblocking its scope."""
-            return await self._execute(ctx, workspace_id, SkipRun(run_id=run_id, reason=reason))
+            command = SkipRun(run_id=run_id, reason=reason)
+            return await self._execute(ctx, workspace_id, command, command_id)
 
         @server.tool()
         async def cancel_run(
-            workspace_id: str, run_id: str, ctx: Context, reason: str | None = None
+            workspace_id: str,
+            run_id: str,
+            ctx: Context,
+            reason: str | None = None,
+            command_id: _CommandId = None,
         ) -> str:
             """Cancel a run that has not finished, stopping it if it is running."""
             command = CancelRun(run_id=run_id, reason=reason)
-            return await self._execute(ctx, workspace_id, command)
+            return await self._execute(ctx, workspace_id, command, command_id)
 
         @server.tool()
         async def list_dead_letters(
@@ -461,13 +507,14 @@ class ReflexrMcp:
             target: FeedbackTarget,
             ctx: Context,
             value: dict[str, Any] | None = None,
+            command_id: _CommandId = None,
         ) -> str:
             """Give feedback of an application-defined type on a run, a firing or a chain.
 
             ``value`` holds the feedback type's fields.
             """
             command = GiveFeedback(feedback_type=feedback_type, target=target, value=value or {})
-            return await self._execute(ctx, workspace_id, command)
+            return await self._execute(ctx, workspace_id, command, command_id)
 
         @server.resource(
             "reflexr://{tenant_id}/{workspace_id}/runs/{run_id}",

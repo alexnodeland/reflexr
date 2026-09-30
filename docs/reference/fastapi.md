@@ -28,4 +28,6 @@ The router's `authorize` hook, [`Authorize`](workspace.md#reflexr.workspace.Auth
 
 ## The stream
 
+One WebSocket connection, which the router serves at `/workspaces/{workspace_id}/stream`. It hands each command frame to [`Workspaces.execute`](workspace.md#reflexr.workspace.Workspaces.execute), as `POST .../commands` does, so a command is carried out once per `command_id` whichever of the two it arrives on.
+
 ::: reflexr.fastapi.Stream

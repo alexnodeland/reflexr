@@ -1,6 +1,5 @@
 """The router: REST endpoints and the WebSocket stream, over one command handler."""
 
-from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
@@ -36,7 +35,6 @@ from reflexr.workspace import (
     Workspace,
     WorkspaceRule,
     Workspaces,
-    execute,
 )
 
 ResolveActor = Callable[[HTTPConnection], Awaitable[tuple[TenantId, Actor]]]
@@ -82,23 +80,21 @@ def reflexr_router(
     authorize: Authorize | None = None,
     hello_timeout: float = 10.0,
     outbox_size: int = 1000,
-    remembered_commands: int = 10_000,
 ) -> APIRouter:
     """Build the router for publishing, reads, administration and the WebSocket stream.
 
     Args:
-        workspaces: Opens tenant-scoped workspaces, and holds the rules and schedules.
+        workspaces: Opens tenant-scoped workspaces, holds the rules and schedules, and carries
+            out commands, once per ``command_id``.
         resolve_actor: Authenticates each request and connection.
         authorize: Whether an actor may use a workspace; allows everything if omitted.
         hello_timeout: Seconds a new connection has to send ``hello``.
         outbox_size: Frames buffered for a slow connection before it is closed (4429).
-        remembered_commands: Command ids remembered for deduplication, per process.
 
     Each REST request's span (FastAPI's own, when it is instrumented) and each connection's
     ``reflexr.stream`` span are attributed to the tenant, workspace and actor.
     """
     router = APIRouter()
-    results = _Results(remembered_commands)
 
     async def open_workspace(connection: HTTPConnection, workspace_id: WorkspaceId) -> Workspace:
         """Authenticate a request or connection, and open its workspace if it may use it.
@@ -128,32 +124,12 @@ def reflexr_router(
     current_workspace = Depends(workspace_dependency)
     signed_in = Depends(authenticated)
 
-    async def run_command(workspace: Workspace, frame: CommandFrame) -> CommandResult:
-        key = (
-            workspace.tenant_id,
-            workspace.workspace_id,
-            workspace.actor.participant,
-            frame.command_id,
-        )
-        if (remembered := results.get(key)) is not None:
-            return remembered
-        try:
-            outcome = await execute(workspace, frame.command)
-        except Rejection as rejection:
-            result = CommandResult(
-                command_id=frame.command_id, ok=False, rejection=rejection.payload()
-            )
-        else:
-            result = CommandResult(command_id=frame.command_id, ok=True, outcome=outcome)
-        results.put(key, result)
-        return result
-
     @router.post("/workspaces/{workspace_id}/commands")
     async def post_command(
         frame: CommandFrame, response: Response, workspace: Workspace = current_workspace
     ) -> CommandResult:
         """Submit one command. The body is the same frame as over the WebSocket."""
-        result = await run_command(workspace, frame)
+        result = await workspaces.execute(workspace, frame.command, command_id=frame.command_id)
         if result.rejection is not None:
             response.status_code = STATUS_CODES.get(str(result.rejection["type"]), 400)
         return result
@@ -261,11 +237,10 @@ def reflexr_router(
         await Stream(
             websocket,
             workspace_id,
+            workspaces=workspaces,
             open_workspace=open_workspace,
-            execute=run_command,
             hello_timeout=hello_timeout,
             outbox_size=outbox_size,
-            telemetry=workspaces.telemetry,
         ).serve()
 
     return router
@@ -277,19 +252,3 @@ async def _or_http[T](awaitable: Awaitable[T]) -> T:
     except Rejection as rejection:
         status = STATUS_CODES.get(rejection.code, 400)
         raise HTTPException(status_code=status, detail=rejection.payload()) from rejection
-
-
-class _Results:
-    """Recently seen command results, so a repeated ``command_id`` is not executed twice."""
-
-    def __init__(self, capacity: int) -> None:
-        self._capacity = capacity
-        self._results: OrderedDict[tuple[str, str, str, str], CommandResult] = OrderedDict()
-
-    def get(self, key: tuple[str, str, str, str]) -> CommandResult | None:
-        return self._results.get(key)
-
-    def put(self, key: tuple[str, str, str, str], result: CommandResult) -> None:
-        self._results[key] = result
-        if len(self._results) > self._capacity:
-            self._results.popitem(last=False)

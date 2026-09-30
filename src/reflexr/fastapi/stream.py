@@ -13,7 +13,6 @@ from starlette.requests import HTTPConnection
 from reflexr.core import (
     PROTOCOL,
     CommandFrame,
-    CommandResult,
     ErrorFrame,
     EventFrame,
     Forbidden,
@@ -25,15 +24,14 @@ from reflexr.core import (
     WorkspaceId,
     resume,
 )
-from reflexr.telemetry import Metric, Telemetry
+from reflexr.telemetry import Metric
 from reflexr.telemetry.attributes import CLOSE_CODE, TENANT_ID, WORKSPACE_ID
 from reflexr.telemetry.metrics import STREAM_CONNECTIONS, STREAM_DISCONNECTS
-from reflexr.workspace import Workspace
+from reflexr.workspace import Workspace, Workspaces
 
 logger = logging.getLogger("reflexr.fastapi")
 
 OpenWorkspace = Callable[[HTTPConnection, WorkspaceId], Awaitable[Workspace]]
-Execute = Callable[[Workspace, CommandFrame], Awaitable[CommandResult]]
 
 
 class Stream:
@@ -46,6 +44,15 @@ class Stream:
     The connection is traced as a ``reflexr.stream`` span, and counted in
     ``reflexr.stream.connections`` while it is open and ``reflexr.stream.disconnects``, by close
     code, when it ends.
+
+    Args:
+        websocket: The connection.
+        workspace_id: The workspace it follows.
+        workspaces: Carries out its commands, once per ``command_id``, and records its
+            telemetry.
+        open_workspace: Authenticates the connection and opens its workspace.
+        hello_timeout: Seconds the client has to send ``hello``.
+        outbox_size: Frames buffered for the client before it is closed (4429).
     """
 
     def __init__(
@@ -53,21 +60,20 @@ class Stream:
         websocket: WebSocket,
         workspace_id: WorkspaceId,
         *,
+        workspaces: Workspaces,
         open_workspace: OpenWorkspace,
-        execute: Execute,
         hello_timeout: float,
         outbox_size: int,
-        telemetry: Telemetry,
     ) -> None:
         self._ws = websocket
         self._workspace_id = workspace_id
+        self._workspaces = workspaces
         self._open_workspace = open_workspace
-        self._execute = execute
         self._hello_timeout = hello_timeout
         self._outbox: asyncio.Queue[str] = asyncio.Queue(maxsize=outbox_size)
         self._overflowed = False
         self._tasks: set[asyncio.Task[None]] = set()
-        self._telemetry = telemetry
+        self._telemetry = workspaces.telemetry
         self._tenant_id = ""
         self._close_code: int | None = None
         self._connected = False
@@ -174,7 +180,10 @@ class Stream:
 
     async def _handle(self, workspace: Workspace, frame: CommandFrame) -> None:
         try:
-            self._put(await self._execute(workspace, frame))
+            result = await self._workspaces.execute(
+                workspace, frame.command, command_id=frame.command_id
+            )
+            self._put(result)
         except Exception:
             logger.exception("command %s failed", frame.command_id)
             self._put(ErrorFrame(message=f"command {frame.command_id} failed on the server"))

@@ -180,18 +180,6 @@ async def test_commands_are_idempotent_and_map_rejections_to_statuses(app: App) 
     }
 
 
-async def test_a_command_id_is_remembered_per_participant(app: App) -> None:
-    client, _, _ = app
-    frame = {"type": "command", "command_id": "c1", "command": {"type": "publish", "event": ERROR}}
-    url = "/workspaces/prod/commands"
-    first = await client.post(url, json=frame, headers={"x-name": "Ada"})
-    renamed = await client.post(url, json=frame, headers={"x-name": "Ada Lovelace"})
-    assert first.json() == renamed.json(), "one participant, whatever its display name"
-    other = await client.post(url, json=frame, headers={"x-user": "grace"})
-    assert other.json()["outcome"]["seq"] == 2, "another participant's command runs"
-    assert len((await client.get("/workspaces/prod/events")).json()) == 2
-
-
 async def test_the_rule_status_says_whether_a_rule_is_enabled() -> None:
     application, _, _ = build(rules=[spike.model_copy(update={"enabled": False})])
     transport = httpx.ASGITransport(app=application)
@@ -326,23 +314,6 @@ async def test_unauthorized_without_a_message_says_so() -> None:
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/rules")
     assert response.json() == {"detail": "unauthorized"}
-
-
-async def test_only_recent_command_ids_are_remembered() -> None:
-    application, _, _ = build(remembered_commands=1)
-    transport = httpx.ASGITransport(app=application)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test/v1") as client:
-
-        async def send(command_id: str) -> int:
-            frame = {
-                "type": "command",
-                "command_id": command_id,
-                "command": {"type": "publish", "event": ERROR},
-            }
-            response = await client.post("/workspaces/prod/commands", json=frame)
-            return response.json()["outcome"]["seq"]
-
-        assert [await send("c1"), await send("c2"), await send("c1")] == [1, 2, 3]
 
 
 async def test_a_tenant_sees_only_its_own_schedule_targets() -> None:
