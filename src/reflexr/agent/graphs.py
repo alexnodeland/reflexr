@@ -27,7 +27,13 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, TypeVar, get_args, get_origin, get_type_hints
 
 from opentelemetry import trace
-from pydantic import JsonValue, PydanticSchemaGenerationError, TypeAdapter, ValidationError
+from pydantic import (
+    BaseModel,
+    JsonValue,
+    PydanticSchemaGenerationError,
+    TypeAdapter,
+    ValidationError,
+)
 from pydantic_core import PydanticSerializationError
 from pydantic_graph import (
     Decision,
@@ -97,6 +103,8 @@ class GraphAction[D, S, I, O]:
         input_types: Input types by node id, for the steps and forks whose type reflexr
             cannot read or infer, such as a stream step, whose input type reads as ``Any``, or a
             fork after a transform. An explicit type wins over an annotation or an inferred one.
+        params: The model of the params rules pass the action. Its steps, and ``state`` and
+            ``inputs``, read them with ``reaction.params_as(Model)``, naming the model again.
 
     Raises:
         ValueError: If the action has no name, or ``input_types`` names a node that is not a
@@ -109,6 +117,7 @@ class GraphAction[D, S, I, O]:
     state: Callable[[Reaction[D]], S] | None = None
     inputs: Callable[[Reaction[D]], I] | None = None
     input_types: Mapping[str, Any] = field(default_factory=dict[str, Any])
+    params: type[BaseModel] | None = None
     _types: dict[str, TypeAdapter[Any]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:

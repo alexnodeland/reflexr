@@ -175,6 +175,23 @@ async def test_a_retry_resumes_after_the_last_completed_step(clock: FakeClock) -
     assert deps.ran == ["diagnose", "mitigate", "mitigate", "report"]  # diagnose ran once
 
 
+class Target(BaseModel):
+    service: str
+
+
+async def test_a_graph_reads_its_params(clock: FakeClock) -> None:
+    action = GraphAction(
+        runbook, params=Target, inputs=lambda reaction: reaction.params_as(Target).service
+    )
+    rule = Rule(name="app:deploys", when=on(Deploy), then=run("runbook", service="billing"))
+    workspaces = Workspaces(InMemoryStorage(clock=clock), rules=[rule], clock=clock)
+    workspace = await workspaces.open("acme", "prod", actor=SourceActor(name="ci"))
+    await workspace.publish(Deploy(service="auth"))
+    await Reactor(workspaces, actions={"runbook": action}, deps=Flaky()).settle()
+    [done] = await workspace.runs()
+    assert done.output == "rolled back billing after diagnosed, mitigated"
+
+
 async def test_a_finished_graph_is_not_run_again(clock: FakeClock) -> None:
     deps = Flaky()
     action = GraphAction(runbook, inputs=service)

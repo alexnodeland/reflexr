@@ -24,12 +24,19 @@
     },
     "ActionRef": {
       "additionalProperties": false,
-      "description": "The action a rule runs, by name.",
+      "description": "The action a rule runs, by name, and the params the rule passes it.",
       "properties": {
         "action": {
           "minLength": 1,
           "title": "Action",
           "type": "string"
+        },
+        "params": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Params",
+          "type": "object"
         }
       },
       "required": [

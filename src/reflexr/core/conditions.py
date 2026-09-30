@@ -17,7 +17,7 @@ when the condition is built against the event types that can reach them: those g
 """
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from datetime import timedelta
 from typing import Annotated, Any, Literal, Self, cast, get_args, get_origin
 
@@ -354,6 +354,16 @@ def resolve_field(data: Mapping[str, Any], path: str) -> tuple[bool, Any]:
             return False, None
         value = cast("Mapping[str, Any]", value)[part]
     return True, value
+
+
+def walk(filter: Filter) -> Iterator[Filter]:
+    """Yield a filter and every filter inside it, depth first."""
+    yield filter
+    if isinstance(filter, AllFilter | AnyFilter):
+        for inner in filter.of:
+            yield from walk(inner)
+    elif isinstance(filter, NotFilter):
+        yield from walk(filter.filter)
 
 
 def admitted(filter: Filter, within: Admitted = None) -> Admitted:

@@ -1,6 +1,6 @@
 # Actions
 
-An action is what a rule runs when it fires: a plain async function, a pydantic-ai agent, or a pydantic-graph graph. Every kind receives the same `Reaction`, is registered with the [reactor](reactor.md) under a name, and is referred to by that name in rules, because rules are data and actions are code ([ADR-0008](../adr/0008-actions-agents-graphs-and-functions.md)). This page covers the `Reaction`, each kind of action, and how to keep actions safe to run more than once.
+An action is what a rule runs when it fires: a plain async function, a pydantic-ai agent, or a pydantic-graph graph. Every kind receives the same `Reaction`, is registered with the [reactor](reactor.md) under a name, and is referred to by that name in rules, because rules are data and actions are code ([ADR-0008](../adr/0008-actions-agents-graphs-and-functions.md)). This page covers the `Reaction`, each kind of action, the params a rule can pass its action, and how to keep actions safe to run more than once.
 
 ## The Reaction
 
@@ -16,6 +16,8 @@ An action is called once per attempt of a run, with a `Reaction[D]`, where `D` i
 | `run_id` | The run's id: the firing's id, and the action's idempotency key |
 | `attempt` | Which attempt this is, from 1 |
 | `scope` | The values of the rule's scope fields for this firing, such as `{"service": "auth"}` |
+| `params` | The rule's params, validated as the action's params model, or `None` if it declares none ([Parameters](#parameters)) |
+| `params_as(Model)` | The params, typed as `Model` |
 | `emit(event)` | Publishes an event caused by this run ([Idempotency](#idempotency)) |
 | `checkpoint(step, state)` | Saves the run's progress, so the next attempt can resume after `step` |
 
@@ -242,6 +244,7 @@ deploy_regression = Rule(
 | `inputs` | `None` | Builds the graph's inputs from the reaction; without it the graph gets `None` |
 | `state` | the state type's constructor | Builds the graph's initial state from the reaction |
 | `input_types` | `{}` | Input types by node id, for the steps and forks whose type reflexr cannot read or infer, such as stream steps and forks after a transform ([below](#input-types)); an explicit type always wins |
+| `params` | `None` | The model of the params rules pass the action ([Parameters](#parameters)) |
 
 After each step, the action saves the graph's state and the next task to the run, and appends `reflexr:run_progressed` with the step's name. If `roll_back` fails the first time, the run waits to retry with `diagnose` as its last saved step, and the retry starts at `roll_back`: `diagnose` does not run again. The run's `reflexr:run_progressed` events show every saved boundary, across both attempts:
 
@@ -284,6 +287,47 @@ runbook = GraphAction(g.build(), input_types={"each_host": list[str]})
 An explicit type always wins over an annotation or an inferred one. `input_types` names only steps and forks: `GraphAction` raises `ValueError` for a decision, since nothing is saved before one, and for a join or an id that is not in the graph. One more rule keeps a checkpoint from changing what a resumed run does:
 
 - **A one-shot iterator is never saved.** Writing a generator down would use it up, so a step that returns one into a map fork has no checkpoint before the fork.
+
+## Parameters
+
+One action can serve many rules that differ in a value, such as the chat thread to post in. The action declares a params model, and each rule passes values for it with `run` ([RFC-0003](../rfcs/0003-managing-rules-at-runtime.md)):
+
+```python
+from pydantic import BaseModel
+
+from reflexr.workspace import with_params
+
+
+class NotifyParams(BaseModel):
+    thread_id: str
+
+
+async def notify(reaction: Reaction[AppDeps], params: NotifyParams) -> None:
+    await reaction.deps.bridge.notice(params.thread_id, reaction)
+
+
+reactor = Reactor(workspaces, actions={"notify": with_params(notify, NotifyParams)}, deps=deps)
+
+severe_errors = Rule(
+    name="ops:severe-errors",
+    when=on(ServiceError).where(F.severity >= 9).at_most(1, per=timedelta(minutes=15)),
+    then=run("notify", thread_id="thr_4"),
+)
+```
+
+In JSON the params are the action reference's `params`, a JSON object: `"then": {"action": "notify", "params": {"thread_id": "thr_4"}}`. They are not part of the rule's definition, so changing them never resets its state.
+
+An action declares its model with a `params` attribute:
+
+- **A function** is adapted by `with_params(fn, Model)`, which passes the validated params as its second argument. pyright checks that the function's second parameter takes a `Model`.
+- **An agent or a graph** takes `params=Model`: `AgentAction(agent, params=NotifyParams)`, `GraphAction(graph, params=NotifyParams)`. Its prompt function and tools, or its steps and its `state` and `inputs` builders, read the params with `reaction.params_as(NotifyParams)`, which names the model a second time. A mismatch is a `TypeError` when the action runs, not a type error, since `Reaction` has one type parameter, the deps.
+
+A function without `with_params` declares no model, and a rule may pass it no params.
+
+The params are validated as JSON, since that is what they are, so a strict model takes a date as a string, as a rule written as JSON gives it. They are validated as the action's model twice:
+
+- **When the reactor is built.** A rule whose params do not validate, or that passes params to an action that declares no model, raises `InvalidRule`, which lists every problem by its path in the rule's JSON, as for a missing action: `then.params.thread_id: Field required`, or `then.params must be empty`.
+- **At each attempt,** into `reaction.params`. An attempt whose params no longer validate fails permanently with the reason `invalid_params`, and one whose action is not registered with the reason `unknown_action` ([Retries and dead letters](reactor.md#retries-and-dead-letters)). The reactor has already checked its rules, so these are for rules it could not check when it was built: RFC-0003's stored rules, installed at runtime.
 
 ## Idempotency
 

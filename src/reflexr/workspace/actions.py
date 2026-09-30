@@ -1,14 +1,17 @@
 """Actions: what a firing runs, and the :class:`Reaction` every kind of action receives.
 
 The action is a port (ADR-0025): an async callable over a ``Reaction``. Functions are actions
-as they are; ``reflexr.agent`` adapts pydantic-ai agents and pydantic-graph graphs to it.
+as they are; ``reflexr.agent`` adapts pydantic-ai agents and pydantic-graph graphs to it. An
+action that takes params declares their model with a ``params`` attribute (RFC-0003), and
+:func:`with_params` gives a function one.
 """
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
-from typing import Any, Protocol
+from dataclasses import dataclass
+from typing import Any, Protocol, runtime_checkable
 
-from pydantic import JsonValue
+from pydantic import BaseModel, JsonValue
 
 from reflexr.core import Envelope, Event, Rule, Run, RunId, derived_event_id
 from reflexr.workspace.workspace import Published, Workspace
@@ -24,6 +27,8 @@ class Reaction[D]:
         rule: The rule that fired.
         events: The envelopes that made the rule fire, in order.
         deps: The application's dependencies, given to the reactor.
+        params: The rule's params, validated as the action's params model, or None if the
+            action declares none. :meth:`params_as` returns them typed.
     """
 
     def __init__(
@@ -34,12 +39,14 @@ class Reaction[D]:
         rule: Rule,
         events: tuple[Envelope, ...],
         deps: D,
+        params: BaseModel | None = None,
     ) -> None:
         self.workspace = workspace
         self.run = run
         self.rule = rule
         self.events = events
         self.deps = deps
+        self.params = params
         self._emitted = 0
 
     @property
@@ -56,6 +63,21 @@ class Reaction[D]:
     def scope(self) -> dict[str, JsonValue]:
         """The values of the rule's scope fields for this firing."""
         return self.run.scope
+
+    def params_as[P: BaseModel](self, model: type[P]) -> P:
+        """Return the params as ``model``, the action's params model.
+
+        An agent's tools and prompt, and a graph's steps, read their params this way; a function
+        given to :func:`with_params` gets them as its second argument.
+
+        Raises:
+            TypeError: If the params are not a ``model``: the action declares another model,
+                or none.
+        """
+        if not isinstance(self.params, model):
+            declared = "no params" if self.params is None else type(self.params).__name__
+            raise TypeError(f"the action declares {declared}, not {model.__name__}")
+        return self.params
 
     async def checkpoint(self, step: str, state: JsonValue) -> None:
         """Save the run's progress after ``step``, so a retry resumes after it.
@@ -112,11 +134,60 @@ class Action[D](Protocol):
 
     It may return the run's output: JSON-compatible data or a Pydantic model. Raising fails
     the attempt, which is retried under the rule's policy.
+
+    An action that takes params declares their model as a ``params`` attribute, as
+    ``AgentAction``, ``GraphAction`` and :func:`with_params` do. The reactor validates each
+    rule's params as that model when it is built, and again at each attempt, into the
+    reaction's ``params``.
     """
 
     async def __call__(self, reaction: Reaction[D], /) -> object:
         """Respond to a firing, returning the run's output or None."""
         ...
+
+
+@runtime_checkable
+class _Parameterized(Protocol):
+    """An action that declares a params model."""
+
+    @property
+    def params(self) -> type[BaseModel] | None:
+        """The model of the params rules pass the action."""
+        ...
+
+
+def params_model(action: Action[Any]) -> type[BaseModel] | None:
+    """Return the params model an action declares, or None if it declares none."""
+    return action.params if isinstance(action, _Parameterized) else None
+
+
+def with_params[D, P: BaseModel](
+    fn: Callable[[Reaction[D], P], Awaitable[object]], params: type[P]
+) -> Action[D]:
+    """Adapt a function of the reaction and its params into an action that declares ``params``.
+
+    pyright checks that the function's second parameter takes a ``params``::
+
+        class NotifyParams(BaseModel):
+            thread_id: str
+
+
+        async def notify(reaction: Reaction[AppDeps], params: NotifyParams) -> None:
+            await reaction.deps.bridge.notice(params.thread_id, reaction)
+
+
+        actions = {"notify": with_params(notify, NotifyParams)}
+    """
+    return _WithParams(fn, params)
+
+
+@dataclass(frozen=True)
+class _WithParams[D, P: BaseModel]:
+    fn: Callable[[Reaction[D], P], Awaitable[object]]
+    params: type[P]
+
+    async def __call__(self, reaction: Reaction[D], /) -> object:
+        return await self.fn(reaction, reaction.params_as(self.params))
 
 
 type RunContext = Callable[[Reaction[Any]], AbstractAsyncContextManager[object]]

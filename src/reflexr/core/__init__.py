@@ -137,7 +137,17 @@ from reflexr.core.protocol import (
     Welcome,
     resume,
 )
-from reflexr.core.rules import ActionRef, Named, RetryPolicy, Rule, Scope, by, run, scope_key
+from reflexr.core.rules import (
+    ActionRef,
+    Named,
+    RetryPolicy,
+    Rule,
+    Scope,
+    by,
+    load_params,
+    run,
+    scope_key,
+)
 from reflexr.core.runs import (
     FINISHED,
     HOLDING,
@@ -171,11 +181,28 @@ from reflexr.core.state import (
     SequenceState,
     ThrottleState,
 )
+from reflexr.core.stored import (
+    MAX_STORED_ATTEMPTS,
+    MAX_STORED_BYTES,
+    MAX_STORED_DESCRIPTION,
+    MAX_STORED_FIRINGS_PER_HOUR,
+    MAX_STORED_TIMEOUT,
+    MAX_STORED_WINDOW,
+    RuleChange,
+    StoredRules,
+    check_stored,
+)
 
 __all__ = [
     "DEFAULT_REGISTRY",
     "FINISHED",
     "HOLDING",
+    "MAX_STORED_ATTEMPTS",
+    "MAX_STORED_BYTES",
+    "MAX_STORED_DESCRIPTION",
+    "MAX_STORED_FIRINGS_PER_HOUR",
+    "MAX_STORED_TIMEOUT",
+    "MAX_STORED_WINDOW",
     "NO_PREDICATES",
     "PROTOCOL",
     "SYSTEM_EVENTS",
@@ -252,6 +279,7 @@ __all__ = [
     "RetryPolicy",
     "RetryRun",
     "Rule",
+    "RuleChange",
     "RuleErrored",
     "RuleFired",
     "RuleName",
@@ -279,6 +307,7 @@ __all__ = [
     "ServerFrame",
     "SkipRun",
     "SourceActor",
+    "StoredRules",
     "SystemActor",
     "SystemEvent",
     "TargetKind",
@@ -299,6 +328,7 @@ __all__ = [
     "by",
     "cancel",
     "check_event_name",
+    "check_stored",
     "checkpoint",
     "create_run",
     "derived_event_id",
@@ -311,6 +341,7 @@ __all__ = [
     "holds",
     "load_event",
     "load_feedback",
+    "load_params",
     "matches",
     "needs",
     "new_event_id",

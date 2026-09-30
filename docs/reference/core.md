@@ -104,9 +104,33 @@ A rule's condition, scope, action and policies. See [Rules](../guides/rules.md).
 
 ::: reflexr.core.run
 
+::: reflexr.core.load_params
+
 ::: reflexr.core.Named
 
 ::: reflexr.core.RetryPolicy
+
+## Stored rules
+
+What rules installed at runtime may do, and the limits every one is held to. See [RFC-0003](../rfcs/0003-managing-rules-at-runtime.md).
+
+::: reflexr.core.StoredRules
+
+::: reflexr.core.RuleChange
+
+::: reflexr.core.check_stored
+
+::: reflexr.core.MAX_STORED_FIRINGS_PER_HOUR
+
+::: reflexr.core.MAX_STORED_ATTEMPTS
+
+::: reflexr.core.MAX_STORED_TIMEOUT
+
+::: reflexr.core.MAX_STORED_WINDOW
+
+::: reflexr.core.MAX_STORED_DESCRIPTION
+
+::: reflexr.core.MAX_STORED_BYTES
 
 ## Conditions
 

@@ -200,6 +200,8 @@ Serialized, the same rule is plain JSON, with a schema generated from the models
 }
 ```
 
+Rules are registered in code today. Stored rules, installed in one workspace at runtime, are designed in [RFC-0003](rfcs/0003-managing-rules-at-runtime.md), and core holds what fixes their bounds: `StoredRules`, the configuration (an `allow` hook shaped like `authorize`, which sees a `RuleChange`, the allowlisted actions with their params models, and the rule namespaces stored rules may use), and `check_stored`, which lists every way a rule breaks it or core's limits: a required throttle of at most 60 firings in any hour, no scope fields, predicates or `matches`, and bounded retries, timeout, windows, description and size. Storage, the commands and the surfaces follow.
+
 ### Conditions
 
 A condition is a pipeline of stages, evaluated per scope:
@@ -317,7 +319,9 @@ runbook = GraphAction(runbook_graph, name="runbook", state=RunbookState, inputs=
 
 A `Reaction` carries the workspace (acting as the run's `AgentActor`, so what it publishes records the run as its cause and joins the run's chain), the run (its scope, matched `seq`s, attempt and chain), the rule, the matched envelopes, and the application's `deps`. `reaction.emit(event)` publishes with an id derived from the run, its last checkpoint and its position since, so a retried attempt does not emit twice and a resumed graph never reuses an earlier id. An action returns the run's output (JSON, or a Pydantic model), or raises to fail the attempt; a rule's `timeout` bounds it. Raising `RunFailure(message, reason=, permanent=)` fails it with a stable reason code, recorded on the run, its facts and the `reflexr.runs` metric, and a permanent failure, such as a guardrail block, is dead-lettered without retrying ([ADR-0036](adr/0036-typed-run-failures.md)).
 
-Rules refer to actions by name (`{"action": "triage"}`), because functions and agents are not data. `run(triage)` takes the action's name. `Workspaces` checks rules' event types, fields and predicates when it is built, and the reactor checks their actions:
+An action may declare a **params model**, so that one action serves rules that differ in a value, such as the thread to post in ([RFC-0003](rfcs/0003-managing-rules-at-runtime.md)). `run("notify", thread_id="thr_4")` puts the values on the rule's action reference as plain JSON, outside its definition, so changing them never resets the rule. A function declares its model through `with_params(notify, NotifyParams)`, which pyright checks against the function's second parameter; `AgentAction` and `GraphAction` take `params=NotifyParams`, and read the values with `reaction.params_as(NotifyParams)`. The reactor validates each rule's params as the model when it is built, and again at each attempt into `reaction.params`; an attempt that cannot fails permanently, with the reason `invalid_params`, or `unknown_action` when its action is not registered.
+
+Rules refer to actions by name (`{"action": "triage"}`), because functions and agents are not data. `run(triage)` takes the action's name. `Workspaces` checks rules' event types, fields and predicates when it is built, and the reactor checks their actions and params:
 
 ```python
 workspaces = Workspaces(storage, events=[ServiceError, Deploy], rules=[error_spike])
@@ -521,7 +525,6 @@ Every decision is an ADR in [`adr/`](adr/README.md), whose index lists them with
 
 ## Open questions
 
-- **Managing rules at runtime.** Rules are data from day one, but v0.1 registers them in code. Storing versioned rules per tenant, and installing them through the API, is the next step, and what lets an agent's proposed rule go live once a person accepts it.
 - **Pausing runs for a person.** A workflow that needs approval mid-way could pause as pydantic-ai deferred tools do. Until then, a run can emit an event and a second rule can continue when the answer arrives.
 - **Live output from runs.** Token-level streaming of agent runs over the WebSocket, as artifactr streams its runs.
 - **Resuming inside parallel branches.** Graph checkpoints are proven for sequential steps; a run that crashes inside a fork restarts from the last checkpoint before it.

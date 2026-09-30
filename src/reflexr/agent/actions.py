@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass
 
+from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
 
@@ -28,6 +29,8 @@ class AgentAction[D, O]:
         prompt: The user prompt, or a function of the reaction that returns it. Defaults to a
             description of the firing.
         usage_limits: Limits on requests and tokens per attempt.
+        params: The model of the params rules pass the action. Its prompt and tools read them
+            with ``reaction.params_as(Model)``, naming the model again.
     """
 
     agent: Agent[Reaction[D], O]
@@ -35,6 +38,7 @@ class AgentAction[D, O]:
     name: str = ""
     prompt: str | Callable[[Reaction[D]], str] | None = None
     usage_limits: UsageLimits | None = None
+    params: type[BaseModel] | None = None
 
     def __post_init__(self) -> None:
         self.name = self.name or self.agent.name or ""
