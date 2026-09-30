@@ -84,10 +84,14 @@ The server's instructions tell the client what it is talking to: event logs, one
 |---|---|
 | `publish_event(workspace_id, event, id=None, correlation_id=None)` | Publishes an event, an object with its `type` and fields. An `id` already in the log adds nothing; `correlation_id` joins the causal chain that event started, and naming a later event of a chain is refused. |
 | `read_events(workspace_id, after_seq=0, before_seq=None, types=None, limit=None, last=None)` | Reads envelopes, oldest first, as JSON lines, as `GET /v1/workspaces/{workspace_id}/events` reads them: the window `after_seq < seq < before_seq`, of `types`, the first `limit` or the last `last`. Without either, the first 50. To read back from the latest events, give `last`, then `before_seq` the oldest `seq` returned ([Reading the log](workspaces.md#windows-types-and-the-tail)). |
-| `list_rules()` | The rules every workspace evaluates, as JSON. They are the application's, the same for every tenant, so every client sees them all ([Multi-tenancy and security](security.md#tenants-and-workspaces)) |
-| `rule_status(workspace_id)` | Every registered rule, as `GET /v1/workspaces/{workspace_id}/rules` lists them: whether it is enabled, its cursor, how far it is behind the log, its generation and its number of dead letters. A rule that has not evaluated the workspace yet is at cursor 0. |
+| `list_rules()` | The rules registered in code, which every workspace evaluates, as JSON. They are the application's, the same for every tenant, so every client sees them all ([Multi-tenancy and security](security.md#tenants-and-workspaces)). A workspace's stored rules are not among them. |
+| `rule_status(workspace_id)` | Each of the workspace's rules, code rules first, as `GET /v1/workspaces/{workspace_id}/rules` lists them: whether it is a code or a stored rule, a stored rule's version, whether it is enabled, its cursor, how far it is behind the log, its generation and its number of dead letters. A rule that has not evaluated the workspace yet is at cursor 0. |
+| `get_rule(workspace_id, rule)` | One of the workspace's rules, as JSON, as `GET /v1/workspaces/{workspace_id}/rules/{rule}` returns it: its definition, its origin, and a stored rule's version and provenance |
 | `schedule_status(workspace_id)` | Each [schedule](schedules.md) that targets the workspace, as `GET /v1/workspaces/{workspace_id}/schedules` lists them: when it last ticked and when it ticks next, or that it has not started there yet |
 | `replay_rule(workspace_id, rule, from_seq=0, mode="rebuild")` | Evaluates a rule again from `from_seq`: rebuilds its state quietly, or refires ([The reactor](reactor.md#replaying-a-rule)) |
+| `install_rule(workspace_id, rule, provenance=None)` | Installs a [stored rule](#stored-rules): version 1, or the next version of an archived rule |
+| `update_rule(workspace_id, rule, expected_version=None, provenance=None)` | Replaces an active stored rule, named by `rule`'s name, with its next version |
+| `archive_rule(workspace_id, rule, expected_version=None, reason=None)` | Archives a stored rule, named by `rule`, and cancels its unfinished runs |
 | `list_runs(workspace_id, rule=None, scope_key=None, status=None, limit=20)` | Runs, newest first, as JSON lines, filtered as `GET /v1/workspaces/{workspace_id}/runs` filters them. `scope_key` holds the scope's values, such as `["auth"]`, or is a run's `scope_key` as the run has it. |
 | `get_run(workspace_id, run_id)` | One run: its status, attempts, error, output and checkpoint |
 | `retry_run(workspace_id, run_id)` | Makes a run runnable now, with a fresh retry budget if it had finished |
@@ -96,7 +100,7 @@ The server's instructions tell the client what it is talking to: event logs, one
 | `list_dead_letters(workspace_id, rule=None)` | The envelopes rules could not evaluate, as JSON lines |
 | `give_feedback(workspace_id, feedback_type, target, value=None)` | Typed feedback on a run, a firing or a chain ([Feedback and evaluation](evaluation.md#giving-feedback)) |
 
-Commands answer with their outcome as JSON, such as `{"type":"published","seq":1,"id":"alert-7","duplicate":false}`. A rejection is a tool error carrying its message: retrying a run that succeeded answers `Error executing tool retry_run: cannot retry run fir_ce4679d4c7453919, which is succeeded`, and publishing one of reflexr's own events answers `reflexr:run_succeeded events are recorded by reflexr, not published`.
+Commands answer with their outcome as JSON, such as `{"type":"published","seq":1,"id":"alert-7","duplicate":false}`. A rejection is a tool error carrying its message: retrying a run that succeeded answers `Error executing tool retry_run: cannot retry run fir_ce4679d4c7453919, which is succeeded`, and publishing one of reflexr's own events answers `reflexr:run_succeeded events are recorded by reflexr, not published`. A `validation_failed` rejection that lists problems has them after its message, as JSON, as REST's body has them in `errors`: publishing `{"type": "ops:service.error", "severity": 8}`, without its `service`, answers `invalid ops:service.error event: [{"loc": ["service"], "msg": "Field required", "type": "missing"}]`.
 
 Events a client publishes are attributed to its `ExternalAgentActor`, so people, the reactor and other clients see who did what:
 
@@ -105,6 +109,23 @@ Events a client publishes are attributed to its `ExternalAgentActor`, so people,
 ```
 
 The same rules apply as everywhere else: the `Workspaces` event allowlist decides what a client may publish, reflexr's own events are refused, and a publish is idempotent by its id.
+
+## Stored rules
+
+When the application turns [stored rules](rules.md#stored-rules) on, a client can install, update and archive them in a workspace, as relayr does for a rule a person accepted in chat. The three tools are served only then: without `stored_rules` they could only refuse, so a client's list of tools doesn't carry them. `rule` is the whole rule, as the [rules schema](../reference/schema.md) has it, and the tool's input schema carries it, so a client can draft one; `provenance` is JSON that reflexr keeps with the rule and its `reflexr:rule_installed` fact, and does not read. Each tool answers with the command's `rule_version` outcome:
+
+```json
+{"type": "rule_version", "rule": "chat:prod-deploy-failures", "version": 1, "seq": 812, "duplicate": false}
+```
+
+The configuration's `allow` hook is asked about each change after `authorize`, and each change is checked as over REST: a rule the fixed limits refuse answers every problem at once, `rule chat:prod-deploy-failures cannot be stored: ["when.throttle is required", "timeout is required"]`, and a rule someone else changed since the `expected_version` a client gives answers `rule chat:prod-deploy-failures is at version 2, not 1`. The tools take no `command_id`, as no MCP tool does: a change retried after it succeeded changes nothing and answers `"duplicate": true`, whatever its `expected_version`, so retrying is safe. Give `expected_version` so a retry after someone else's change is refused rather than applied.
+
+A stored rule belongs to the workspace it is installed in. `rule_status` lists it after the code rules, with its version, and `get_rule` returns it; another workspace, or another tenant's workspace of the same id, has no rule of that name. `list_rules` lists the code rules only.
+
+```text
+- ops:error-spike: code, enabled, cursor 812, 0 behind, generation 0, 0 dead letters
+- chat:prod-deploy-failures: stored, version 1, enabled, cursor 812, 0 behind, generation 0, 0 dead letters
+```
 
 ## Run resources
 

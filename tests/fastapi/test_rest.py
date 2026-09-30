@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 import pytest
@@ -11,9 +12,11 @@ from reflexr import Rule, on, run
 from reflexr.core import Event, PredicateFilter
 from reflexr.workspace import Reactor, Schedule, Workspaces
 from tests.event_types import Deploy
-from tests.fastapi.conftest import build, heartbeat, spike
+from tests.fastapi.conftest import STORED_RULES, build, chat_rule, command, heartbeat, spike
 
 ERROR = {"type": "app:service.error", "service": "auth"}
+COMMANDS = "/workspaces/prod/commands"
+PROVENANCE = {"source": "artifactr", "artifact": "art_7", "version": 3}
 
 
 @pytest.fixture
@@ -25,6 +28,17 @@ async def app() -> AsyncIterator[tuple[httpx.AsyncClient, Workspaces, Reactor[No
 
 
 type App = tuple[httpx.AsyncClient, Workspaces, Reactor[None]]
+
+
+@pytest.fixture
+async def client() -> AsyncIterator[httpx.AsyncClient]:
+    """A client of an application with stored rules, in which Ada has installed chat:deploys."""
+    application, _, _ = build(stored_rules=STORED_RULES)
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test/v1") as client:
+        install = command("c0", type="install_rule", rule=chat_rule(), provenance=PROVENANCE)
+        assert (await client.post(COMMANDS, json=install)).status_code == 200
+        yield client
 
 
 async def test_producers_publish_events_one_at_a_time_or_in_batches(app: App) -> None:
@@ -354,3 +368,163 @@ async def test_a_tenant_sees_only_its_own_schedule_targets() -> None:
         "theirs": [["globex", "ops"]],
     }
     assert refused.status_code == 401
+
+
+async def test_stored_rules_are_installed_updated_and_archived_through_commands(
+    client: httpx.AsyncClient,
+) -> None:
+    install = command("c1", type="install_rule", rule=chat_rule("chat:releases"))
+    first = await client.post(COMMANDS, json=install)
+    assert first.json()["outcome"] == {
+        "type": "rule_version",
+        "rule": "chat:releases",
+        "version": 1,
+        "seq": 2,
+        "duplicate": False,
+    }
+    assert (await client.post(COMMANDS, json=install)).json() == first.json(), "one id, once"
+    again = await client.post(COMMANDS, json=install | {"command_id": "c2"})
+    assert again.json()["outcome"] == first.json()["outcome"] | {"duplicate": True}, "no change"
+    billing = chat_rule("chat:releases", service="billing")
+    update = command("c3", type="update_rule", rule=billing, expected_version=1)
+    updated = (await client.post(COMMANDS, json=update)).json()["outcome"]
+    assert (updated["version"], updated["duplicate"]) == (2, False)
+    got = await client.get("/workspaces/prod/rules/chat:releases")
+    assert got.json() == {"rule": billing, "origin": "stored", "version": 2, "provenance": {}}
+    archive = command("c4", type="archive_rule", rule="chat:releases", expected_version=2)
+    archived = (await client.post(COMMANDS, json=archive)).json()["outcome"]
+    assert (archived["version"], archived["duplicate"]) == (3, False)
+    gone = await client.get("/workspaces/prod/rules/chat:releases")
+    assert (gone.status_code, gone.json()["detail"]) == (
+        404,
+        {
+            "type": "not_found",
+            "message": "rule chat:releases does not exist",
+            "entity": "rule",
+            "id": "chat:releases",
+        },
+    )
+
+
+async def test_a_workspace_reads_its_stored_rules_beside_the_code_rules(
+    client: httpx.AsyncClient,
+) -> None:
+    stored_rule = await client.get("/workspaces/prod/rules/chat:deploys")
+    assert stored_rule.json() == {
+        "rule": chat_rule(),
+        "origin": "stored",
+        "version": 1,
+        "provenance": PROVENANCE,
+    }
+    code_rule = await client.get("/workspaces/prod/rules/app:spike")
+    assert code_rule.json() == {
+        "rule": spike.model_dump(mode="json"),
+        "origin": "code",
+        "version": None,
+        "provenance": None,
+    }
+    statuses = (await client.get("/workspaces/prod/rules")).json()
+    assert [(s["rule"], s["origin"], s["version"]) for s in statuses] == [
+        ("app:spike", "code", None),
+        ("chat:deploys", "stored", 1),
+    ]
+    rules = (await client.get("/rules")).json()
+    assert [r["name"] for r in rules] == ["app:spike"], "the code rules, as every tenant's"
+
+
+async def test_no_other_tenant_or_workspace_sees_a_stored_rule(client: httpx.AsyncClient) -> None:
+    for workspace, headers in (("prod", {"x-tenant": "globex"}), ("staging", {})):
+        url = f"/workspaces/{workspace}"
+        missing = await client.get(f"{url}/rules/chat:deploys", headers=headers)
+        assert missing.status_code == 404
+        statuses = (await client.get(f"{url}/rules", headers=headers)).json()
+        assert [s["rule"] for s in statuses] == ["app:spike"]
+        assert (await client.get(f"{url}/events", headers=headers)).json() == []
+        archive = command("c1", type="archive_rule", rule="chat:deploys")
+        refused = await client.post(f"{url}/commands", json=archive, headers=headers)
+        assert (refused.status_code, refused.json()["rejection"]["type"]) == (404, "not_found")
+    secret = await client.get("/workspaces/secret/rules/chat:deploys")
+    assert (secret.status_code, secret.json()["detail"]["type"]) == (403, "forbidden")
+
+
+@pytest.mark.parametrize(
+    ("change", "headers", "status", "rejection"),
+    [
+        pytest.param(
+            {"type": "install_rule", "rule": chat_rule("chat:releases")},
+            {"x-user": "grace"},
+            403,
+            {
+                "type": "forbidden",
+                "message": "this change to rule chat:releases is not yours to make",
+            },
+            id="allow refuses",
+        ),
+        pytest.param(
+            {"type": "update_rule", "rule": spike.model_dump(mode="json")},
+            {},
+            403,
+            {"type": "forbidden", "message": "rule app:spike is registered in code"},
+            id="a code rule",
+        ),
+        pytest.param(
+            {"type": "install_rule", "rule": chat_rule("chat:releases") | {"timeout": None}},
+            {},
+            422,
+            {
+                "type": "validation_failed",
+                "message": "rule chat:releases cannot be stored",
+                "errors": ["timeout is required"],
+            },
+            id="beyond the limits",
+        ),
+        pytest.param(
+            {"type": "install_rule", "rule": chat_rule(service="billing")},
+            {},
+            409,
+            {
+                "type": "invalid_state",
+                "message": "rule chat:deploys is installed already: update it",
+            },
+            id="installed already",
+        ),
+        pytest.param(
+            {"type": "update_rule", "rule": chat_rule(service="billing"), "expected_version": 2},
+            {},
+            409,
+            {"type": "invalid_state", "message": "rule chat:deploys is at version 1, not 2"},
+            id="another version",
+        ),
+        pytest.param(
+            {"type": "archive_rule", "rule": "chat:releases"},
+            {},
+            404,
+            {
+                "type": "not_found",
+                "message": "stored rule chat:releases does not exist",
+                "entity": "stored rule",
+                "id": "chat:releases",
+            },
+            id="no such rule",
+        ),
+    ],
+)
+async def test_a_refused_change_to_a_stored_rule_answers_its_status(
+    client: httpx.AsyncClient,
+    change: dict[str, Any],
+    headers: dict[str, str],
+    status: int,
+    rejection: dict[str, Any],
+) -> None:
+    response = await client.post(COMMANDS, json=command("c1", **change), headers=headers)
+    assert (response.status_code, response.json()["rejection"]) == (status, rejection)
+
+
+async def test_without_stored_rules_every_change_is_forbidden(app: App) -> None:
+    client, _, _ = app
+    install = command("c1", type="install_rule", rule=chat_rule())
+    refused = await client.post(COMMANDS, json=install)
+    assert (refused.status_code, refused.json()["rejection"]) == (
+        403,
+        {"type": "forbidden", "message": "stored rules are off in these workspaces"},
+    )

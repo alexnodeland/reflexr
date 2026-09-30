@@ -1,4 +1,4 @@
-"""An application built from the router, with header-based auth."""
+"""An application built from the router, with header-based auth, and stored rules to change."""
 
 from collections.abc import Iterable
 from datetime import timedelta
@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from starlette.requests import HTTPConnection
 
 from reflexr import Actor, F, Feedback, Rule, UserActor, by, on, run
-from reflexr.core import Predicates, TenantId, WorkspaceId
+from reflexr.core import Predicates, RuleChange, StoredRules, TenantId, WorkspaceId
 from reflexr.fastapi import Unauthorized, reflexr_router
 from reflexr.workspace import (
     Clock,
@@ -50,11 +50,39 @@ async def authorize(tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor
     return workspace_id != "secret"
 
 
+async def ada_only(
+    tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor, change: RuleChange
+) -> bool:
+    return actor.participant == "user:ada"
+
+
+STORED_RULES = StoredRules(allow=ada_only, actions={"page": None}, namespaces={"chat"})
+"""Stored rules in the ``chat`` namespace, which only Ada may change."""
+
+
+def chat_rule(name: str = "chat:deploys", *, service: str = "auth") -> dict[str, Any]:
+    """A stored rule that pages on each deploy of a service, as JSON."""
+    rule = Rule(
+        name=name,
+        when=on(Deploy).where(service=service).at_most(10, per=timedelta(hours=1)),
+        then=run("page"),
+        ordering="none",
+        timeout=timedelta(minutes=1),
+    )
+    return rule.model_dump(mode="json")
+
+
+def command(command_id: str, **body: Any) -> dict[str, Any]:
+    """A command frame."""
+    return {"type": "command", "command_id": command_id, "command": body}
+
+
 def build(
     *,
     rules: Iterable[Rule] = (spike,),
     schedules: Iterable[Schedule] = (heartbeat,),
     predicates: Predicates | None = None,
+    stored_rules: StoredRules | None = None,
     clock: Clock = utc_now,
     **options: Any,
 ) -> tuple[FastAPI, Workspaces, Reactor[None]]:
@@ -63,6 +91,7 @@ def build(
         events=[ServiceError, Deploy, Heartbeat],
         rules=rules,
         predicates=predicates,
+        stored_rules=stored_rules,
         schedules=schedules,
         clock=clock,
     )
