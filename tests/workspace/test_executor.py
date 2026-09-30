@@ -33,6 +33,7 @@ from reflexr.telemetry import parse_traceparent
 from reflexr.workspace import (
     EVALUATION_LEASE,
     REACTOR,
+    RUN_LEASE_PREFIX,
     InMemoryStorage,
     Reaction,
     Reactor,
@@ -45,8 +46,9 @@ from reflexr.workspace import (
     Workspaces,
     run_lease,
 )
+from tests.clock import START, FakeClock
 from tests.event_types import Deploy, ServiceError
-from tests.workspace.conftest import START, Build, FakeClock, Telemetry
+from tests.workspace.conftest import Build, Telemetry
 from tests.workspace.helpers import fired
 
 ACME = WorkspaceRef("acme", "prod")
@@ -398,7 +400,7 @@ class SlowToLetGo(InMemoryStorage):
         self.let_go = asyncio.Event()
 
     async def release_lease(self, workspace: WorkspaceRef, key: str, holder: str) -> None:
-        if holder == "slow" and key.startswith(run_lease("")):
+        if holder == "slow" and key.startswith(RUN_LEASE_PREFIX):
             self.holding.set()
             await self.let_go.wait()
         await super().release_lease(workspace, key, holder)
@@ -747,31 +749,36 @@ async def test_run_started_names_the_scope(build: Build) -> None:
     assert (started.scope, started.scope_key) == ({"service": "auth"}, '["auth"]')
 
 
+class BlinksOnce(InMemoryStorage):
+    """Storage that fails to list its workspaces once, as a database that blinks."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        super().__init__(clock=clock)
+        self.blinked = False
+
+    async def workspaces(self) -> list[WorkspaceRef]:
+        if not self.blinked:
+            self.blinked = True
+            raise RuntimeError("the database blinked")
+        return await super().workspaces()
+
+
 async def test_serving_survives_a_failing_pass(
-    build: Build, caplog: pytest.LogCaptureFixture
+    clock: FakeClock, caplog: pytest.LogCaptureFixture
 ) -> None:
-    workspaces = build([rule()])
+    workspaces = Workspaces(BlinksOnce(clock), rules=[rule()], clock=clock)
     workspace = await open_(workspaces)
-    executor = reactor(workspaces, Deps())
-    real = executor.tick
-    failures = [RuntimeError("the database blinked")]
-
-    async def flaky() -> int:
-        if failures:
-            raise failures.pop()
-        return await real()
-
-    executor.tick = flaky
-    serving = asyncio.create_task(executor.serve(poll_interval=timedelta(milliseconds=5)))
+    stop = asyncio.Event()
+    serving = reactor(workspaces, Deps()).serve(poll_interval=timedelta(milliseconds=5), stop=stop)
+    served = asyncio.create_task(serving)
     await workspace.publish(Deploy(service="auth"))
     for _ in range(200):
         runs = await workspace.runs()
         if runs and runs[0].status == "succeeded":
             break
         await asyncio.sleep(0.005)
-    serving.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await serving
+    stop.set()
+    await served
     assert (await workspace.runs())[0].status == "succeeded"
     assert "a reactor pass failed" in caplog.text
 

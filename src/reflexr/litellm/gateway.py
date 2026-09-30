@@ -85,6 +85,8 @@ def litellm_model(
     Routing, fallbacks, budgets and guardrails are the proxy's configuration; the model only
     names the group.
 
+    Shared verbatim with artifactr's ``src/artifactr/litellm/gateway.py``; change both.
+
     Args:
         model: The proxy's model group, such as ``claude-sonnet``.
         api_base: The proxy's URL, such as ``http://litellm:4000``. Defaults to the provider's

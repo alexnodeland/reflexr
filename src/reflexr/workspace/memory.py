@@ -6,12 +6,13 @@ cannot be shared between processes.
 """
 
 import asyncio
-from collections.abc import AsyncGenerator, Callable, Collection, Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Collection, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from reflexr.core import (
+    WAITING,
     Envelope,
     EvaluationError,
     EventId,
@@ -23,15 +24,7 @@ from reflexr.core import (
     ScopeKey,
     ScopeState,
 )
-from reflexr.workspace.storage import Entry, RunPolicy, WorkspaceRef, run_lease
-
-Clock = Callable[[], datetime]
-"""Returns the current time; injectable so tests control time."""
-
-
-def utc_now() -> datetime:
-    """Return the current time in UTC: the default clock."""
-    return datetime.now(UTC)
+from reflexr.workspace.storage import Clock, Entry, RunPolicy, WorkspaceRef, run_lease, utc_now
 
 
 @dataclass
@@ -300,7 +293,7 @@ class InMemoryStorage:
             if run.status == "running":
                 lease = data.leases.get(run_lease(run.id))
                 return lease is None or lease[1] <= now
-            if run.status not in ("pending", "retrying") or run.next_attempt_at > now:
+            if run.status not in WAITING or run.next_attempt_at > now:
                 return False
             return run.rule not in policy.ordered or first[run.rule, run.scope_key] == run.id
 

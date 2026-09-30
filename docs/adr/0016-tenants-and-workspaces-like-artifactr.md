@@ -36,4 +36,4 @@
 ## Action items
 
 1. [x] Update the architecture, protocol, RFC-0001, contributing and security documents.
-2. [ ] Build the workspace layer as `reflexr.workspace` (RFC-0001 phase 2).
+2. [x] Build the workspace layer as `reflexr.workspace` (RFC-0001 phase 2).

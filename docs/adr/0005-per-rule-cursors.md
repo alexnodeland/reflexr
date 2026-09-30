@@ -37,4 +37,4 @@ Separating a pure, transactional decision from an impure, retried action is what
 
 ## Action items
 
-1. [ ] Implement evaluation and execution in the `Reactor` (RFC-0001 phase 2).
+1. [x] Implement evaluation and execution in the `Reactor` (RFC-0001 phase 2).

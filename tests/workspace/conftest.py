@@ -5,7 +5,6 @@ The suite runs on in-memory storage, on SQLite, and on PostgreSQL when it is con
 
 from collections.abc import AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
@@ -20,23 +19,9 @@ from reflexr import Rule, UserActor
 from reflexr.core import Predicates
 from reflexr.sql import SqlStorage, create_schema
 from reflexr.workspace import InMemoryStorage, Storage, Workspace, Workspaces
+from tests.clock import FakeClock
 from tests.databases import SQL_BACKENDS, empty_database
 from tests.event_types import Deploy, Flag, Heartbeat, ServiceError
-
-START = datetime(2026, 1, 1, tzinfo=UTC)
-
-
-class FakeClock:
-    """A clock tests move by hand."""
-
-    def __init__(self) -> None:
-        self.now = START
-
-    def __call__(self) -> datetime:
-        return self.now
-
-    def advance(self, seconds: float) -> None:
-        self.now += timedelta(seconds=seconds)
 
 
 @dataclass

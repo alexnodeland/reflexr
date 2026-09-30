@@ -1,4 +1,4 @@
-"""One handler for the protocol's commands, which every surface shares (ADR-0011).
+"""One handler for the protocol's commands, which every surface shares (ADR-0044).
 
 REST, the WebSocket and MCP turn their requests into :data:`~reflexr.core.protocol.Command`
 models and hand them here, so a command behaves the same whichever way it arrives.

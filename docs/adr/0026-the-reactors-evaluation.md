@@ -52,4 +52,4 @@ Building the reactor's evaluation (RFC-0001 phase 2c) settled four questions the
 
 1. [x] Core: `Firing.causation`, `Run.causation`, `evaluate(max_depth=)`, `RuleProgress.silent_through`, and `safety.json` and `rebuilds.json` conformance cases.
 2. [x] `Workspaces(rules=, predicates=)`, `Workspace.replay_rule`, and `Reactor.evaluate`.
-3. [ ] Execution with leases, and actions (phase 2c, second part).
+3. [x] Execution with leases, and actions (phase 2c, second part).

@@ -2,8 +2,8 @@
 
 from reflexr.core import Firing, Run, SourceActor, create_run
 from reflexr.workspace import Entry
+from tests.clock import START
 from tests.event_types import Deploy, ServiceError
-from tests.workspace.conftest import START
 
 
 def entry(event_id: str, service: str = "auth", *, chain: str | None = None) -> Entry:

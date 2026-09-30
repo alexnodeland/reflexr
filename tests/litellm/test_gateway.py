@@ -15,12 +15,12 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.settings import ModelSettings
 
 from reflexr import ExternalAgentActor, Rule, UserActor, on, run
-from reflexr.agent import AgentAction, EventContext
+from reflexr.agent import AgentAction, EventContext, function_model
 from reflexr.core import RuleName, RunDeadLettered, TenantId, WorkspaceId
 from reflexr.litellm import (
     GUARDRAIL_BLOCKED,
@@ -236,12 +236,8 @@ async def test_any_model_gets_the_same_settings_merged_with_its_own() -> None:
         seen.append(info.model_settings)
         return ModelResponse(parts=[TextPart("Done.")])
 
-    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        seen.append(info.model_settings)
-        yield "Done."
-
     agent: Agent[Reaction[None], str] = Agent(
-        FunctionModel(respond, stream_function=stream),
+        function_model(respond),
         deps_type=Reaction[None],
         capabilities=[LiteLLMGateway(tenant_key=acme_key)],
         model_settings={"extra_body": {"user": "ada"}, "extra_headers": {"x-app": "oncall"}},

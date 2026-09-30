@@ -5,8 +5,8 @@ from datetime import timedelta
 from reflexr import F, RetryPolicy, Rule, SourceActor, UserActor, by, on, run
 from reflexr.evals import RuleOutcomes, rule_outcomes, time_to_resolution
 from reflexr.workspace import InMemoryStorage, Reaction, Reactor, Workspaces
+from tests.clock import FakeClock
 from tests.event_types import Deploy, ServiceError
-from tests.workspace.conftest import FakeClock
 
 page = Rule(
     name="page",

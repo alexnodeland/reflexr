@@ -1,6 +1,6 @@
 # ADR-0011: Surfaces: ingest, REST, WebSocket, schedules and MCP
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0044](0044-surfaces.md)
 **Date:** 2026-09-28
 **Deciders:** Alex Nodeland
 

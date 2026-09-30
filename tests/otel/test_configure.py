@@ -238,6 +238,18 @@ def test_only_installed_libraries_are_instrumented_by_default(
     assert installed() == {"fastapi", "sqlalchemy", "httpx"}
 
 
+def test_httpx2_alone_is_instrumented(captured: Captured, monkeypatch: pytest.MonkeyPatch) -> None:
+    real = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util, "find_spec", lambda name: None if name == "httpx" else real(name)
+    )
+    assert "httpx" in installed(), "pydantic-ai's providers use httpx2 without httpx"
+    with configure_telemetry(service_name="oncall", instrument=("httpx",), **captured.options()):
+        assert HTTPX2ClientInstrumentor().is_instrumented_by_opentelemetry
+        assert not HTTPXClientInstrumentor().is_instrumented_by_opentelemetry
+    assert not HTTPX2ClientInstrumentor().is_instrumented_by_opentelemetry
+
+
 def test_stable_http_conventions_are_opted_into(
     captured: Captured, monkeypatch: pytest.MonkeyPatch
 ) -> None:

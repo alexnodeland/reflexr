@@ -12,9 +12,9 @@ Each record captures one decision: the context that forced it, the options consi
 | [0006](0006-rules-as-typed-serializable-data.md) | Rules as typed, serializable data | Accepted, amended by 0041 |
 | [0007](0007-rule-state-as-pure-reducers.md) | Rule state as pure reducers, with the log as the clock | Accepted |
 | [0008](0008-actions-agents-graphs-and-functions.md) | Actions: agents, graphs and functions over one Reaction | Accepted |
-| [0009](0009-graph-checkpoints.md) | Graph checkpoints at step boundaries | Accepted |
+| [0009](0009-graph-checkpoints.md) | Graph checkpoints at step boundaries | Superseded by 0043 |
 | [0010](0010-loop-and-spend-safety.md) | Loop and spend safety | Accepted |
-| [0011](0011-surfaces.md) | Surfaces: ingest, REST, WebSocket, schedules and MCP | Accepted |
+| [0011](0011-surfaces.md) | Surfaces: ingest, REST, WebSocket, schedules and MCP | Superseded by 0044 |
 | [0012](0012-trunk-based-development-with-rfcs-and-adrs.md) | Trunk-based development with RFCs, ADRs and evergreen docs | Accepted |
 | [0013](0013-quality-gates.md) | Quality gates | Accepted |
 | [0014](0014-mit-license.md) | MIT license | Accepted |
@@ -44,5 +44,7 @@ Each record captures one decision: the context that forced it, the options consi
 | [0040](0040-telemetry-that-composes-across-libraries.md) | Telemetry that composes across libraries, untraced polling and mirror cursors | Accepted |
 | [0041](0041-executing-runs.md) | Executing runs | Accepted |
 | [0042](0042-cancel-safe-storage.md) | Cancel-safe storage | Accepted |
+| [0043](0043-graph-checkpoints.md) | Graph checkpoints | Accepted |
+| [0044](0044-surfaces.md) | Surfaces | Accepted |
 
 To add a record, copy [`template.md`](template.md) to the next number and add a row above.

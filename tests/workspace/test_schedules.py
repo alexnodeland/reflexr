@@ -23,8 +23,9 @@ from reflexr.workspace import (
     Workspaces,
     tick_id,
 )
+from tests.clock import START, FakeClock
 from tests.event_types import Heartbeat
-from tests.workspace.conftest import START, FakeClock, Telemetry
+from tests.workspace.conftest import Telemetry
 
 ACME = WorkspaceRef("acme", "prod")
 every_30s = Schedule(name="heartbeat-check", every=timedelta(seconds=30))

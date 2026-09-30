@@ -1,22 +1,6 @@
 # Architecture
 
-> **Status:** v0.1 is built, as planned in [RFC-0001](rfcs/0001-v0.1-implementation-plan.md), and not yet released. This document is evergreen: it is updated in the same pull request as the code that changes it, and the table below shows what exists today. Decisions are recorded in [`adr/`](adr/README.md), proposals in [`rfcs/`](rfcs/README.md), and the wire protocol in [`protocol.md`](protocol.md).
-
-| Package | Status |
-|---|---|
-| `reflexr.core` | Implemented |
-| `reflexr.telemetry` | Implemented: spans, attributes and the metric registry |
-| `reflexr.scores` | Implemented: the log mirror that scores feedback, on evalr's mapping and ports |
-| `reflexr.otel` (extra) | Implemented: `configure_telemetry`, the SDK behind the API, with the metric views, composed with other libraries' contributions |
-| `reflexr.langfuse` (extra) | Implemented: whole traces, run attributes, and feedback as Langfuse scores |
-| `reflexr.litellm` (extra) | Implemented: models over the LiteLLM proxy, with tenancy, keys and guardrails per request |
-| `reflexr.evals` (extra) | Implemented: feedback as evalr examples, evaluators as rules, replay experiments and end-to-end measures |
-| `reflexr.workspace` | Implemented: storage protocol, in-memory storage, workspace handles, the `Reactor` (evaluation, execution and schedules) and function actions |
-| `reflexr.agent` | Implemented: agent actions with the `EventContext` capability, and checkpointed graph actions |
-| `reflexr.sql` | Implemented: `SqlStorage` on PostgreSQL and SQLite, with packaged Alembic migrations |
-| `reflexr.fastapi` | Implemented: REST and the WebSocket stream, over one command handler |
-| `reflexr.mcp` | Implemented: publishing, reading and administration as MCP tools, and runs as resources |
-| `examples/oncall` | Implemented: the reference implementation, incident response with a triage agent, a runbook graph, a paging function, every surface and a terminal client |
+This document is evergreen: it is updated in the same pull request as the code that changes it. Decisions are recorded in [`adr/`](adr/README.md), proposals in [`rfcs/`](rfcs/README.md), and the wire protocol in [`protocol.md`](protocol.md).
 
 ## What reflexr is
 
@@ -87,12 +71,16 @@ Dependencies point one way. Each layer is usable without the ones above it, and 
 | `reflexr.core` | pydantic | Events and envelopes, actors, conditions and their reducers, rules, evaluation, the run lifecycle and retry policy. Pure, synchronous, no I/O. |
 | `reflexr.telemetry` | core, opentelemetry-api | Attribute names, the metric registry and its cardinality policy, and the tracer and instruments. Never configures the SDK. |
 | `reflexr.scores` (needs evalr, from the `langfuse` or `evals` extra) | core, telemetry, workspace, evalr's core | Feedback types as score configs and feedback as scores, through evalr's mapping with each type's registered name, and the `FeedbackMirror` that follows a log into evalr's `ScoreSink` port. |
-| `reflexr.evals` (extra) | workspace, evalr | evalr's `FeedbackSource` over a workspace's log, and `EvaluatorAction`, which runs an evalr evaluator as a rule's action and records its verdicts as feedback. |
-| `reflexr.workspace` | core, telemetry, cronsim | `Workspaces`, `Workspace` and the rule and schedule statuses it reports, the storage protocol, in-memory storage, the `Reactor`, the action port and `Reaction`, schedules and their runner. |
-| `reflexr.agent` | workspace, pydantic-ai, pydantic-graph | Agent actions with the `EventContext` capability, and graph actions with checkpoints: adapters of the action port. |
-| `reflexr.sql` (extra) | workspace, SQLAlchemy 2 async, Alembic | Durable storage on PostgreSQL and SQLite, and its migrations. |
-| `reflexr.fastapi` (extra) | workspace, FastAPI | HTTP ingest, REST reads and administration, and the WebSocket stream protocol. |
-| `reflexr.mcp` (extra) | workspace, mcp | Publishing, reading and administration as MCP tools. |
+| `reflexr.evals` (extra) | workspace, evalr | evalr's `FeedbackSource` over a workspace's log, `EvaluatorAction`, which runs an evalr evaluator as a rule's action and records its verdicts as feedback, replay experiments and the end-to-end measures. |
+| `reflexr.workspace` | core, telemetry, cronsim | `Workspaces`, `Workspace` and the rule and schedule statuses it reports, the storage protocol, in-memory storage, the `Reactor` (evaluation, execution and schedules), the action port and `Reaction`, and function actions. |
+| `reflexr.agent` | workspace, pydantic-ai, pydantic-graph | Agent actions with the `EventContext` capability, graph actions with checkpoints (adapters of the action port), and `function_model` for tests. |
+| `reflexr.sql` (extra) | workspace, SQLAlchemy 2 async, Alembic | `SqlStorage` on PostgreSQL and SQLite, and its packaged migrations. |
+| `reflexr.fastapi` (extra) | workspace, FastAPI | HTTP ingest, REST reads and administration, and the WebSocket stream protocol, over one command handler. |
+| `reflexr.mcp` (extra) | workspace, mcp | Publishing, reading and administration as MCP tools, and runs as resources. |
+| `reflexr.otel` (extra) | telemetry, the OpenTelemetry SDK and instrumentations | `configure_telemetry`: the SDK behind the API, with the metric views, composed with other libraries' contributions. |
+| `reflexr.langfuse` (extra) | workspace, scores, Langfuse, evalr | Whole traces, run attributes, and feedback as Langfuse scores. |
+| `reflexr.litellm` (extra) | workspace, pydantic-ai's OpenAI-compatible models | Models over the LiteLLM proxy, with tenancy, keys and guardrails per request. |
+| `examples/oncall` | every layer | The reference implementation: incident response with a triage agent, a runbook graph, a paging function, every surface and a terminal client. |
 
 ### Ports and adapters
 
@@ -317,7 +305,7 @@ runbook = GraphAction(runbook_graph, name="runbook", state=RunbookState, inputs=
 ```
 
 - **Agents** are plain pydantic-ai `Agent`s with `deps_type=Reaction[...]`, wrapped in an `AgentAction`. With the `[litellm]` extra, `litellm_model("claude-sonnet")` routes an agent through the LiteLLM proxy, with default model settings like any other pydantic-ai model, and the `LiteLLMGateway` capability attaches each request's tenant, rule, run, chain and trace, the tenant's key and the rule's guardrails; a guardrail block dead-letters the run as `guardrail_blocked` ([ADR-0022](adr/0022-litellm-proxy-first.md)). By default its prompt describes the firing: the rule and its description, the scope, and the matched events. The `EventContext` capability gives the agent `read_events`, to read back through the workspace's log, and `emit_event`, to publish events of the types it is allowed, validated against their schemas, with refused calls retried by the model. The agent's output is the run's output. Each run is in its causal chain's conversation (pydantic-ai's `conversation_id`), and the capability attributes pydantic-ai's `invoke_agent` span to the tenant, workspace, rule, run and attempt. `usage_limits` bound each attempt.
-- **Graphs** are pydantic-graph graphs built with `GraphBuilder`, with the `Reaction` as their deps, wrapped in a `GraphAction(graph, state=, inputs=)`. reflexr drives them step by step and, at every boundary where nothing runs in parallel, saves the graph state and the next task to the run (`Reaction.checkpoint`, which appends `run_progressed`). A retry, or another executor after a crash, resumes after the last saved step instead of starting over; inside a fork it resumes from before the fork. A boundary is saved only if what it saves reads back as it was, and a checkpoint that no longer validates is set aside, on the attempt's span, and the graph starts over ([ADR-0009](adr/0009-graph-checkpoints.md)). Each step is an `execute_step {node}` span.
+- **Graphs** are pydantic-graph graphs built with `GraphBuilder`, with the `Reaction` as their deps, wrapped in a `GraphAction(graph, state=, inputs=)`. reflexr drives them step by step and, at every boundary where nothing runs in parallel, except before a decision, which runs no code, saves the graph state and the next task to the run (`Reaction.checkpoint`, which appends `run_progressed`). A retry, or another executor after a crash, resumes after the last saved step instead of starting over; inside a fork it resumes from before the fork. A boundary is saved only if what it saves reads back as it was, and a checkpoint that no longer validates is set aside, on the attempt's span, and the graph starts over ([ADR-0043](adr/0043-graph-checkpoints.md)). Each step is an `execute_step {node}` span.
 - **Functions** are `async def` over a `Reaction`.
 
 A `Reaction` carries the workspace (acting as the run's `AgentActor`, so what it publishes records the run as its cause and joins the run's chain), the run (its scope, matched `seq`s, attempt and chain), the rule, the matched envelopes, and the application's `deps`. `reaction.emit(event)` publishes with an id derived from the run, its last checkpoint and its position since, so a retried attempt does not emit twice and a resumed graph never reuses an earlier id. An action returns the run's output (JSON, or a Pydantic model), or raises to fail the attempt; a rule's `timeout` bounds it. Raising `RunFailure(message, reason=, permanent=)` fails it with a stable reason code, recorded on the run, its facts and the `reflexr.runs` metric, and a permanent failure, such as a guardrail block, is dead-lettered without retrying ([ADR-0036](adr/0036-typed-run-failures.md)).
@@ -380,7 +368,7 @@ Each workspace remembers each schedule's last tick, saved in the transaction tha
 
 ## Surfaces
 
-Every surface is a thin adapter over a `Workspace` handle ([ADR-0011](adr/0011-surfaces.md)). What a surface reports, such as a rule's or a schedule's status, the handle computes, so every surface reports the same and only translates it. The wire formats are in [`protocol.md`](protocol.md).
+Every surface is a thin adapter over a `Workspace` handle ([ADR-0044](adr/0044-surfaces.md)). What a surface reports, such as a rule's or a schedule's status, the handle computes, so every surface reports the same and only translates it. The wire formats are in [`protocol.md`](protocol.md).
 
 | Surface | Package | What it offers |
 |---|---|---|
@@ -389,7 +377,7 @@ Every surface is a thin adapter over a `Workspace` handle ([ADR-0011](adr/0011-s
 | Schedules | `reflexr.workspace` | Cron and interval schedules that publish into workspaces. |
 | MCP | `reflexr.mcp` | Publishing, reading and administration as MCP tools, so external agents can feed and operate workspaces. |
 
-Authentication is the host's: each surface takes a resolver that returns the tenant and actor for a request. Authorization within a tenant is the host's too: the router and the MCP server take the same `authorize(tenant_id, workspace_id, actor)` hook (`reflexr.workspace.Authorize`), asked before a request uses a workspace, and by the MCP server before a client reads or subscribes to a run.
+Authentication is the host's: each surface takes a resolver that returns the tenant and actor for a request. Authorization within a tenant is the host's too: the router and the MCP server take the same `authorize(tenant_id, workspace_id, actor)` hook (`reflexr.workspace.Authorize`) and pass it to `Workspaces.open(..., authorize=)`, which refuses a workspace with `Forbidden` before a request uses it, and before an MCP client reads or subscribes to a run.
 
 ## Workspace handles
 
@@ -408,7 +396,7 @@ await workspace.skip_run(run_id, reason="duplicate incident")
 - **Operations** (`retry_run`, `skip_run`, `cancel_run`, `replay_rule`) apply core's transitions in one transaction and append the resulting event, attributed to the handle's actor.
 - **Reads**: `read` (the window `after_seq < seq < before_seq`, of some `types`, the first `limit` or the last `last`, oldest first; storage filters, so a tail read of a long log reads only its tail), `subscribe`, `head_seq`, `run`, `runs` (newest first), `dead_letters`, `rule_progress`, `schedule_ticks`, and the statuses the surfaces report: `rule_statuses` (every registered rule: enabled, cursor, lag, generation, dead letters) and `schedule_statuses` (each schedule targeting the workspace: last and next tick).
 
-Every write is a span (`reflexr.publish {type}`, a producer span; `reflexr.feedback {type}`; `reflexr.skip_run` and so on) attributed to the tenant, workspace and actor and placed in its chain's session. The W3C trace context of the publishing span is stored on the envelope, so the runs it causes can link back to it. Each evaluation that finds new envelopes is a `reflexr.evaluate` span listing the rules that evaluated and the firings made, and the `rule_fired` facts carry its trace context. Each run attempt is an `invoke_workflow {rule}` span in the run's session, linked to the spans that published the envelopes it matched, and the run records each attempt's trace id. Metrics come from the registry in `reflexr.telemetry.metrics`, always with tenant and workspace; a deployment keeps less detail with SDK views, which `reflexr.otel.configure_telemetry(metrics_detail=...)` installs ([ADR-0029](adr/0029-metric-detail-through-sdk-views.md)). The `[otel]` extra sets up the SDK, OTLP export and the open instrumentations in one call, and the `[langfuse]` extra adds Langfuse on the same tracer provider, with `langfuse_run` as the reactor's `run_context` so each run is filed under its chain's session. The setup composes with artifactr's ([ADR-0040](adr/0040-telemetry-that-composes-across-libraries.md)). `reflexr.otel.telemetry()` is reflexr's contribution: its metric views, a span filter for its traces (the scopes in `TRACE_SCOPES`), and the instrumentations it advises. `configure_telemetry(*contributions)` takes other libraries' contributions, such as `artifactr.otel.telemetry()`, adds its own, and reads them through the `TelemetryContribution` protocol, so neither library imports the other. `langfuse="scores"` sends Langfuse scores and trace attributes but no spans, for a Collector that sends it every trace. **Polling is untraced:** the reactor checks for work, and subscriptions and the feedback mirror read the log, inside `untraced()`, which makes every span started in it a child of a span that is never sampled. Under a parent-based sampler, the SDK's default, an idle application exports no spans, and the instrumentations' metrics are still recorded (a sampler such as `always_on` or `traceidratio` would trace polls again); the work a poll finds is traced where it happens, never inside `untraced()`. The metrics are `reflexr.events.published`, `reflexr.feedback`, `reflexr.runs`, `reflexr.firings`, `reflexr.rule.errors`, `reflexr.evaluation.lag`, `reflexr.evaluation.duration`, `reflexr.run.attempts`, `reflexr.run.duration`, `reflexr.dead_letters`, `reflexr.schedule.ticks` and the WebSocket stream's `reflexr.stream.connections` and `reflexr.stream.disconnects`.
+Every write is a span (`reflexr.publish {type}`, a producer span; `reflexr.feedback {type}`; `reflexr.skip_run` and so on) attributed to the tenant, workspace and actor and placed in its chain's session. The W3C trace context of the publishing span is stored on the envelope, so the runs it causes can link back to it. Each evaluation that finds new envelopes is a `reflexr.evaluate` span listing the rules that evaluated and the firings made, and the `rule_fired` facts carry its trace context. Each run attempt is an `invoke_workflow {rule}` span in the run's session, linked to the spans that published the envelopes it matched, and the run records each attempt's trace id. Metrics come from the registry in `reflexr.telemetry.metrics` ([Observability](guides/observability.md#metrics) lists them), always with tenant and workspace; a deployment keeps less detail with SDK views, which `reflexr.otel.configure_telemetry(metrics_detail=...)` installs ([ADR-0029](adr/0029-metric-detail-through-sdk-views.md)). The `[otel]` extra sets up the SDK, OTLP export and the open instrumentations in one call, and the `[langfuse]` extra adds Langfuse on the same tracer provider, with `langfuse_run` as the reactor's `run_context` so each run is filed under its chain's session. The setup composes with artifactr's ([ADR-0040](adr/0040-telemetry-that-composes-across-libraries.md)). `reflexr.otel.telemetry()` is reflexr's contribution: its metric views, a span filter for its traces (the scopes in `TRACE_SCOPES`), and the instrumentations it advises. `configure_telemetry(*contributions)` takes other libraries' contributions, such as `artifactr.otel.telemetry()`, adds its own, and reads them through the `TelemetryContribution` protocol, so neither library imports the other. `langfuse="scores"` sends Langfuse scores and trace attributes but no spans, for a Collector that sends it every trace. **Polling is untraced:** the reactor checks for work, and subscriptions and the feedback mirror read the log, inside `untraced()`, which makes every span started in it a child of a span that is never sampled. Under a parent-based sampler, the SDK's default, an idle application exports no spans, and the instrumentations' metrics are still recorded (a sampler such as `always_on` or `traceidratio` would trace polls again); the work a poll finds is traced where it happens, never inside `untraced()`.
 
 ### Dashboards
 
@@ -502,59 +490,18 @@ Python 3.12+. Runtime: `pydantic` (core); `opentelemetry-api` (telemetry and wor
 - **Core:** the conformance fixtures, plus property tests that replaying any log reproduces its firings.
 - **Workspace:** one behaviour suite (publishing, evaluation, runs, retries, leases, schedules) against every storage: in memory, SQLite, and PostgreSQL when `REFLEXR_TEST_POSTGRES_URL` is set, as in CI's PostgreSQL job (`make pg-up test-pg` locally).
 - **SQL:** the migrations checked against the models on both databases, and locking, polling, leases and stored values across processes.
-- **Agent:** scripted models with pydantic-ai's `FunctionModel` and `TestModel`; graph runs interrupted and resumed.
+- **Agent:** scripted models built by `function_model`, which answers plain and streamed requests from one function, and pydantic-ai's `TestModel`; graph runs interrupted and resumed.
 - **Surfaces:** contract tests for every frame and endpoint, and an MCP client round trip.
 - **Scores:** the Langfuse score adapters pass evalr's `check_score_sink` and `check_score_config_store`, against a fake of Langfuse's API.
 - **Reference implementation:** the real server and client end to end, with a scripted model.
 
 Coverage is 100% of lines and branches, and pyright runs in strict mode with no suppressions ([ADR-0013](adr/0013-quality-gates.md)).
 
-The contributor stack is `compose.yaml`: PostgreSQL for the tests, and oncall under the `app` profile. The dev container is built on it and joins stackr's network when stackr's stack runs ([ADR-0021](adr/0021-contributor-compose-and-dev-containers.md), [ADR-0037](adr/0037-joining-stackrs-network.md)). CI validates the Compose files without starting containers.
+The contributor stack is `compose.yaml`: PostgreSQL for the tests, and oncall under the `app` profile. The dev container is built on it and joins stackr's network when stackr's stack runs ([ADR-0021](adr/0021-contributor-compose-and-dev-containers.md), [ADR-0037](adr/0037-joining-stackrs-network.md)). CI validates the Compose files, and builds oncall's image and starts it on the Compose PostgreSQL.
 
 ## Decisions
 
-| ADR | Decision |
-|---|---|
-| [0001](adr/0001-library-with-a-sans-io-core.md) | A library with a sans-IO core, replacing the template |
-| [0002](adr/0002-the-name-reflexr.md) | The name reflexr |
-| [0003](adr/0003-independent-sibling-of-artifactr.md) | An independent sibling of artifactr, with aligned conventions |
-| [0004](adr/0004-tenant-scoped-streams.md) | Tenant-scoped streams with one log each (superseded by 0016) |
-| [0005](adr/0005-per-rule-cursors.md) | Per-rule cursors: decide exactly, act at least once |
-| [0006](adr/0006-rules-as-typed-serializable-data.md) | Rules as typed, serializable data |
-| [0007](adr/0007-rule-state-as-pure-reducers.md) | Rule state as pure reducers, with the log as the clock |
-| [0008](adr/0008-actions-agents-graphs-and-functions.md) | Actions: agents, graphs and functions over one `Reaction` |
-| [0009](adr/0009-graph-checkpoints.md) | Graph checkpoints at step boundaries |
-| [0010](adr/0010-loop-and-spend-safety.md) | Loop and spend safety |
-| [0011](adr/0011-surfaces.md) | Surfaces: ingest, REST, WebSocket, schedules and MCP |
-| [0012](adr/0012-trunk-based-development-with-rfcs-and-adrs.md) | Trunk-based development with RFCs, ADRs and evergreen docs |
-| [0013](adr/0013-quality-gates.md) | Quality gates |
-| [0014](adr/0014-mit-license.md) | MIT license |
-| [0015](adr/0015-reference-implementation-oncall.md) | Reference implementation: incident response |
-| [0016](adr/0016-tenants-and-workspaces-like-artifactr.md) | Tenants and workspaces, like artifactr |
-| [0017](adr/0017-the-cores-evaluation-contract.md) | The core's evaluation contract |
-| [0018](adr/0018-opentelemetry-observability-with-langfuse.md) | OpenTelemetry-native observability, with Langfuse primary |
-| [0019](adr/0019-typed-feedback-as-events.md) | Typed feedback as events, mirrored to Langfuse |
-| [0020](adr/0020-evalr-shared-eval-kit.md) | evalr, a shared eval kit |
-| [0021](adr/0021-contributor-compose-and-dev-containers.md) | Contributor Compose and dev containers here, infrastructure in stackr |
-| [0022](adr/0022-litellm-proxy-first.md) | LiteLLM, proxy first, for routing and guardrails |
-| [0023](adr/0023-libraries-and-the-stackr-template.md) | Libraries, and stackr as the infrastructure template |
-| [0024](adr/0024-causal-chains-and-operator-actions.md) | Which chain a firing joins, and operator actions in the log |
-| [0025](adr/0025-ports-and-adapters.md) | Ports and adapters |
-| [0026](adr/0026-the-reactors-evaluation.md) | The reactor's evaluation: rules on workspaces, the depth of reflexr's facts, and rebuilds |
-| [0027](adr/0027-executing-runs.md) | Executing runs (superseded by 0041) |
-| [0028](adr/0028-schedules-and-cronsim.md) | Schedules, with cronsim for cron expressions |
-| [0029](adr/0029-metric-detail-through-sdk-views.md) | Metric detail through SDK views, and the OpenTelemetry and Langfuse adapters |
-| [0030](adr/0030-sql-storage.md) | SQL storage with one dialect-neutral implementation |
-| [0031](adr/0031-the-reference-implementations-events-and-rules.md) | The reference implementation's events and rules |
-| [0032](adr/0032-documentation-site.md) | The documentation site, and a brand shared by the family |
-| [0033](adr/0033-publishing-the-documentation-site.md) | Publishing the documentation site from main |
-| [0036](adr/0036-typed-run-failures.md) | Typed run failures |
-| [0037](adr/0037-joining-stackrs-network.md) | Joining stackr's network when it runs |
-| [0038](adr/0038-dashboards-generated-tested-and-released.md) | Dashboards generated, tested and released |
-| [0039](adr/0039-namespaced-event-types.md) | Namespaced event types |
-| [0040](adr/0040-telemetry-that-composes-across-libraries.md) | Telemetry that composes across libraries, untraced polling and mirror cursors |
-| [0041](adr/0041-executing-runs.md) | Executing runs: at least once, under leases, with a graceful stop |
-| [0042](adr/0042-cancel-safe-storage.md) | Cancel-safe storage |
+Every decision is an ADR in [`adr/`](adr/README.md), whose index lists them with their status; proposals that precede decisions are RFCs in [`rfcs/`](rfcs/README.md).
 
 ## Open questions
 

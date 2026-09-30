@@ -1,6 +1,6 @@
 """Graph actions: pydantic-graph graphs, checkpointed at safe step boundaries and resumed."""
 
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Annotated, Any
@@ -26,8 +26,8 @@ from reflexr.workspace import (
     WorkspaceRef,
     Workspaces,
 )
+from tests.clock import FakeClock
 from tests.event_types import Deploy
-from tests.workspace.conftest import FakeClock
 
 ACME = WorkspaceRef("acme", "prod")
 
@@ -201,7 +201,7 @@ async def test_a_finished_graph_is_not_run_again(clock: FakeClock) -> None:
         ({"v": 0}, "format"),
         ({"v": CHECKPOINT_VERSION, "nodes": ["other"]}, "graph_changed"),
         # The same nodes, but the next one's input type is not known (as when an edge into a
-        # decision has gained a transform since).
+        # fork has gained a transform since, or the next node is a decision).
         (
             {
                 "v": CHECKPOINT_VERSION,
@@ -399,444 +399,172 @@ def nine(reaction: Reaction[Flaky]) -> int:
     return 9
 
 
-async def test_a_decision_after_an_annotated_step_is_saved_without_input_types(
+async def test_the_boundary_after_a_decision_is_saved_not_the_one_before(
     clock: FakeClock,
 ) -> None:
     deps = Flaky(fail_once={"loud"})
-    it = await setup(GraphAction(routing, name="route", inputs=nine), deps, clock)
+    typed = GraphAction(routing, name="route", inputs=nine, input_types={"loud": int})
+    it = await setup(typed, deps, clock)
     await it.reactor.settle()
     [waiting] = await it.workspace.runs()
-    # measure returns an int, so that is route's input type. loud is untyped, so the boundary
-    # after route is not saved, and the retry resumes before route.
-    assert waiting.step == "measure"
-    assert frontier(waiting.checkpoint) == [("route", 9)]
+    # route runs no code, so the boundary after it saves what the one before would have.
+    assert waiting.step == "route"
+    assert frontier(waiting.checkpoint) == [("loud", 9)]
     clock.advance(1)
     await it.reactor.settle()
     [done] = await it.workspace.runs()
     assert done.output == "loud 9"
     assert deps.ran == ["measure", "loud", "loud"]  # measure ran once
-    assert await progress(it.workspace) == ["__start__", "measure", "loud", "__end__"]
+    assert await progress(it.workspace) == ["__start__", "route", "loud", "__end__"]
 
 
-async def test_a_fresh_run_resumes_from_an_inferred_checkpoint(clock: FakeClock) -> None:
-    uninterrupted = await setup(GraphAction(routing, name="route", inputs=nine), Flaky(), clock)
-    await uninterrupted.reactor.settle()
-    [expected] = await uninterrupted.workspace.runs()
-    first = await setup(
-        GraphAction(routing, name="route", inputs=nine), Flaky(fail_once={"loud"}), clock
-    )
-    await first.reactor.settle()
-    [waiting] = await first.workspace.runs()
-    assert frontier(waiting.checkpoint) == [("route", 9)]
-    # Another executor, with nothing of the first but its storage, picks the retry up.
-    fresh = Flaky()
-    action = GraphAction(routing, name="route", inputs=nine)
-    reactor = Reactor(first.workspaces, actions={action.name: action}, deps=fresh)
-    clock.advance(1)
-    await reactor.settle()
-    [done] = await first.workspace.runs()
-    assert (done.status, done.output) == ("succeeded", expected.output)
-    assert fresh.ran == ["loud"]  # it started at route, from the saved int
-
-
-async def test_an_explicit_type_wins_over_an_inferred_one(clock: FakeClock) -> None:
-    # Inferred, route's type would be int, and 9 would be saved. The explicit type says fewer
-    # than 5, so 9 does not read back as it, and the boundary before route is not saved.
+async def test_inputs_that_do_not_read_back_as_the_given_type_are_not_saved(
+    clock: FakeClock,
+) -> None:
+    # An explicit type wins over measure's annotation, and says fewer than 5; 9 is not, so the
+    # boundary before measure is not saved. Nor is the one before loud, since 9 is not a list.
     small = Annotated[int, Field(lt=5)]
-    action = GraphAction(routing, name="route", inputs=nine, input_types={"route": small})
+    action = GraphAction(
+        routing, name="route", inputs=nine, input_types={"measure": small, "loud": list[str]}
+    )
     it = await setup(action, Flaky(), clock)
     await it.reactor.settle()
     [done] = await it.workspace.runs()
     assert done.output == "loud 9"
-    assert await progress(it.workspace) == ["__start__", "loud", "__end__"]
+    assert await progress(it.workspace) == ["loud", "__end__"]
 
 
-async def test_explicit_types_fill_in_what_cannot_be_inferred(clock: FakeClock) -> None:
-    typed = GraphAction(routing, name="route", inputs=nine, input_types={"loud": int})
-    it = await setup(typed, Flaky(), clock)
-    await it.reactor.settle()
-    assert await progress(it.workspace) == ["__start__", "measure", "route", "loud", "__end__"]
-    mistyped = GraphAction(routing, name="route", inputs=nine, input_types={"loud": list[str]})
-    again = await setup(mistyped, Flaky(), clock)
-    await again.reactor.settle()
-    assert await progress(again.workspace) == [
-        "__start__",
-        "measure",
-        "loud",
-        "__end__",
-    ]  # 9: not a list
-
-
-# ─── decisions after decisions ───────────────────────────────────────────────
-
-ch = GraphBuilder(
-    name="grading", state_type=Notes, deps_type=Reaction[Flaky], input_type=int, output_type=str
+@pytest.mark.parametrize(
+    "node", ["route", "__end__", "mesure"], ids=["a decision", "the end", "a typo"]
 )
+def test_input_types_name_only_steps_and_forks(node: str) -> None:
+    with pytest.raises(ValueError, match=f"not steps or forks: {node}"):
+        GraphAction(routing, name="route", input_types={node: int})
 
 
-@ch.step
-async def level(ctx: StepContext[Notes, Reaction[Flaky], int]) -> int:
-    return ctx.inputs
-
-
-@ch.step
-async def huge(ctx: StepContext[Notes, Reaction[Flaky], int]) -> str:
-    return f"huge {ctx.inputs}"
-
-
-@ch.step
-async def large(ctx: StepContext[Notes, Reaction[Flaky], int]) -> str:
-    return f"large {ctx.inputs}"
-
-
-@ch.step
-async def small(ctx: StepContext[Notes, Reaction[Flaky], int]) -> str:
-    return f"small {ctx.inputs}"
-
-
-fine = (
-    ch.decision(node_id="fine")
-    .branch(ch.match(int, matches=lambda n: n > 5).to(large))
-    .branch(ch.match(int).to(small))
-)
-ch.add(
-    ch.edge_from(ch.start_node).to(level),
-    ch.edge_from(level).to(
-        ch.decision(node_id="coarse")
-        .branch(ch.match(int, matches=lambda n: n > 100).to(huge))
-        .branch(ch.match(int).to(fine))
-    ),
-    ch.edge_from(huge, large, small).to(ch.end_node),
-)
-grading = ch.build()
-
-
-async def test_a_decision_after_a_decision_takes_its_type(clock: FakeClock) -> None:
-    it = await setup(GraphAction(grading, inputs=nine), Flaky(), clock)
-    await it.reactor.settle()
-    [done] = await it.workspace.runs()
-    assert done.output == "large 9"
-    # coarse takes level's int, and fine takes coarse's.
-    assert await progress(it.workspace) == [
-        "__start__",
-        "level",
-        "coarse",
-        "fine",
-        "large",
-        "__end__",
-    ]
-    # An explicit type is what the decisions after it infer from, not what it overrides.
-    wider = GraphAction(grading, inputs=nine, input_types={"coarse": int | str})
-    again = await setup(wider, Flaky(), clock)
-    await again.reactor.settle()
-    assert await progress(again.workspace) == [
-        "__start__",
-        "level",
-        "coarse",  # fine's type is int | str, from coarse's
-        "fine",
-        "large",
-        "__end__",
-    ]
-    listed = GraphAction(grading, inputs=nine, input_types={"coarse": list[str]})
-    third = await setup(listed, Flaky(), clock)
-    await third.reactor.settle()
-    # 9 is not a list of str, so neither boundary before a decision is saved.
-    assert await progress(third.workspace) == ["__start__", "fine", "large", "__end__"]
-
-
-gt = GraphBuilder(
-    name="gate", state_type=Notes, deps_type=Reaction[Flaky], input_type=int, output_type=str
-)
-
-
-@gt.step
-async def admit(ctx: StepContext[Notes, Reaction[Flaky], int]) -> str:
-    return f"admitted {ctx.inputs}"
-
-
-gt.add(
-    gt.edge_from(gt.start_node).to(gt.decision(node_id="gate").branch(gt.match(int).to(admit))),
-    gt.edge_from(admit).to(gt.end_node),
-)
-gate = gt.build()
-
-
-async def test_a_decision_after_the_start_takes_the_graphs_input_type(clock: FakeClock) -> None:
-    it = await setup(GraphAction(gate, inputs=nine), Flaky(), clock)
-    await it.reactor.settle()
-    [done] = await it.workspace.runs()
-    assert done.output == "admitted 9"
-    assert await progress(it.workspace) == ["__start__", "gate", "admit", "__end__"]
-
-
-# ─── what inference cannot decide ────────────────────────────────────────────
-
-
-def doubled(ctx: StepContext[Notes, Reaction[Flaky], int]) -> int:
-    return ctx.inputs * 2
-
-
-def as_text(ctx: StepContext[Notes, Reaction[Flaky], int]) -> str:
-    return f"#{ctx.inputs}"
-
-
-def transformed() -> Graph[Notes, Reaction[Flaky], int, str]:
-    """count returns an int, and the edge transforms it: reflexr cannot read what into."""
-    g = GraphBuilder(
-        name="transformed",
-        state_type=Notes,
-        deps_type=Reaction[Flaky],
-        input_type=int,
-        output_type=str,
-    )
-
-    @g.step
-    async def count(ctx: StepContext[Notes, Reaction[Flaky], int]) -> int:
-        return ctx.inputs
-
-    decide = g.decision(node_id="decide").branch(g.match(int).transform(as_text).to(g.end_node))
-    g.add(g.edge_from(g.start_node).to(count), g.edge_from(count).transform(doubled).to(decide))
-    return g.build()
-
-
-def two_types() -> Graph[Notes, Reaction[Flaky], int, str]:
-    """count passes an int into decide, and describe passes a str into it."""
-    g = GraphBuilder(
-        name="two_types",
-        state_type=Notes,
-        deps_type=Reaction[Flaky],
-        input_type=int,
-        output_type=str,
-    )
-
-    @g.step
-    async def count(ctx: StepContext[Notes, Reaction[Flaky], int]) -> int:
-        return ctx.inputs
-
-    @g.step
-    async def describe(ctx: StepContext[Notes, Reaction[Flaky], int]) -> str:
-        return f"#{ctx.inputs}"
-
-    decide = (
-        g.decision(node_id="decide")
-        .branch(g.match(int).to(describe))
-        .branch(g.match(str).to(g.end_node))
-    )
-    g.add(
-        g.edge_from(g.start_node).to(count),
-        g.edge_from(count).to(decide),
-        g.edge_from(describe).to(decide),
-    )
-    return g.build()
-
-
-def returns_any() -> Graph[Notes, Reaction[Flaky], int, str]:
-    """count's return annotation says nothing about what it returns."""
-    g = GraphBuilder(
-        name="returns_any",
-        state_type=Notes,
-        deps_type=Reaction[Flaky],
-        input_type=int,
-        output_type=str,
-    )
-
-    @g.step
-    async def count(ctx: StepContext[Notes, Reaction[Flaky], int]) -> Any:
-        return f"#{ctx.inputs}"
-
-    decide = g.decision(node_id="decide").branch(g.match(str).to(g.end_node))
-    g.add(g.edge_from(g.start_node).to(count), g.edge_from(count).to(decide))
-    return g.build()
-
-
-def unannotated() -> Graph[Notes, Reaction[Flaky], int, str]:
-    """count has no return annotation."""
-    g = GraphBuilder(
-        name="unannotated",
-        state_type=Notes,
-        deps_type=Reaction[Flaky],
-        input_type=int,
-        output_type=str,
-    )
-
-    @g.step
-    async def count(ctx: StepContext[Notes, Reaction[Flaky], int]):
-        return f"#{ctx.inputs}"
-
-    decide = g.decision(node_id="decide").branch(g.match(str).to(g.end_node))
-    g.add(g.edge_from(g.start_node).to(count), g.edge_from(count).to(decide))
-    return g.build()
+# ─── what inference cannot type before a fork ────────────────────────────────
 
 
 class Opaque:
-    """A class pydantic cannot write down."""
+    """A list pydantic cannot write down."""
 
-    def __init__(self, n: int) -> None:
-        self.n = n
+    def __init__(self, items: list[str]) -> None:
+        self.items = items
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.items)
 
 
-def unwritable() -> Graph[Notes, Reaction[Flaky], int, str]:
-    """count returns a class pydantic has no schema for: the graph still registers."""
+async def typed(ctx: StepContext[Notes, Reaction[Flaky], list[str]]) -> list[str]:
+    return ctx.inputs
+
+
+async def returns_any(ctx: StepContext[Notes, Reaction[Flaky], list[str]]) -> Any:
+    return ctx.inputs
+
+
+async def unannotated(ctx: StepContext[Notes, Reaction[Flaky], list[str]]):
+    return ctx.inputs
+
+
+async def unwritable(ctx: StepContext[Notes, Reaction[Flaky], list[str]]) -> Opaque:
+    return Opaque(ctx.inputs)
+
+
+def unchanged(ctx: StepContext[Notes, Reaction[Flaky], list[str]]) -> list[str]:
+    return ctx.inputs
+
+
+async def shout_each(ctx: StepContext[Notes, Reaction[Flaky], str]) -> str:
+    return ctx.inputs.upper()
+
+
+async def unchanged_each(ctx: StepContext[Notes, Reaction[Flaky], str]) -> str:
+    return ctx.inputs
+
+
+def fanned(
+    pick: Callable[..., Awaitable[Any]] | None = None, *, transformed: bool = False
+) -> Graph[Notes, Reaction[Flaky], list[str], str]:
+    """A fork, fed by ``pick`` (through a transform, if asked), or by the start without it."""
     g = GraphBuilder(
-        name="unwritable",
+        name="fanned",
         state_type=Notes,
         deps_type=Reaction[Flaky],
-        input_type=int,
+        input_type=list[str],
         output_type=str,
     )
-
-    @g.step
-    async def count(ctx: StepContext[Notes, Reaction[Flaky], int]) -> Opaque:
-        return Opaque(ctx.inputs)
-
-    @g.step
-    async def show(ctx) -> str:
-        return f"#{ctx.inputs.n}"
-
-    decide = g.decision(node_id="decide").branch(g.match(Opaque).to(show))
-    g.add(
-        g.edge_from(g.start_node).to(count),
-        g.edge_from(count).to(decide),
-        g.edge_from(show).to(g.end_node),
-    )
+    shout = g.step(shout_each)
+    if pick is None:
+        g.add(g.edge_from(g.start_node).map(fork_id="fan").to(shout))
+    else:
+        first = g.step(pick)
+        edge = g.edge_from(first).transform(unchanged) if transformed else g.edge_from(first)
+        g.add(g.edge_from(g.start_node).to(first), edge.map(fork_id="fan").to(shout))
+    g.add(g.edge_from(shout).to(g.end_node))
     return g.build()
 
 
-def after_a_join() -> Graph[Notes, Reaction[Flaky], int, str]:
-    """count is a join, whose reduced value has no annotation to read."""
+def after_a_decision() -> Graph[Notes, Reaction[Flaky], list[str], str]:
+    g = GraphBuilder(
+        name="after_a_decision",
+        state_type=Notes,
+        deps_type=Reaction[Flaky],
+        input_type=list[str],
+        output_type=str,
+    )
+    shout = g.step(shout_each)
+    route = g.decision(node_id="route").branch(g.match(list).map(fork_id="fan").to(shout))
+    g.add(g.edge_from(g.start_node).to(route), g.edge_from(shout).to(g.end_node))
+    return g.build()
+
+
+def after_a_join() -> Graph[Notes, Reaction[Flaky], list[str], str]:
     g = GraphBuilder(
         name="after_a_join",
         state_type=Notes,
         deps_type=Reaction[Flaky],
-        input_type=int,
+        input_type=list[str],
         output_type=str,
     )
-
-    @g.step
-    async def spread(ctx: StepContext[Notes, Reaction[Flaky], int]) -> list[int]:
-        return [ctx.inputs, ctx.inputs]
-
-    @g.step
-    async def double(ctx: StepContext[Notes, Reaction[Flaky], int]) -> int:
-        return ctx.inputs * 2
-
-    @g.step
-    async def total(ctx: StepContext[Notes, Reaction[Flaky], list[int]]) -> str:
-        return f"#{sum(ctx.inputs)}"
-
-    count = g.join(reduce_list_append, initial_factory=list[int], node_id="count")
-    decide = g.decision(node_id="decide").branch(g.match(list).to(total))
+    first = g.step(typed)
+    each = g.step(unchanged_each)
+    shout = g.step(shout_each)
+    gathered = g.join(reduce_list_append, initial_factory=list[str], node_id="gathered")
     g.add(
-        g.edge_from(g.start_node).to(spread),
-        g.edge_from(spread).map(fork_id="each").to(double),
-        g.edge_from(double).to(count),
-        g.edge_from(count).to(decide),
-        g.edge_from(total).to(g.end_node),
+        g.edge_from(g.start_node).to(first),
+        g.edge_from(first).map(fork_id="each").to(each),
+        g.edge_from(each).to(gathered),
+        g.edge_from(gathered).map(fork_id="fan").to(shout),
+        g.edge_from(shout).to(g.end_node),
     )
     return g.build()
 
 
-SAVED_AROUND_DECIDE = ["__start__", "decide", "__end__"]
-"""The boundaries saved when the one before decide is not: before count, and after decide."""
-
-
 @pytest.mark.parametrize(
-    ("graph", "output", "saved"),
+    ("graph", "saved"),
     [
-        pytest.param(transformed(), "#18", SAVED_AROUND_DECIDE, id="a transform on the edge"),
-        pytest.param(
-            two_types(),
-            "#9",
-            ["__start__", "decide", "decide", "__end__"],  # not after count, nor after describe
-            id="edges with different types",
-        ),
-        pytest.param(returns_any(), "#9", SAVED_AROUND_DECIDE, id="a step returning Any"),
-        pytest.param(unannotated(), "#9", SAVED_AROUND_DECIDE, id="a step with no annotation"),
-        pytest.param(
-            unwritable(),
-            "#9",
-            ["__start__", "show", "__end__"],  # nor after decide: show is untyped
-            id="a type with no schema",
-        ),
-        pytest.param(
-            after_a_join(),
-            "#36",
-            ["__start__", "spread", "decide", "total", "__end__"],  # not after the join, count
-            id="a join",
-        ),
+        pytest.param(fanned(), ["__start__", "__end__"], id="the start: the graph's input type"),
+        pytest.param(fanned(typed), ["__start__", "typed", "__end__"], id="a typed step"),
+        pytest.param(fanned(typed, transformed=True), ["__start__", "__end__"], id="a transform"),
+        pytest.param(fanned(returns_any), ["__start__", "__end__"], id="a step returning Any"),
+        pytest.param(fanned(unannotated), ["__start__", "__end__"], id="no annotation"),
+        pytest.param(fanned(unwritable), ["__start__", "__end__"], id="a type with no schema"),
+        pytest.param(after_a_decision(), ["__end__"], id="a decision"),
+        pytest.param(after_a_join(), ["__start__", "typed", "__end__"], id="a join"),
     ],
 )
-async def test_a_decision_whose_type_cannot_be_inferred_is_not_saved_before(
-    graph: Graph[Notes, Reaction[Flaky], int, str],
-    output: str,
-    saved: list[str],
-    clock: FakeClock,
+async def test_a_fork_is_saved_before_only_if_the_edges_into_it_say_its_type(
+    graph: Graph[Notes, Reaction[Flaky], list[str], str], saved: list[str], clock: FakeClock
 ) -> None:
-    it = await setup(GraphAction(graph, inputs=nine), Flaky(), clock)
+    it = await setup(GraphAction(graph, inputs=lambda reaction: ["a"]), Flaky(), clock)
     await it.reactor.settle()
     [done] = await it.workspace.runs()
-    assert done.output == output
+    assert done.output == "A"
     assert await progress(it.workspace) == saved
 
 
 # ─── inputs that must not be written down ────────────────────────────────────
-
-
-class Severe(Finding):
-    """A finding a decision routes apart from the others."""
-
-
-sv = GraphBuilder(
-    name="severity", state_type=Notes, deps_type=Reaction[Flaky], input_type=int, output_type=str
-)
-
-
-@sv.step
-async def assess(ctx: StepContext[Notes, Reaction[Flaky], int]) -> Finding:
-    if ctx.inputs > 5:
-        return Severe(service="auth", cause="outage")
-    return Finding(service="auth", cause="blip")
-
-
-@sv.step
-async def page(ctx: StepContext[Notes, Reaction[Flaky], Severe]) -> str:
-    return f"paged about {ctx.inputs.cause}"
-
-
-@sv.step
-async def note(ctx: StepContext[Notes, Reaction[Flaky], Finding]) -> str:
-    return f"noted {ctx.inputs.cause}"
-
-
-sv.add(
-    sv.edge_from(sv.start_node).to(assess),
-    sv.edge_from(assess).to(
-        sv.decision(node_id="triage")
-        .branch(sv.match(Severe).to(page))
-        .branch(sv.match(Finding).to(note))
-    ),
-    sv.edge_from(page, note).to(sv.end_node),
-)
-severity = sv.build()
-
-
-@pytest.mark.parametrize(
-    ("given", "output", "saved"),
-    [
-        pytest.param(9, "paged about outage", False, id="a subclass"),
-        pytest.param(1, "noted blip", True, id="the declared class"),
-    ],
-)
-async def test_a_decision_is_saved_before_only_if_its_inputs_read_back_as_their_class(
-    given: int, output: str, saved: bool, clock: FakeClock
-) -> None:
-    # assess says it returns a Finding. A Severe one would be saved as a Finding, and a
-    # resumed triage would take the wrong branch, so the boundary before it is not saved.
-    it = await setup(GraphAction(severity, inputs=lambda reaction: given), Flaky(), clock)
-    await it.reactor.settle()
-    [done] = await it.workspace.runs()
-    assert done.output == output
-    assert ("assess" in await progress(it.workspace)) is saved
 
 
 lz = GraphBuilder(

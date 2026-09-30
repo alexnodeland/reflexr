@@ -6,10 +6,10 @@ reflexr ships :class:`~reflexr.workspace.InMemoryStorage` for tests and examples
 implementation must do.
 """
 
-from collections.abc import AsyncGenerator, Collection, Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Collection, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Protocol, Self
 
 from reflexr.core import (
@@ -29,6 +29,7 @@ from reflexr.core import (
     ScopeState,
     TenantId,
     WorkspaceId,
+    holds,
 )
 
 
@@ -44,9 +45,22 @@ class WorkspaceRef:
     workspace_id: WorkspaceId
 
 
+Clock = Callable[[], datetime]
+"""Returns the current time; injectable so tests control time."""
+
+
+def utc_now() -> datetime:
+    """Return the current time in UTC: the default clock."""
+    return datetime.now(UTC)
+
+
+RUN_LEASE_PREFIX = "run:"
+"""The start of every run's lease key, which ends with the run's id."""
+
+
 def run_lease(run_id: RunId) -> str:
     """Return the lease key an executor holds on a run while it runs it."""
-    return f"run:{run_id}"
+    return RUN_LEASE_PREFIX + run_id
 
 
 @dataclass(frozen=True)
@@ -80,16 +94,8 @@ class RunPolicy:
         )
 
     def holds(self, run: Run) -> bool:
-        """Whether a run holds back the later runs of its scope.
-
-        A pending, retrying or running run of an ordered rule does, and so does a dead-lettered
-        one if the rule blocks.
-        """
-        if run.rule not in self.ordered:
-            return False
-        return run.status in ("pending", "retrying", "running") or (
-            run.status == "dead" and run.rule in self.blocking
-        )
+        """Whether a run holds back the later runs of its scope (:func:`~reflexr.core.holds`)."""
+        return run.rule in self.ordered and holds(run, blocking=run.rule in self.blocking)
 
 
 @dataclass(frozen=True)
@@ -109,7 +115,7 @@ class Entry:
 class Transaction(Protocol):
     """One atomic unit of work on a workspace.
 
-    A transaction must be serialized with every other transaction on the same scope from the
+    A transaction must be serialized with every other transaction on the same workspace from the
     moment it begins, so nothing it reads can change before it commits. In-memory storage holds
     a per-workspace lock; SQL storage locks the workspace's row. What a transaction writes is
     visible to its own later reads.

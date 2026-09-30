@@ -41,9 +41,9 @@ async def page(reaction: Reaction[None]) -> dict[str, Any]:
 async def resolve_actor(connection: HTTPConnection) -> tuple[TenantId, Actor]:
     if connection.headers.get("x-token") == "bad":
         raise Unauthorized("bad token")
-    return connection.headers.get("x-tenant", "acme"), UserActor(
-        id=connection.headers.get("x-user", "ada")
-    )
+    headers = connection.headers
+    user = UserActor(id=headers.get("x-user", "ada"), name=headers.get("x-name"))
+    return headers.get("x-tenant", "acme"), user
 
 
 async def authorize(tenant_id: TenantId, workspace_id: WorkspaceId, actor: Actor) -> bool:

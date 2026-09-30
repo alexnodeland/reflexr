@@ -13,8 +13,8 @@ from reflexr.sql import SqlStorage, create_schema, migrate
 from reflexr.sql.schema import _alembic_config
 from reflexr.sql.tables import VERSION_TABLE, EventRow, metadata
 from reflexr.workspace import WorkspaceRef
+from tests.clock import START
 from tests.event_types import Deploy, ServiceError
-from tests.workspace.conftest import START
 
 
 def _differences(connection: Connection) -> list[Any]:

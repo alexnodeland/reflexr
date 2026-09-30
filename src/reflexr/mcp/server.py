@@ -1,4 +1,4 @@
-"""The MCP server: external agents feed and operate workspaces (ADR-0011)."""
+"""The MCP server: external agents feed and operate workspaces (ADR-0044)."""
 
 import asyncio
 import contextlib
@@ -17,6 +17,7 @@ from mcp.types import INVALID_PARAMS, SubscriptionsListenRequestParams
 from opentelemetry import trace
 from pydantic import JsonValue
 from starlette.applications import Starlette
+from starlette.requests import Request
 
 from reflexr.core import (
     SYSTEM_EVENTS,
@@ -48,7 +49,15 @@ from reflexr.workspace import (
     execute,
 )
 
-ResolveClient = Callable[[Context], Awaitable[tuple[TenantId, ExternalAgentActor]]]
+type McpContext = Context[Any, Request]
+"""The context a :data:`ResolveClient` receives: the MCP SDK's ``Context`` of one request.
+
+Over HTTP, ``ctx.request_context.request`` is the Starlette ``Request`` the call arrived in, so
+an authenticator written for the router's ``HTTPConnection`` can take it once it is checked
+for ``None``, which it is in process, as in tests. ``ctx.headers`` holds its headers.
+"""
+
+ResolveClient = Callable[[McpContext], Awaitable[tuple[TenantId, ExternalAgentActor]]]
 """Authenticates an MCP request: returns the client's tenant and actor."""
 
 INSTRUCTIONS = (
@@ -61,9 +70,6 @@ _RUN_FACTS = frozenset(t.event_type for t in SYSTEM_EVENTS if t.event_type.start
 
 _READ_LIMIT = 50
 """How many envelopes ``read_events`` returns when it is given neither ``limit`` nor ``last``."""
-
-_FORBIDDEN = "this workspace is not yours to use"
-"""Why ``authorize`` refused, as the router's 403 says it."""
 
 _RUN_URI = re.compile(r"reflexr://(?P<tenant>[^/]+)/(?P<workspace>.+)/runs/[^/]+")
 """A run's URI as :func:`run_uri` writes it, which is what notifications name."""
@@ -82,6 +88,8 @@ def _logging_left_alone() -> Generator[None]:
     option to skip it: if the root logger has no handlers yet, the whole process then logs at
     INFO through a rich handler. Logging is the application's to configure, so the handlers the
     block added are removed and closed, and the level restored.
+
+    Shared verbatim with artifactr's ``src/artifactr/mcp/server.py``; change both.
     """
     root = logging.getLogger()
     handlers, level = list(root.handlers), root.level
@@ -174,18 +182,13 @@ class ReflexrMcp:
         trace.get_current_span().set_attributes(
             {**workspace_attributes(tenant_id, workspace_id), **actor_attributes(actor)}
         )
-        if not await self._allows(tenant_id, workspace_id, actor):
-            raise Forbidden(_FORBIDDEN)
-        workspace = await self._workspaces.open(tenant_id, workspace_id, actor=actor)
+        workspace = await self._workspaces.open(
+            tenant_id, workspace_id, actor=actor, authorize=self._authorize
+        )
         key = (tenant_id, workspace_id)
         if key not in self._watchers:
             self._watchers[key] = asyncio.create_task(self._notify(tenant_id, workspace))
         return workspace
-
-    async def _allows(
-        self, tenant_id: TenantId, workspace_id: WorkspaceId, actor: ExternalAgentActor
-    ) -> bool:
-        return self._authorize is None or await self._authorize(tenant_id, workspace_id, actor)
 
     async def _check_subscriptions(
         self, ctx: ServerRequestContext[Any, Any], call_next: CallNext
@@ -213,8 +216,12 @@ class ReflexrMcp:
         for (tenant, workspace_id), uri in named.items():
             if tenant != tenant_id:
                 raise MCPError(INVALID_PARAMS, _unavailable(tenant), data={"uri": uri})
-            if not await self._allows(tenant_id, workspace_id, actor):
-                raise MCPError(INVALID_PARAMS, _FORBIDDEN, data={"uri": uri})
+            try:
+                await self._workspaces.open(
+                    tenant_id, workspace_id, actor=actor, authorize=self._authorize
+                )
+            except Forbidden as refused:
+                raise MCPError(INVALID_PARAMS, refused.message, data={"uri": uri}) from refused
 
     async def _notify(self, tenant_id: TenantId, workspace: Workspace) -> None:
         head = await workspace.head_seq()

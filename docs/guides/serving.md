@@ -1,6 +1,6 @@
 # Serving over REST and WebSocket
 
-`reflexr.fastapi` (the `fastapi` extra) serves workspaces over HTTP: ingest for producers and webhooks, REST reads and administration for dashboards and operators, and the stream protocol over WebSocket for anything that follows a log live. All of it is one FastAPI router, and every command goes to one handler, `reflexr.workspace.execute`, so a command behaves the same over REST, the WebSocket and [MCP](mcp.md) ([ADR-0011](../adr/0011-surfaces.md)). The wire format is specified in the [stream protocol](../protocol.md); this page shows how to serve it.
+`reflexr.fastapi` (the `fastapi` extra) serves workspaces over HTTP: ingest for producers and webhooks, REST reads and administration for dashboards and operators, and the stream protocol over WebSocket for anything that follows a log live. All of it is one FastAPI router, and every command goes to one handler, `reflexr.workspace.execute`, so a command behaves the same over REST, the WebSocket and [MCP](mcp.md) ([ADR-0044](../adr/0044-surfaces.md)). The wire format is specified in the [stream protocol](../protocol.md); this page shows how to serve it.
 
 ## Mounting the router
 
@@ -169,7 +169,7 @@ A rejected command answers with its status code (`STATUS_CODES`), and the body i
 | `validation_failed`, `depth_exceeded` | 422 |
 | `unsupported_protocol` | 400 |
 
-`command_id` is chosen by the client and doubles as an idempotency key. The server remembers recent results (10,000 by default, per process), keyed by the tenant, the workspace, the actor and the `command_id`, and answers a repeated id with the first result instead of running the command again. Retry a command that timed out with the same id.
+`command_id` is chosen by the client and doubles as an idempotency key. The server remembers recent results (10,000 by default, per process), keyed by the tenant, the workspace, the actor's `participant` (so a changed display name does not matter) and the `command_id`, and answers a repeated id with the first result instead of running the command again. Retry a command that timed out with the same id.
 
 ## REST endpoints
 

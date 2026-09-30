@@ -1,6 +1,6 @@
 # External agents over MCP
 
-Agents outside your application, such as a coding assistant, an on-call copilot or another service, can feed and operate workspaces over the [Model Context Protocol](https://modelcontextprotocol.io). `reflexr.mcp` (the `mcp` extra) serves one: publishing, reading and administration are tools, runs are resources, and a run's progress arrives as resource-updated notifications. Every tool goes through the same command handler as REST and the WebSocket, so an external agent is an actor like any other, with the same rules and the same attribution ([ADR-0011](../adr/0011-surfaces.md)).
+Agents outside your application, such as a coding assistant, an on-call copilot or another service, can feed and operate workspaces over the [Model Context Protocol](https://modelcontextprotocol.io). `reflexr.mcp` (the `mcp` extra) serves one: publishing, reading and administration are tools, runs are resources, and a run's progress arrives as resource-updated notifications. Every tool goes through the same command handler as REST and the WebSocket, so an external agent is an actor like any other, with the same rules and the same attribution ([ADR-0044](../adr/0044-surfaces.md)).
 
 ## Mounting the server
 
@@ -11,13 +11,12 @@ import contextlib
 from collections.abc import AsyncGenerator
 
 from fastapi import FastAPI
-from mcp.server.mcpserver import Context
 
 from reflexr.core import ExternalAgentActor, TenantId
-from reflexr.mcp import ReflexrMcp
+from reflexr.mcp import McpContext, ReflexrMcp
 
 
-async def resolve_client(ctx: Context) -> tuple[TenantId, ExternalAgentActor]:
+async def resolve_client(ctx: McpContext) -> tuple[TenantId, ExternalAgentActor]:
     key = await api_keys.verify((ctx.headers or {}).get("authorization"))  # your authentication
     return key.tenant_id, ExternalAgentActor(client_id=key.id, name=key.name)
 
@@ -46,6 +45,20 @@ Clients connect to `https://your-host/mcp/` with any MCP client that speaks Stre
 | `bus` | Where resource-updated notifications go: in process by default. Pass the MCP SDK's `SubscriptionBus` over a shared broker to fan them out across replicas. |
 
 `resolve(ctx)` is the boundary. `ctx.headers` holds the HTTP request's headers (it is `None` for an in-process client), and they are the client's own claims until you have checked a credential. The tenant comes from `resolve`, never from a tool's arguments, so a client cannot reach another tenant by naming it. To refuse a client, raise; raising the SDK's `ToolError` (from `mcp.server.mcpserver.exceptions`) gives the client your message, such as `Error executing tool read_events: unknown API key`.
+
+`ctx` is an `McpContext`, the MCP SDK's `Context` with its request typed. Over HTTP, `ctx.request_context.request` is the Starlette `Request`, so an authenticator written for the router's `resolve_actor` can take it without a cast. Check it for `None` first: the in-process client that tests use has no HTTP request.
+
+```python
+from mcp.server.mcpserver.exceptions import ToolError
+
+
+async def resolve_client(ctx: McpContext) -> tuple[TenantId, ExternalAgentActor]:
+    request = ctx.request_context.request  # a starlette Request, or None
+    if request is None:
+        raise ToolError("connect over HTTP")
+    user = await authenticate(request)  # the function resolve_actor uses
+    return user.tenant_id, ExternalAgentActor(client_id=user.id, name=f"{user.name} (MCP)")
+```
 
 To decide which workspaces of its tenant a client may use, pass `authorize`, the same `reflexr.workspace.Authorize` hook the [router](serving.md#authentication) takes:
 

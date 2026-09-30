@@ -33,4 +33,4 @@ Rules that run LLM workflows, whose output can be new events that other rules wa
 
 ## Action items
 
-1. [ ] Implement causation and depth checks (RFC-0001 phases 1 and 2), and allowlists and usage limits (phase 3).
+1. [x] Implement causation and depth checks (RFC-0001 phases 1 and 2), and allowlists and usage limits (phase 3).

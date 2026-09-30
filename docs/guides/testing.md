@@ -161,15 +161,18 @@ async def test_a_failing_page_is_retried(
 
 ## Scripting agents
 
-Agent actions call a model, which tests replace with pydantic-ai's `FunctionModel`, answering each request from a function, or `TestModel`, which answers without being told how. Swap either into the agent with `agent.override`; runs the reactor starts inside the `with` block use it.
+Agent actions call a model, which tests replace with a scripted one, answering each request from a function, or pydantic-ai's `TestModel`, which answers without being told how. Swap either into the agent with `agent.override`; runs the reactor starts inside the `with` block use it.
+
+pydantic-ai's `FunctionModel` answers each request with a function of yours, but an agent's requests are streamed whenever a capability wraps its event stream, as `LiteLLMGateway` does, and then the model needs a stream function too. `reflexr.agent.function_model` builds both from one function, sync or async, that returns a `ModelResponse`: the stream carries its text, its thinking and its tool calls.
 
 A scripted model decides what the agent does, so a test can check both the agent's effects and the run's output. This one opens an incident with the `EventContext` capability's `emit_event` tool, then answers with the structured output (pydantic-ai's output tool, `final_result`):
 
 ```python
 from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, ToolCallPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo
 
 from oncall import IncidentOpened, triage_agent
+from reflexr.agent import function_model
 
 
 def triage_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -189,7 +192,7 @@ async def test_the_triage_agent_opens_an_incident(
 ) -> None:
     for _ in range(3):
         await monitor.publish(ServiceError(service="auth", severity=8))
-    with triage_agent.override(model=FunctionModel(triage_script)):
+    with triage_agent.override(model=function_model(triage_script)):
         await reactor.settle()
     [done] = await monitor.runs(rule="error-spike")
     assert done.output == {"severity": "high", "summary": "token checks"}
@@ -286,14 +289,13 @@ The MCP server is tested with the MCP SDK's in-process client, which talks to th
 import json
 
 from mcp import Client
-from mcp.server.mcpserver import Context
 from mcp.types import TextContent
 
 from reflexr import ExternalAgentActor
-from reflexr.mcp import ReflexrMcp
+from reflexr.mcp import McpContext, ReflexrMcp
 
 
-async def resolve_client(ctx: Context) -> tuple[TenantId, ExternalAgentActor]:
+async def resolve_client(ctx: McpContext) -> tuple[TenantId, ExternalAgentActor]:
     return "acme", ExternalAgentActor(client_id="claude-code")
 
 

@@ -1,6 +1,6 @@
 # ADR-0009: Graph checkpoints at step boundaries
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0043](0043-graph-checkpoints.md)
 **Date:** 2026-09-28
 **Deciders:** Alex Nodeland
 

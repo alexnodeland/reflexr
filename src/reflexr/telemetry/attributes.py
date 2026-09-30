@@ -22,8 +22,6 @@ EVENT_COUNT = "reflexr.event.count"
 DUPLICATE = "reflexr.event.duplicate"
 """Whether a publish found its event id already in the log and appended nothing."""
 
-DEPTH = "reflexr.causation.depth"
-
 # ─── rules and runs ──────────────────────────────────────────────────────────
 
 RULE = "reflexr.rule"

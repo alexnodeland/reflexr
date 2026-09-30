@@ -4,6 +4,6 @@ Every tool goes through :func:`reflexr.workspace.execute`, the handler REST and 
 use, so it behaves the same whichever way it arrives.
 """
 
-from reflexr.mcp.server import INSTRUCTIONS, ReflexrMcp, ResolveClient, run_uri
+from reflexr.mcp.server import INSTRUCTIONS, McpContext, ReflexrMcp, ResolveClient, run_uri
 
-__all__ = ["INSTRUCTIONS", "ReflexrMcp", "ResolveClient", "run_uri"]
+__all__ = ["INSTRUCTIONS", "McpContext", "ReflexrMcp", "ResolveClient", "run_uri"]

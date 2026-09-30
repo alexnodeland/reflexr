@@ -18,8 +18,8 @@ from reflexr.core import (
     succeed,
 )
 from reflexr.workspace import RunPolicy, Storage, WorkspaceRef, run_lease
+from tests.clock import START, FakeClock
 from tests.event_types import ServiceError
-from tests.workspace.conftest import START, FakeClock
 from tests.workspace.helpers import deploy, entry, fired
 
 ACME = WorkspaceRef("acme", "prod")

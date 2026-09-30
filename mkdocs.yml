@@ -206,6 +206,8 @@ nav:
           - adr/0040-telemetry-that-composes-across-libraries.md
           - adr/0041-executing-runs.md
           - adr/0042-cancel-safe-storage.md
+          - adr/0043-graph-checkpoints.md
+          - adr/0044-surfaces.md
           - adr/template.md
       - RFCs:
           - rfcs/README.md
