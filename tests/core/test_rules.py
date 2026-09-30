@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from reflexr.core import (
     DEFAULT_REGISTRY,
@@ -22,6 +22,7 @@ from reflexr.core import (
     Scope,
     SequencePattern,
     by,
+    load_params,
     on,
     run,
     scope_key,
@@ -61,6 +62,44 @@ def test_actions_are_referred_to_by_name() -> None:
     assert spike().then.action == "triage"
 
 
+def test_a_rule_passes_its_action_params() -> None:
+    assert run("notify", thread_id="thr_4") == ActionRef(
+        action="notify", params={"thread_id": "thr_4"}
+    )
+    assert run(Triage(), action="restart").params == {"action": "restart"}
+    assert run("page").params == {}
+
+
+class Thread(BaseModel):
+    thread_id: str
+    loud: bool = False
+
+
+def test_params_load_as_the_actions_model() -> None:
+    notify = spike(then=run("notify", thread_id="thr_4"))
+    assert load_params(notify, Thread) == Thread(thread_id="thr_4")
+    assert load_params(spike(), None) is None
+    with pytest.raises(InvalidRule, match="rule 'app:error-spike' is invalid") as invalid:
+        load_params(spike(then=run("notify", loud="very")), Thread)
+    assert invalid.value.problems == [
+        "then.params.thread_id: Field required",
+        "then.params.loud: Input should be a valid boolean, unable to interpret input",
+    ]
+    with pytest.raises(InvalidRule) as invalid:
+        load_params(notify, None)
+    assert invalid.value.problems == ["then.params must be empty"]
+
+
+class Since(BaseModel, strict=True):
+    since: datetime
+
+
+def test_params_are_validated_as_the_json_they_are() -> None:
+    # A strict model takes a date as a string in JSON, as a rule written as JSON gives it.
+    rule = spike(then=run("digest", since="2026-01-01T00:00:00Z"))
+    assert load_params(rule, Since) == Since(since=NOW)
+
+
 def test_retry_policies_back_off_exponentially() -> None:
     policy = RetryPolicy(
         max_attempts=4, backoff=timedelta(seconds=2), max_backoff=timedelta(seconds=5)
@@ -83,7 +122,7 @@ def test_the_definition_changes_only_with_what_the_rule_decides() -> None:
     rule = spike()
     assert (
         rule.definition()
-        == spike(then=run("other"), retry=RetryPolicy(max_attempts=1)).definition()
+        == spike(then=run("other", urgent=True), retry=RetryPolicy(max_attempts=1)).definition()
     )
     assert rule.definition() != spike(scope=by(F.region)).definition()
 

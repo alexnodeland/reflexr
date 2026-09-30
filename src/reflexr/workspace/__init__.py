@@ -4,7 +4,7 @@ Open a :class:`Workspace` handle with :meth:`Workspaces.open`, and publish, read
 through it. Rules are evaluated and runs executed by the ``Reactor``.
 """
 
-from reflexr.workspace.actions import Action, Reaction, RunContext, RunFailure
+from reflexr.workspace.actions import Action, Reaction, RunContext, RunFailure, with_params
 from reflexr.workspace.commands import execute
 from reflexr.workspace.memory import InMemoryStorage
 from reflexr.workspace.reactor import EVALUATION_LEASE, REACTOR, Reactor, Settled
@@ -58,4 +58,5 @@ __all__ = [
     "run_lease",
     "tick_id",
     "utc_now",
+    "with_params",
 ]

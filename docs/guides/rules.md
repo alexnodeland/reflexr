@@ -29,7 +29,7 @@ error_spike = Rule(
 | `description` | `""` | What the rule is for. An agent action is told it in its prompt |
 | `when` | required | The condition: a filter, and optionally dedupe, a pattern and a throttle ([Conditions](#conditions)) |
 | `scope` | the whole workspace | The event fields that partition the rule's state and ordering ([Scopes](#scopes)) |
-| `then` | required | The action to run, by name: `run("triage")`, or `run(triage)` given the action itself |
+| `then` | required | The action to run, by name: `run("triage")`, or `run(triage)` given the action itself, with the params it takes, if any: `run("notify", thread_id="thr_4")` ([Parameters](actions.md#parameters)) |
 | `retry` | `RetryPolicy()` | How a failed run is retried: 5 attempts, backing off from 1 second, doubling, up to 5 minutes ([Retries and dead letters](reactor.md#retries-and-dead-letters)) |
 | `ordering` | `"scope"` | `"scope"` runs one scope's runs in firing order; `"none"` runs them in parallel ([Ordering](reactor.md#ordering)) |
 | `on_dead_letter` | `"continue"` | Whether a scope's later runs continue past a dead-lettered run, or `"block"` until someone retries or skips it |
@@ -195,7 +195,7 @@ reflexr.core.errors.InvalidRule: rule 'ops:bad' is invalid: no event type 'ops:s
 You rarely call it yourself:
 
 - **`Workspaces(storage, events=[...], rules=[...], predicates={...})`** checks every rule against the event types it accepts (or every type in its registry, without an allowlist) and the predicates, and raises `InvalidRule` at startup. reflexr's own events, such as `reflexr:rule_fired` and `reflexr:tick`, are always available to rules. Two rules with the same name raise `ValueError`.
-- **`Reactor(workspaces, actions={...})`** checks that every rule's action is among the actions it was given.
+- **`Reactor(workspaces, actions={...})`** checks that every rule's action is among the actions it was given, and that the rule's params validate as the action's params model ([Parameters](actions.md#parameters)).
 
 Fields are checked on the types that can reach them, as [the builder](#filters) checks them: a `where` on the types of its own conjunction, a sequence's steps on the types its filter admits, and the scope and dedupe fields on every type the filter admits. They are checked through nested Pydantic models. A path through a `dict` field cannot be checked, and is accepted.
 
@@ -222,4 +222,4 @@ A rule serializes to plain JSON, with durations as ISO 8601 strings. This is `op
 
 `Rule.model_validate_json(text)` reads it back, equal to the rule the builder made, and `rule.model_dump_json()` writes it, with every field. The JSON Schema of a rule is generated from the models into [`schemas/reflexr.rules.v1.json`](https://github.com/alexnodeland/reflexr/blob/main/schemas/reflexr.rules.v1.json), so a form or an agent that writes rules can validate them before they reach `Rule.check` ([JSON Schemas](../reference/schema.md)).
 
-In this version rules live in code and are registered when the application starts. `rule.definition()` is a hash of what the rule decides, its condition and its scope. When a deployed rule's definition changes, its old state no longer applies, so it starts afresh; changing its action, retries or ordering, or disabling and enabling it, keeps its state ([Where a rule starts](reactor.md#where-a-rule-starts)).
+In this version rules live in code and are registered when the application starts. `rule.definition()` is a hash of what the rule decides, its condition and its scope. When a deployed rule's definition changes, its old state no longer applies, so it starts afresh; changing its action, its params, retries or ordering, or disabling and enabling it, keeps its state ([Where a rule starts](reactor.md#where-a-rule-starts)).

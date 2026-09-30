@@ -26,6 +26,7 @@ from reflexr.core import (
     begin,
     create_run,
     evaluate,
+    load_params,
     needs,
     new_event_id,
     new_id,
@@ -42,7 +43,7 @@ from reflexr.telemetry.metrics import (
     SCHEDULE_TICKS,
 )
 from reflexr.telemetry.telemetry import Attributes
-from reflexr.workspace.actions import Action, RunContext
+from reflexr.workspace.actions import Action, RunContext, params_model
 from reflexr.workspace.executor import REACTOR, Executor
 from reflexr.workspace.schedules import SCHEDULER, Schedule, tick_id
 from reflexr.workspace.storage import Entry, Transaction, WorkspaceRef
@@ -86,7 +87,7 @@ class Reactor[D]:
     Args:
         workspaces: The workspaces, with their storage and rules.
         actions: What rules run, by the name they refer to them by. Every rule's action must
-            be here.
+            be here, and its params must validate as the params model the action declares.
         deps: The application's dependencies, handed to every action in its
             :class:`~reflexr.workspace.Reaction`.
         holder: This reactor's name in leases. Defaults to a new random id; give each process
@@ -100,7 +101,8 @@ class Reactor[D]:
             ``reflexr.langfuse.langfuse_run`` to attribute runs in Langfuse.
 
     Raises:
-        InvalidRule: If a rule's action is not among ``actions``.
+        InvalidRule: If a rule's action is not among ``actions``, or its params do not validate
+            as the action's params model.
     """
 
     @overload
@@ -148,8 +150,10 @@ class Reactor[D]:
             raise ValueError("concurrency must be at least 1")
         chosen = actions or {}
         for rule in workspaces.rules.values():
-            if rule.then.action not in chosen:
+            action = chosen.get(rule.then.action)
+            if action is None:
                 raise InvalidRule(rule.name, [f"no action {rule.then.action!r}"])
+            load_params(rule, params_model(action))
         self._workspaces = workspaces
         self._holder = holder or new_id("reactor")
         self._batch_size = batch_size

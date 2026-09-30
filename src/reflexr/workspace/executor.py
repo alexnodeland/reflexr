@@ -26,6 +26,7 @@ from reflexr.core import (
     WAITING,
     AgentActor,
     Envelope,
+    InvalidRule,
     Rule,
     Run,
     RunCancelled,
@@ -36,6 +37,7 @@ from reflexr.core import (
     SystemActor,
     cancel,
     fail,
+    load_params,
     new_event_id,
     runnable,
     start,
@@ -53,7 +55,7 @@ from reflexr.telemetry import (
 from reflexr.telemetry import attributes as a
 from reflexr.telemetry.metrics import DEAD_LETTERS, RUN_ATTEMPTS, RUN_DURATION, RUNS
 from reflexr.telemetry.telemetry import Attributes
-from reflexr.workspace.actions import Action, Reaction, RunContext, RunFailure
+from reflexr.workspace.actions import Action, Reaction, RunContext, RunFailure, params_model
 from reflexr.workspace.storage import Entry, RunPolicy, Transaction, WorkspaceRef, run_lease
 from reflexr.workspace.workspace import Workspaces
 
@@ -97,6 +99,12 @@ class _Outcome:
     error: str = ""
     reason: str | None = None
     permanent: bool = False
+
+    @classmethod
+    def failed(cls, failure: RunFailure) -> "_Outcome":
+        return cls(
+            "failed", error=failure.message, reason=failure.reason, permanent=failure.permanent
+        )
 
 
 class Executor[D]:
@@ -247,6 +255,10 @@ class Executor[D]:
         grace_over: asyncio.Event,
     ) -> _Outcome:
         """Run the action while keeping the lease, and report how it ended."""
+        try:
+            action, params = self._resolve(rule)
+        except RunFailure as failure:
+            return _Outcome.failed(failure)
         workspace = await self._workspaces.open(
             ref.tenant_id,
             ref.workspace_id,
@@ -258,8 +270,8 @@ class Executor[D]:
             rule=rule,
             events=events,
             deps=self._deps,
+            params=params,
         )
-        action = self._actions[rule.then.action]
         # The chain is the session: in baggage, an SDK's baggage processor can copy it onto
         # every span the action causes, such as its database and HTTP calls.
         token = context.attach(baggage.set_baggage(a.SESSION_ID, run.correlation_id))
@@ -270,6 +282,25 @@ class Executor[D]:
                 return await self._supervise(ref, run, self._call(action, reaction), grace_over)
         finally:
             context.detach(token)
+
+    def _resolve(self, rule: Rule) -> tuple[Action[D], BaseModel | None]:
+        """Return a rule's action, and its params validated as the action's model.
+
+        Raises:
+            RunFailure: Permanently, if the action is not registered (``unknown_action``), or
+                the params do not validate (``invalid_params``), as when a deploy removed the
+                action or changed its model. Retrying the same rule would fail again.
+        """
+        action = self._actions.get(rule.then.action)
+        if action is None:
+            raise RunFailure(
+                f"no action {rule.then.action!r}", reason="unknown_action", permanent=True
+            )
+        try:
+            return action, load_params(rule, params_model(action))
+        except InvalidRule as invalid:
+            message = "; ".join(invalid.problems)
+            raise RunFailure(message, reason="invalid_params", permanent=True) from None
 
     async def _supervise(
         self,
@@ -311,9 +342,7 @@ class Executor[D]:
         except TimeoutError:
             return _Outcome("failed", error=f"the action timed out after {limit}", reason="timeout")
         except RunFailure as failure:
-            return _Outcome(
-                "failed", error=failure.message, reason=failure.reason, permanent=failure.permanent
-            )
+            return _Outcome.failed(failure)
         except Exception as error:  # an action's failure is the run's, to retry
             return _Outcome("failed", error=f"{type(error).__name__}: {error}")
         try:

@@ -382,9 +382,9 @@ Each phase is a series of small pull requests to `main`.
 
 | Phase | Deliverable | Exit criteria |
 |---|---|---|
-| 1. Names and core, with #45's implementation | Qualified rule names, and the code rules renamed in oncall, the tests, the fixtures and the docs. `ActionRef.params`, `StoredRules`, `RuleChange`, `check_stored` and its constants, and the two facts | A bare rule name fails at construction. A table of bad stored rules, each refused with every problem listed |
+| 1. Names and core, with #45's implementation | Qualified rule names, and the code rules renamed in oncall, the tests, the fixtures and the docs. `ActionRef.params` and parameters on the action port, `StoredRules`, `RuleChange`, and `check_stored` and its constants | A bare rule name fails at construction. A table of bad stored rules, each refused with every problem listed |
 | 2. Storage | `reflexr_rules`, in memory and in SQL, with migration 0006 | The behaviour suite passes on memory, SQLite and PostgreSQL, and the migrations don't drift |
-| 3. Workspace and reactor | `Workspaces(stored_rules=)`, the three commands and `get_rule` on `Workspace`, `rules_in`, `begin` and `reset` in the change's transaction, archiving, parameters on the action port, and the namespace as the metric label | A rule installed while two reactors serve fires on the next matching event, even one published before either's next pass. An archived rule's runs are cancelled, and a rule installed again never reuses a firing id |
+| 3. Workspace and reactor | `Workspaces(stored_rules=)`, the three commands and `get_rule` on `Workspace`, the two facts they append (`reflexr:rule_installed` and `reflexr:rule_archived`), `rules_in`, `begin` and `reset` in the change's transaction, archiving, and the namespace as the metric label | A rule installed while two reactors serve fires on the next matching event, even one published before either's next pass. An archived rule's runs are cancelled, and a rule installed again never reuses a firing id |
 | 4. Surfaces | The commands, outcome and facts in the protocol and its schema, the REST read and the MCP tools | Contract tests for each command on every surface. No surface shows a stored rule to another tenant or workspace |
 | 5. Docs and oncall | ADRs for the decisions, and the architecture, protocol and guides. oncall installs a stored rule | `make docs` passes. oncall's smoke test installs a rule over REST and sees it fire |
 
@@ -393,7 +393,7 @@ Each phase is a series of small pull requests to `main`.
 - [x] Decided on 2026-09-29, and recorded on [#21][issue-21]
 - [x] #45 decided, and ADR-0039 accepted (#74)
 - [x] Phase 1, qualified rule names: landed with #45's implementation (#83)
-- [ ] Phase 1, the rest of core: `ActionRef.params`, `StoredRules`, `RuleChange` and `check_stored`
+- [x] Phase 1, the rest of core: `ActionRef.params`, `StoredRules`, `RuleChange` and `check_stored`
 - [ ] Phase 2: storage and migration 0006
 - [ ] Phase 3: workspace and reactor
 - [ ] Phase 4: surfaces

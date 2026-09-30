@@ -39,9 +39,11 @@ class Verdict(BaseModel):
 
 
 async def setup(
-    action: AgentAction[None, Any], tracer_provider: TracerProvider | None = None
+    action: AgentAction[None, Any],
+    tracer_provider: TracerProvider | None = None,
+    rule: Rule = triage_rule,
 ) -> tuple[Workspace, Reactor[None]]:
-    workspaces = Workspaces(InMemoryStorage(), rules=[triage_rule], tracer_provider=tracer_provider)
+    workspaces = Workspaces(InMemoryStorage(), rules=[rule], tracer_provider=tracer_provider)
     workspace = await workspaces.open("acme", "prod", actor=SourceActor(name="monitor"))
     await workspace.publish(Deploy(service="auth"))
     await workspace.publish(ServiceError(service="auth", severity=8, message="token check"))
@@ -150,6 +152,23 @@ async def test_structured_outputs_and_custom_prompts() -> None:
     workspace, reactor = await setup(AgentAction(agent(fixed), prompt="Look into it."))
     await reactor.settle()
     assert fixed.sent(0) == ["Look into it."]
+
+
+class Thread(BaseModel):
+    thread_id: str
+
+
+async def test_an_agent_reads_its_params() -> None:
+    script = Script(say("Posted."))
+    action = AgentAction(
+        agent(script),
+        params=Thread,
+        prompt=lambda reaction: f"Post to {reaction.params_as(Thread).thread_id}.",
+    )
+    notice = triage_rule.model_copy(update={"then": run("triage", thread_id="thr_4")})
+    _, reactor = await setup(action, rule=notice)
+    await reactor.settle()
+    assert script.sent(0) == ["Post to thr_4."]
 
 
 def test_an_action_needs_a_name() -> None:
