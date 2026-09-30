@@ -210,6 +210,7 @@ nav:
           - adr/0044-surfaces.md
           - adr/0045-scores-on-evalr.md
           - adr/0046-one-docs-build.md
+          - adr/0047-commands-carried-out-once-per-id.md
           - adr/template.md
       - RFCs:
           - rfcs/README.md

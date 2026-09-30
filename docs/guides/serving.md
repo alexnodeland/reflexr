@@ -1,6 +1,6 @@
 # Serving over REST and WebSocket
 
-`reflexr.fastapi` (the `fastapi` extra) serves workspaces over HTTP: ingest for producers and webhooks, REST reads and administration for dashboards and operators, and the stream protocol over WebSocket for anything that follows a log live. All of it is one FastAPI router, and every command goes to one handler, `reflexr.workspace.execute`, so a command behaves the same over REST, the WebSocket and [MCP](mcp.md) ([ADR-0044](../adr/0044-surfaces.md)). The wire format is specified in the [stream protocol](../protocol.md); this page shows how to serve it.
+`reflexr.fastapi` (the `fastapi` extra) serves workspaces over HTTP: ingest for producers and webhooks, REST reads and administration for dashboards and operators, and the stream protocol over WebSocket for anything that follows a log live. All of it is one FastAPI router, and every command goes to one handler, `Workspaces.execute`, so a command behaves the same over REST, the WebSocket and [MCP](mcp.md), and is carried out once per `command_id` ([ADR-0044](../adr/0044-surfaces.md), [ADR-0047](../adr/0047-commands-carried-out-once-per-id.md)). The wire format is specified in the [stream protocol](../protocol.md); this page shows how to serve it.
 
 ## Mounting the router
 
@@ -169,7 +169,18 @@ A rejected command answers with its status code (`STATUS_CODES`), and the body i
 | `validation_failed`, `depth_exceeded` | 422 |
 | `unsupported_protocol` | 400 |
 
-`command_id` is chosen by the client and doubles as an idempotency key. The server remembers recent results (10,000 by default, per process), keyed by the tenant, the workspace, the actor's `participant` (so a changed display name does not matter) and the `command_id`, and answers a repeated id with the first result instead of running the command again. Retry a command that timed out with the same id.
+`command_id` is chosen by the client and doubles as an idempotency key. The server remembers recent results, keyed by the tenant, the workspace, the actor's `participant` (so a changed display name does not matter) and the `command_id`, and answers a repeated id with the first result instead of running the command again. Retry a command that timed out with the same id. The memory is the `Workspaces`', so REST, the WebSocket and [MCP](mcp.md#retries) share it ([Deduplication](../protocol.md#deduplication)). By default it holds the 10,000 most recent results in the process; pass `Workspaces` another `CommandResults` to change that:
+
+```python
+from reflexr.workspace import InMemoryCommandResults
+
+workspaces = Workspaces(
+    InMemoryStorage(),
+    events=[ServiceError, Deploy, Heartbeat],
+    rules=[error_spike],
+    results=InMemoryCommandResults(capacity=50_000),
+)
+```
 
 ## REST endpoints
 
@@ -269,9 +280,8 @@ Every outgoing frame goes through one bounded outbox per connection. A client to
 | `authorize` | `None` | Whether an actor may use a workspace of its tenant; `None` allows every one |
 | `hello_timeout` | 10 seconds | How long a new connection has to send `hello` before it is closed (4408) |
 | `outbox_size` | 1,000 frames | How far a connection may fall behind before it is closed (4429) |
-| `remembered_commands` | 10,000 | Command results remembered for deduplication, per process |
 
-Command deduplication is per process in v0.1: behind a load balancer, a retried command that reaches another process runs again. Publishing with an event id is idempotent everywhere, because the log itself remembers ids.
+Command deduplication is per process in v0.1, with the default `InMemoryCommandResults`: behind a load balancer, a retried command that reaches another process runs again. Publishing with an event id is idempotent everywhere, because the log itself remembers ids.
 
 Each WebSocket connection is a `reflexr.stream` span, and counted in the `reflexr.stream.connections` and `reflexr.stream.disconnects` metrics. Its subscription reads the log untraced, so a connection that is only waiting makes no traces, however often SQL storage polls for it ([Observability](observability.md#polling)). When FastAPI is instrumented, as `configure_telemetry` does, each REST request's span is attributed to its tenant, workspace and actor too ([Observability](observability.md)).
 

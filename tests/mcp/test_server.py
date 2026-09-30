@@ -216,6 +216,32 @@ async def test_agents_publish_read_and_operate(server: Server, workspaces: Works
     assert run_uri("acme", "prod", done["id"]) in uris
 
 
+async def test_a_retried_change_is_made_once(server: Server, workspaces: Workspaces) -> None:
+    mcp, _, _ = server
+    deploy = {"workspace_id": "prod", "event": {"type": "app:deploy.finished", "service": "auth"}}
+    async with Client(mcp.server) as client:
+        tools = (await client.list_tools()).tools
+        assert {t.name for t in tools if "command_id" in t.input_schema["properties"]} == {
+            "publish_event",
+            "give_feedback",
+            "retry_run",
+            "skip_run",
+            "cancel_run",
+            "replay_rule",
+            "install_rule",
+            "update_rule",
+            "archive_rule",
+        }, "every tool that changes something, and no other"
+        first = await call(client, "publish_event", **deploy, command_id="c1")
+        again = await call(client, "publish_event", **deploy, command_id="c1")
+        assert again == first, "the first result"
+        empty = await call(client, "publish_event", **deploy, command_id="")
+        assert empty[0], "an empty id is refused, not remembered"
+        assert "String should have at least 1 character" in empty[1]
+    workspace = await workspaces.open("acme", "prod", actor=CLAUDE)
+    assert len(await workspace.read()) == 1, "and one event"
+
+
 async def test_agents_install_update_and_archive_stored_rules(server: Server) -> None:
     mcp, _, _ = server
     rule = chat_rule()

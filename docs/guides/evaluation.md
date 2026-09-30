@@ -55,7 +55,7 @@ await ada.give_feedback(
 
 The handle checks that the type can be given on the target's kind (`ValidationFailed` otherwise) and that the target exists (`NotFound`), and that a chain target names the first event of its chain (`ValidationFailed`, naming the chain, otherwise), then appends a `reflexr:feedback_given` event with the validated value. Whoever gave it is the envelope's actor. The feedback joins the causal chain of what it is about, so it appears in that chain's session in your traces, and it is traced as `reflexr.feedback {type}` and counted in the `reflexr.feedback` metric ([Observability](observability.md)).
 
-Every surface has it, as the `give_feedback` command. Over REST (`POST /v1/workspaces/{workspace_id}/commands`) and the WebSocket it is a command frame; over MCP it is the `give_feedback` tool, with the same fields:
+Every surface has it, as the `give_feedback` command. Over REST (`POST /v1/workspaces/{workspace_id}/commands`) and the WebSocket it is a command frame; over MCP it is the `give_feedback` tool, with the same fields and an optional `command_id`:
 
 ```json
 {"type": "command", "command_id": "fb_1", "command": {"type": "give_feedback", "feedback_type": "triage_quality", "target": {"kind": "run", "run_id": "fir_28fb78558a582bdc"}, "value": {"correct": true, "severity": "high"}}}

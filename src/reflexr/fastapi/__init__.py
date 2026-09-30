@@ -5,7 +5,8 @@ Mount the router under a prefix of your choosing::
     app.include_router(reflexr_router(workspaces, resolve_actor=resolve_actor), prefix="/v1")
 
 Every route speaks the workspace protocol in ``docs/protocol.md``, and every command goes
-through :func:`reflexr.workspace.execute`, so REST, the WebSocket and MCP behave identically.
+through :meth:`reflexr.workspace.Workspaces.execute`, once per ``command_id``, so REST, the
+WebSocket and MCP behave identically.
 """
 
 from reflexr.fastapi.router import (

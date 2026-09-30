@@ -1,6 +1,6 @@
 # ADR-0044: Surfaces
 
-**Status:** Accepted
+**Status:** Accepted; partly superseded by [ADR-0047](0047-commands-carried-out-once-per-id.md)
 **Date:** 2026-09-29
 **Deciders:** Alex Nodeland
 

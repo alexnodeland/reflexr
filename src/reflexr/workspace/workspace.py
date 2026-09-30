@@ -2,7 +2,8 @@
 
 Every write goes through a :class:`Workspace` handle, inside one storage transaction: publishing
 events, giving feedback, operating runs, and changing stored rules. Each write is attributed to
-the handle's actor, and each is traced (ADR-0018).
+the handle's actor, and each is traced (ADR-0018). Every surface hands the protocol's commands
+to :meth:`Workspaces.execute`, which carries each out through a handle once per id (ADR-0047).
 """
 
 from collections import Counter
@@ -18,7 +19,7 @@ from collections.abc import (
 from contextlib import AbstractContextManager, aclosing
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Literal, assert_never
 
 from opentelemetry.metrics import MeterProvider
 from opentelemetry.trace import Span, SpanKind, TracerProvider
@@ -29,8 +30,12 @@ from reflexr.core import (
     FINISHED,
     MAX_STORED_RULES,
     Actor,
+    ArchiveRule,
+    CancelRun,
     Causation,
     ChainTarget,
+    Command,
+    CommandResult,
     Envelope,
     EvaluationError,
     Event,
@@ -39,28 +44,42 @@ from reflexr.core import (
     Feedback,
     FeedbackGiven,
     FeedbackTarget,
+    GiveFeedback,
+    InstallRule,
     InvalidRule,
     InvalidState,
     NotFound,
+    Outcome,
     Predicates,
+    Publish,
+    PublishedOutcome,
+    RecordedOutcome,
+    Rejection,
+    ReplayRule,
+    RetryRun,
     Rule,
     RuleArchived,
     RuleChange,
     RuleInstalled,
     RuleName,
+    RuleOutcome,
     RuleProgress,
+    RuleVersionOutcome,
     Run,
     RunCancelled,
     RunId,
+    RunOutcome,
     RunRequeued,
     RunSkipped,
     RunStatus,
     RunTarget,
     ScopeKey,
+    SkipRun,
     StoredRule,
     StoredRules,
     TenantId,
     UnknownEvent,
+    UpdateRule,
     ValidationFailed,
     WorkspaceId,
     begin,
@@ -69,6 +88,7 @@ from reflexr.core import (
     check_provenance,
     check_stored,
     checkpoint,
+    load_feedback,
     new_event_id,
     reset,
     retry,
@@ -89,6 +109,7 @@ from reflexr.telemetry import (
 from reflexr.telemetry import attributes as a
 from reflexr.telemetry.metrics import EVENTS_PUBLISHED, FEEDBACK, RUNS
 from reflexr.telemetry.telemetry import Attributes
+from reflexr.workspace.results import CommandKey, CommandResults, InMemoryCommandResults
 from reflexr.workspace.schedules import Schedule
 from reflexr.workspace.storage import Clock, Entry, Storage, Transaction, WorkspaceRef, utc_now
 
@@ -205,6 +226,8 @@ class Workspaces:
             rejected and firings beyond it refused, so workflows that trigger themselves stop.
         tracer_provider: Where spans go. Defaults to OpenTelemetry's global provider.
         meter_provider: Where metrics go. Defaults to OpenTelemetry's global provider.
+        results: Where :meth:`execute` remembers commands' results. Defaults to the 10,000
+            most recent, in this process.
 
     Raises:
         InvalidRule: If a rule refers to an event type, field or predicate that does not exist.
@@ -227,6 +250,7 @@ class Workspaces:
         max_depth: int = 8,
         tracer_provider: TracerProvider | None = None,
         meter_provider: MeterProvider | None = None,
+        results: CommandResults | None = None,
     ) -> None:
         chosen_types = {t.event_type: t for t in events or ()}
         from_runs = {t.event_type: t for t in emitted}
@@ -269,6 +293,7 @@ class Workspaces:
                 stored_namespaces=stored,
             ),
         )
+        self._results = results or InMemoryCommandResults()
 
     @property
     def storage(self) -> Storage:
@@ -342,6 +367,36 @@ class Workspaces:
         if authorize is not None and not await authorize(tenant_id, workspace_id, actor):
             raise Forbidden("this workspace is not yours to use")
         return Workspace(self._context, WorkspaceRef(tenant_id, workspace_id), actor)
+
+    async def execute(
+        self, workspace: "Workspace", command: Command, *, command_id: str
+    ) -> CommandResult:
+        """Carry out a command the way every surface should, once per ``command_id``.
+
+        The command is carried out through the handle, as its actor. A rejection is the
+        result, not raised.
+
+        A command is known by its tenant, workspace, sender (the handle's actor, as a
+        participant) and ``command_id``. The first time, it is carried out and its result is
+        remembered. A repeated id returns the remembered result and carries nothing out,
+        whatever command it comes with, so a retry is safe on every surface.
+        """
+        key = CommandKey(
+            tenant_id=workspace.tenant_id,
+            workspace_id=workspace.workspace_id,
+            participant=workspace.actor.participant,
+            command_id=command_id,
+        )
+        if (remembered := await self._results.get(key)) is not None:
+            return remembered
+        try:
+            outcome = await _carry_out(workspace, command)
+        except Rejection as rejection:
+            result = CommandResult(command_id=command_id, ok=False, rejection=rejection.payload())
+        else:
+            result = CommandResult(command_id=command_id, ok=True, outcome=outcome)
+        await self._results.put(key, result)
+        return result
 
     def schedules_for(self, tenant_id: TenantId) -> list[Schedule]:
         """Return the schedules that tick in a tenant's workspaces, as the tenant may see them.
@@ -1214,6 +1269,51 @@ class Workspace:
             workspace_id=self.workspace_id,
             attributes=attributes,
         )
+
+
+async def _carry_out(workspace: Workspace, command: Command) -> Outcome:
+    """Carry out a command on a workspace, as the handle's actor.
+
+    Raises:
+        Rejection: If the command cannot be carried out.
+    """
+    match command:
+        case Publish(event=event, id=event_id, correlation_id=chain):
+            published = await workspace.publish(event, id=event_id, correlation_id=chain)
+            envelope = published.envelope
+            return PublishedOutcome(seq=envelope.seq, id=envelope.id, duplicate=published.duplicate)
+        case GiveFeedback(feedback_type=kind, target=target, value=value):
+            feedback = load_feedback(kind, target, value)
+            envelope = await workspace.give_feedback(feedback, on=target)
+            return RecordedOutcome(seq=envelope.seq, id=envelope.id)
+        case RetryRun(run_id=run_id):
+            return RunOutcome(run=await workspace.retry_run(run_id))
+        case SkipRun(run_id=run_id, reason=reason):
+            return RunOutcome(run=await workspace.skip_run(run_id, reason=reason))
+        case CancelRun(run_id=run_id, reason=reason):
+            return RunOutcome(run=await workspace.cancel_run(run_id, reason=reason))
+        case ReplayRule(rule=rule, from_seq=from_seq, mode=mode):
+            progress = await workspace.replay_rule(rule, from_seq=from_seq, mode=mode)
+            return RuleOutcome(rule=rule, progress=progress)
+        case InstallRule(rule=rule, provenance=provenance):
+            return _versioned(await workspace.install_rule(rule, provenance=provenance))
+        case UpdateRule(rule=rule, expected_version=expected, provenance=provenance):
+            updated = await workspace.update_rule(
+                rule, expected_version=expected, provenance=provenance
+            )
+            return _versioned(updated)
+        case ArchiveRule(rule=rule, expected_version=expected, reason=reason):
+            archived = await workspace.archive_rule(rule, expected_version=expected, reason=reason)
+            return _versioned(archived)
+        case _:
+            assert_never(command)
+
+
+def _versioned(changed: RuleVersion) -> RuleVersionOutcome:
+    stored = changed.stored
+    return RuleVersionOutcome(
+        rule=stored.rule.name, version=stored.version, seq=changed.seq, duplicate=changed.duplicate
+    )
 
 
 def _check_name(name: str) -> str:

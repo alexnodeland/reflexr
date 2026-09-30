@@ -32,6 +32,7 @@ ada = monitoring.as_actor(UserActor(id="ada", name="Ada"))
 | `clock` | UTC system time | The time for run transitions; tests pass a clock they control |
 | `max_depth` | 8 | The deepest causal chain an event may extend ([Causation depth](safety.md#causation-depth)) |
 | `tracer_provider`, `meter_provider` | OpenTelemetry's global ones | Where spans and metrics go ([Observability](observability.md)) |
+| `results` | the 10,000 most recent, in the process | Where `execute` remembers commands' results, so a retried command is carried out once ([Deduplication](../protocol.md#deduplication)) |
 
 `open(tenant_id, workspace_id, actor=...)` is the only place a tenant id enters. The handle it returns is bound to that tenant, that workspace and one actor, and nothing on it can reach another tenant. Workspaces need no creating: opening one that has never been written to gives an empty workspace, and it appears to the reactor once it has a log. Handles are cheap, so open one per request or connection, for the actor making it. `as_actor(actor)` returns a handle on the same workspace acting as someone else, and every write through a handle is attributed to its actor. `open` also takes an `authorize(tenant_id, workspace_id, actor)` hook, and raises `Forbidden` if it refuses the actor the workspace: the surfaces pass theirs, so REST, the WebSocket and MCP refuse a workspace alike ([Multi-tenancy and security](security.md)).
 
@@ -51,17 +52,18 @@ batch = await monitoring.publish_many(
 
 Both return `Published` results: the `envelope` that is in the log, and whether the id was a `duplicate`, so nothing was appended. Publishing is idempotent by id ([Events and envelopes](events.md#publishing)). Before appending, a handle checks that the event's type is in the allowlist (`NotFound` otherwise), that it is not one of reflexr's own events (`Forbidden`), that a handle no run caused is not publishing a run-only type from `emitted` (`Forbidden`), and, for a run's handle, that the causal chain is not too deep (`DepthExceeded`). Each publish is traced as a `reflexr.publish {type}` span, whose trace context is stored on the envelope ([Observability](observability.md#spans)).
 
-The same `publish` is available to producers outside the process over [REST and the WebSocket](serving.md) and [MCP](mcp.md). Every surface hands commands to one handler, `execute(workspace, command)`, which you can call too:
+The same `publish` is available to producers outside the process over [REST and the WebSocket](serving.md) and [MCP](mcp.md). Every surface hands commands to one handler, `workspaces.execute(workspace, command, command_id=...)`, which you can call too:
 
 ```python
 from reflexr.core import Publish
-from reflexr.workspace import execute
 
-outcome = await execute(ada, Publish(event=Heartbeat(service="billing"), id="hb-1"))
-print(outcome.type, outcome.id, outcome.duplicate)  # published hb-1 False
+result = await workspaces.execute(
+    ada, Publish(event=Heartbeat(service="billing"), id="hb-1"), command_id="c_1"
+)
+print(result.ok, result.outcome)  # True type='published' seq=4 id='hb-1' duplicate=False
 ```
 
-A command either returns an outcome or raises a [rejection](#rejections).
+It returns the command's `command_result` and never raises: a [rejection](#rejections) is in its `rejection`, as the payload REST sends. The first result for each `command_id` of a participant in a workspace is remembered, and a repeated id returns it without carrying anything out ([Deduplication](../protocol.md#deduplication)).
 
 ## Causal chains
 

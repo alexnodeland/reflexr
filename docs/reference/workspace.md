@@ -54,9 +54,13 @@ The action port, and what every action receives. See [Actions](../guides/actions
 
 ## Commands
 
-The one handler every surface hands commands to. See the [stream protocol](../protocol.md#commands).
+Where `Workspaces.execute`, the one handler every surface hands commands to, remembers their results. See [Deduplication](../protocol.md#deduplication).
 
-::: reflexr.workspace.execute
+::: reflexr.workspace.CommandResults
+
+::: reflexr.workspace.InMemoryCommandResults
+
+::: reflexr.workspace.CommandKey
 
 ## Schedules
 
