@@ -32,7 +32,7 @@ reactor = Reactor(workspaces, actions={"page": page}, deps=AppDeps(pager=pager))
 
 The reactor checks at construction that every rule's action is in `actions`, and raises `InvalidRule` if one is missing. Without `deps`, it is a `Reactor[None]`, and its actions receive a `Reaction[None]`.
 
-In a service, run `serve()` for as long as the process lives, for example as a task started in your application's lifespan ([Serving](serving.md#mounting-the-router)). It ticks schedules, evaluates and executes in a loop, sleeping `poll_interval` (one second by default) between rounds, until it is stopped. A round that fails, as when the database is briefly unreachable, is logged on the `reflexr.reactor` logger and the next round tries again; leases and transactions leave nothing half done ([ADR-0027](../adr/0027-executing-runs.md)). A round checks for work untraced, so an idle reactor sends no traces; each evaluation, tick and run attempt it finds is traced ([Observability](observability.md#polling)).
+In a service, run `serve()` for as long as the process lives, for example as a task started in your application's lifespan ([Serving](serving.md#mounting-the-router)). It ticks schedules, evaluates and executes in a loop, sleeping `poll_interval` (one second by default) between rounds, until it is stopped. A round that fails, as when the database is briefly unreachable, is logged on the `reflexr.reactor` logger and the next round tries again; leases and transactions leave nothing half done ([ADR-0041](../adr/0041-executing-runs.md)). A round checks for work untraced, so an idle reactor sends no traces; each evaluation, tick and run attempt it finds is traced ([Observability](observability.md#polling)).
 
 To stop it, give it an `asyncio.Event` and set it:
 
@@ -44,7 +44,7 @@ stop.set()
 await task  # returns once the reactor has let go of everything
 ```
 
-A stop never interrupts a transaction. Evaluation stops after its current batch, and the next reactor carries on from the cursor. Runs waiting for one of the `concurrency` places do not start. Running actions have `grace` (5 seconds by default) to end. Those that have not ended by then are cancelled, and each attempt is recorded as abandoned (the reason `abandoned`), a failed attempt that is retried under the rule's [policy](#retries-and-dead-letters); a graph resumes from its last checkpoint. Then the reactor releases its leases, and `serve` returns. An action is only ever cancelled between the storage calls it makes through its workspace, so one that is saving a checkpoint, publishing or reading the log finishes that first; a subscription is cancelled where it waits.
+Once `stop` is set, evaluation stops after its current batch, and the next reactor carries on from the cursor. Runs waiting for one of the `concurrency` places do not start. Running actions have `grace` (5 seconds by default) to end. Those that have not ended by then are cancelled, and each attempt is recorded as abandoned (the reason `abandoned`), a failed attempt that is retried under the rule's [policy](#retries-and-dead-letters); a graph resumes from its last checkpoint. Then the reactor releases its leases, and `serve` returns.
 
 A signal handler can set the same event, as in a worker process that runs only the reactor:
 
@@ -54,7 +54,7 @@ loop.add_signal_handler(signal.SIGTERM, stop.set)
 await reactor.serve(stop=stop)
 ```
 
-Without `stop`, `serve()` runs until its task is cancelled. Cancelling stops it wherever it is, in the middle of a transaction too, which on SQLite can leave the connection holding the database's write lock, so prefer `stop` in a service.
+Without `stop`, `serve()` runs until its task is cancelled. Cancelling stops it at once, which is safe wherever it lands: storage finishes the database call in flight, and a transaction the reactor was in rolls back ([Storage](storage.md#how-it-behaves)). The runs it was executing are attempted again, and their interrupted attempts count as abandoned. The event loop's shutdown is the exception: it cancels storage's own tasks too, cutting off the call in flight, so stop the reactor with `stop` before the loop ends.
 
 In tests and scripts, `settle()` does the same until nothing more happens now, and says what it did:
 
@@ -165,7 +165,7 @@ The workspace's rule status, `GET /v1/workspaces/{workspace_id}/rules` or the MC
 
 ## Execution
 
-Acting is at least once ([ADR-0027](../adr/0027-executing-runs.md)). A firing creates a pending **run** whose id is the firing's id. `execute()` finds the due runs of enabled rules that can start, across workspaces, and attempts up to `concurrency` of them at a time. With `ordering="scope"` that is the first unfinished run of each scope, so a backlog in one scope takes one place in `limit` and does not hold up the others ([Ordering](#ordering)). Each attempt has three steps:
+Acting is at least once ([ADR-0041](../adr/0041-executing-runs.md)). A firing creates a pending **run** whose id is the firing's id. `execute()` finds the due runs of enabled rules that can start, across workspaces, and attempts up to `concurrency` of them at a time. With `ordering="scope"` that is the first unfinished run of each scope, so a backlog in one scope takes one place in `limit` and does not hold up the others ([Ordering](#ordering)). Each attempt has three steps:
 
 1. **Claim.** Under the run's lease, one transaction checks that the run is still due and first in its scope, and appends `run_started`.
 2. **Act.** The action runs outside any transaction, with a [`Reaction`](actions.md#the-reaction), inside an `invoke_workflow {rule}` span. The reactor renews the run's lease every third of `lease_ttl` while the action works.

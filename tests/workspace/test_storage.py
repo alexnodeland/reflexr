@@ -108,6 +108,32 @@ async def test_a_transaction_that_raises_rolls_back(storage: Storage) -> None:
     assert await storage.progress(ACME) == {}
 
 
+async def test_a_transaction_cancelled_at_any_await_leaves_the_workspace_usable(
+    storage: Storage,
+) -> None:
+    async def publish(event_id: str) -> None:
+        async with storage.transaction(ACME) as transaction:
+            await transaction.append([entry(event_id)])
+            await transaction.save_runs([fired(event_id)])
+
+    # Cancelled after each number of yields in turn, until one ends before its cancellation
+    # comes. A hundred at most: a loop that never blocks would starve a driver's thread.
+    for yields in range(100):
+        task = asyncio.create_task(publish(f"e{yields}"))
+        for _ in range(yields):
+            await asyncio.sleep(0)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        async with asyncio.timeout(1), storage.transaction(ACME) as transaction:
+            await transaction.save_schedule("next", START)
+        if not task.cancelled():
+            task.result()
+            break
+    log = await storage.read(ACME)
+    assert [e.seq for e in log] == list(range(1, len(log) + 1))
+    assert {e.id for e in log} == {r.id for r in await storage.runs(ACME)}, "all or nothing"
+
+
 async def test_a_transaction_reads_its_own_writes(storage: Storage) -> None:
     async with storage.transaction(ACME) as transaction:
         await transaction.append([entry("e1")])

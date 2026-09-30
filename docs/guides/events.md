@@ -77,7 +77,7 @@ print(again.envelope.seq, again.duplicate)  # 1 True
 
 - **Publishing is idempotent by id.** Publishing an id that is already in the log appends nothing and returns the logged envelope with `duplicate=True`, so a producer can retry safely. Use an id the source already has, such as the monitoring system's alert id; without one, reflexr generates an `evt_…` id. The logged event wins: a second event published with the same id is not compared with the first.
 - **`events=` is an allowlist.** Publishing a type the workspaces were not given is rejected with `NotFound`, even if the type is registered elsewhere in the process, so clients cannot publish arbitrary types. Leave `events` out to accept every registered type.
-- **`emitted=` lists the types only runs may publish**, such as the incident a triage agent opens. A run's actions can publish them; a client, over REST, the WebSocket, MCP or a handle of your own, is refused with `Forbidden` ([ADR-0027](../adr/0027-executing-runs.md)).
+- **`emitted=` lists the types only runs may publish**, such as the incident a triage agent opens. A run's actions can publish them; a client, over REST, the WebSocket, MCP or a handle of your own, is refused with `Forbidden` ([ADR-0041](../adr/0041-executing-runs.md)).
 - **`publish_many`** publishes several events atomically and in order: all of them are logged, or none.
 
 Producers outside the process publish over HTTP, the WebSocket or MCP, which all end in the same `publish` ([Serving over REST and WebSocket](serving.md), [External agents over MCP](mcp.md)).

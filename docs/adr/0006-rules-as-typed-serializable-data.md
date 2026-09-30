@@ -1,6 +1,6 @@
 # ADR-0006: Rules as typed, serializable data
 
-**Status:** Accepted
+**Status:** Accepted, amended by [ADR-0041](0041-executing-runs.md)
 **Date:** 2026-09-28
 **Deciders:** Alex Nodeland
 

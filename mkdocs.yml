@@ -204,6 +204,8 @@ nav:
           - adr/0038-dashboards-generated-tested-and-released.md
           - adr/0039-namespaced-event-types.md
           - adr/0040-telemetry-that-composes-across-libraries.md
+          - adr/0041-executing-runs.md
+          - adr/0042-cancel-safe-storage.md
           - adr/template.md
       - RFCs:
           - rfcs/README.md

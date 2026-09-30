@@ -1,6 +1,6 @@
 # ADR-0027: Executing runs
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0041](0041-executing-runs.md)
 **Date:** 2026-09-28
 **Deciders:** Alex Nodeland
 

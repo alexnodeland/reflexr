@@ -287,10 +287,10 @@ An explicit type always wins over an annotation or an inferred type, and the dec
 
 ## Idempotency
 
-Runs are executed at least once, so any part of an action may run again: after a failure, a timeout, or a crash of the process that ran it ([ADR-0027](../adr/0027-executing-runs.md)). reflexr gives actions what they need to make that harmless:
+Runs are executed at least once, so any part of an action may run again: after a failure, a timeout, or a crash of the process that ran it ([ADR-0041](../adr/0041-executing-runs.md)). reflexr gives actions what they need to make that harmless:
 
 - **The run's id is an idempotency key.** It is the firing's id, derived from the rule, its generation, the scope and the envelope it fired at, so it is the same on every attempt. Pass it to the systems you call (`key=reaction.run_id` above), so that a repeated call is recognised as one.
-- **`emit` does not publish twice.** Each event's id is derived from the run, the number of checkpoints it has saved (`run.checkpoints`), and its position among the events emitted since the last one, and publishing an id that is already in the log appends nothing. A retried attempt that resumes from the same checkpoint and emits the same events in the same order adds nothing to the log, while a graph that emits, checkpoints, and emits again after resuming gets fresh ids for the later events rather than losing them as duplicates ([ADR-0027](../adr/0027-executing-runs.md)).
+- **`emit` does not publish twice.** Each event's id is derived from the run, the number of checkpoints it has saved (`run.checkpoints`), and its position among the events emitted since the last one, and publishing an id that is already in the log appends nothing. A retried attempt that resumes from the same checkpoint and emits the same events in the same order adds nothing to the log, while a graph that emits, checkpoints, and emits again after resuming gets fresh ids for the later events rather than losing them as duplicates ([ADR-0041](../adr/0041-executing-runs.md)).
 - **Your own ids work too.** `reaction.workspace.publish(event, id=...)` with an id derived from the run is just as safe, and suits events whose order may change between attempts.
 - **Checkpoints narrow what repeats.** A graph repeats at most the step in flight, and a function that checkpoints repeats at most the work since its last checkpoint.
 

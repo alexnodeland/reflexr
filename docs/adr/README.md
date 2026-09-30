@@ -9,7 +9,7 @@ Each record captures one decision: the context that forced it, the options consi
 | [0003](0003-independent-sibling-of-artifactr.md) | An independent sibling of artifactr, with aligned conventions | Accepted |
 | [0004](0004-tenant-scoped-streams.md) | Tenant-scoped streams with one log each | Superseded by 0016 |
 | [0005](0005-per-rule-cursors.md) | Per-rule cursors: decide exactly, act at least once | Accepted |
-| [0006](0006-rules-as-typed-serializable-data.md) | Rules as typed, serializable data | Accepted |
+| [0006](0006-rules-as-typed-serializable-data.md) | Rules as typed, serializable data | Accepted, amended by 0041 |
 | [0007](0007-rule-state-as-pure-reducers.md) | Rule state as pure reducers, with the log as the clock | Accepted |
 | [0008](0008-actions-agents-graphs-and-functions.md) | Actions: agents, graphs and functions over one Reaction | Accepted |
 | [0009](0009-graph-checkpoints.md) | Graph checkpoints at step boundaries | Accepted |
@@ -30,7 +30,7 @@ Each record captures one decision: the context that forced it, the options consi
 | [0024](0024-causal-chains-and-operator-actions.md) | Which chain a firing joins, and operator actions in the log | Accepted |
 | [0025](0025-ports-and-adapters.md) | Ports and adapters | Accepted |
 | [0026](0026-the-reactors-evaluation.md) | The reactor's evaluation: rules on workspaces, the depth of reflexr's facts, and rebuilds | Accepted |
-| [0027](0027-executing-runs.md) | Executing runs | Accepted |
+| [0027](0027-executing-runs.md) | Executing runs | Superseded by 0041 |
 | [0028](0028-schedules-and-cronsim.md) | Schedules, with cronsim for cron expressions | Accepted |
 | [0029](0029-metric-detail-through-sdk-views.md) | Metric detail through SDK views, and the OpenTelemetry and Langfuse adapters | Accepted |
 | [0030](0030-sql-storage.md) | SQL storage with one dialect-neutral implementation | Accepted |
@@ -42,5 +42,7 @@ Each record captures one decision: the context that forced it, the options consi
 | [0038](0038-dashboards-generated-tested-and-released.md) | Dashboards generated, tested and released | Accepted |
 | [0039](0039-namespaced-event-types.md) | Namespaced event types | Accepted |
 | [0040](0040-telemetry-that-composes-across-libraries.md) | Telemetry that composes across libraries, untraced polling and mirror cursors | Accepted |
+| [0041](0041-executing-runs.md) | Executing runs | Accepted |
+| [0042](0042-cancel-safe-storage.md) | Cancel-safe storage | Accepted |
 
 To add a record, copy [`template.md`](template.md) to the next number and add a row above.

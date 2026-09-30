@@ -5,30 +5,20 @@ events, giving feedback, and operating runs. Each write is attributed to the han
 each is traced (ADR-0018).
 """
 
-import asyncio
 from collections import Counter
 from collections.abc import (
     AsyncGenerator,
     Awaitable,
     Callable,
     Collection,
-    Coroutine,
-    Generator,
     Iterable,
     Mapping,
     Sequence,
 )
-from contextlib import (
-    AbstractContextManager,
-    aclosing,
-    asynccontextmanager,
-    contextmanager,
-    nullcontext,
-)
-from contextvars import ContextVar, copy_context
+from contextlib import AbstractContextManager, aclosing
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 
 from opentelemetry.metrics import MeterProvider
 from opentelemetry.trace import Span, SpanKind, TracerProvider
@@ -110,50 +100,6 @@ class Published:
 
     duplicate: bool = False
     """Whether the id was already in the log, so nothing was appended."""
-
-
-class OpenTransactions:
-    """Counts the storage calls a task's workspace handles have in flight.
-
-    Each is a transaction: a write's, or on SQL a read's too, which on SQLite holds the
-    database's write lock. The executor runs each action in a task started by :meth:`task`, and
-    stops it with :meth:`cancel`, which waits until none is in flight (ADR-0027): a transaction
-    cancelled part-way can leave its connection holding the database's locks, or lose the
-    connection to the pool. A subscription is not counted, since it waits between reads for as
-    long as nothing is logged.
-    """
-
-    def __init__(self) -> None:
-        self._open = 0
-        self._closed = asyncio.Event()
-
-    def task[T](self, coroutine: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
-        """Run a coroutine in a task whose transactions are counted here."""
-        context = copy_context()
-        context.run(_open_transactions.set, self)
-        return asyncio.create_task(coroutine, context=context)
-
-    async def cancel(self, task: asyncio.Task[Any]) -> None:
-        """Cancel a task started by :meth:`task` as soon as it has no storage call in flight."""
-        while self._open:
-            self._closed.clear()
-            await self._closed.wait()
-        task.cancel()  # nothing is awaited between the check and this, so none has opened
-
-    @contextmanager
-    def opening(self) -> Generator[None]:
-        """Count a storage call from before it begins until after it ends."""
-        self._open += 1
-        try:
-            yield
-        finally:
-            self._open -= 1
-            self._closed.set()
-
-
-_open_transactions: ContextVar[OpenTransactions | None] = ContextVar(
-    "reflexr_open_transactions", default=None
-)
 
 
 class RuleStatus(BaseModel):
@@ -422,7 +368,7 @@ class Workspace:
         with self._span(name, SpanKind.PRODUCER) as span:
             span.set_attribute(a.EVENT_COUNT, len(events))
             traceparent = current_traceparent()
-            async with self._transaction() as transaction:
+            async with self._context.storage.transaction(self._ref) as transaction:
                 chain = await self._chain(transaction, correlation_id)
                 results = [
                     await self._publish_one(transaction, event, event_id, chain, traceparent)
@@ -475,7 +421,7 @@ class Workspace:
         with self._span(f"reflexr.feedback {feedback.feedback_type}") as span:
             span.set_attributes({a.FEEDBACK_TYPE: feedback.feedback_type, a.FEEDBACK_TARGET: kind})
             traceparent = current_traceparent()
-            async with self._transaction() as transaction:
+            async with self._context.storage.transaction(self._ref) as transaction:
                 chain = await self._target_chain(transaction, on)
                 envelope = await self._append(
                     transaction, event, None, chain, traceparent, self.causation
@@ -547,7 +493,7 @@ class Workspace:
         with self._span("reflexr.checkpoint_run") as span:
             span.set_attributes({a.RUN_ID: run_id, a.ATTEMPT: attempt})
             traceparent = current_traceparent()
-            async with self._transaction() as transaction:
+            async with self._context.storage.transaction(self._ref) as transaction:
                 run = await transaction.run(run_id)
                 if run is None:
                     raise NotFound("run", run_id)
@@ -589,7 +535,7 @@ class Workspace:
         with self._span("reflexr.replay_rule") as span:
             span.set_attribute(a.RULE, rule)
             traceparent = current_traceparent()
-            async with self._transaction() as transaction:
+            async with self._context.storage.transaction(self._ref) as transaction:
                 head = await transaction.head_seq()
                 if not 0 <= from_seq <= head:
                     raise ValidationFailed(
@@ -612,8 +558,7 @@ class Workspace:
 
     async def head_seq(self) -> int:
         """Return the ``seq`` of the latest envelope, or 0 if the log is empty."""
-        with self._using_storage():
-            return await self._context.storage.head_seq(self._ref)
+        return await self._context.storage.head_seq(self._ref)
 
     async def read(
         self,
@@ -639,15 +584,14 @@ class Workspace:
             ValidationFailed: If both ``limit`` and ``last`` are given, or a number is negative.
         """
         _check_page(after_seq=after_seq, before_seq=before_seq, limit=limit, last=last)
-        with self._using_storage():
-            return await self._context.storage.read(
-                self._ref,
-                after_seq=after_seq,
-                before_seq=before_seq,
-                types=types,
-                limit=limit,
-                last=last,
-            )
+        return await self._context.storage.read(
+            self._ref,
+            after_seq=after_seq,
+            before_seq=before_seq,
+            types=types,
+            limit=limit,
+            last=last,
+        )
 
     async def subscribe(self, *, after_seq: int = 0) -> AsyncGenerator[Envelope]:
         """Yield envelopes after ``after_seq``, then each new one as it is logged.
@@ -670,8 +614,7 @@ class Workspace:
         A consumer, such as a feedback mirror, saves its cursor with :meth:`save_cursor` and
         carries on after it when it starts again.
         """
-        with self._using_storage():
-            return await self._context.storage.cursor(self._ref, name)
+        return await self._context.storage.cursor(self._ref, name)
 
     async def save_cursor(self, name: str, seq: int) -> None:
         """Save how far a named consumer of the log has got: it is done with ``seq``.
@@ -679,8 +622,7 @@ class Workspace:
         A cursor only moves forward: saving a ``seq`` below the saved one leaves it, so a
         consumer that runs in several processes, each at its own pace, cannot move it back.
         """
-        with self._using_storage():
-            await self._context.storage.save_cursor(self._ref, name, seq)
+        await self._context.storage.save_cursor(self._ref, name, seq)
 
     async def run(self, run_id: RunId) -> Run:
         """Return a run.
@@ -688,8 +630,7 @@ class Workspace:
         Raises:
             NotFound: If the run does not exist.
         """
-        with self._using_storage():
-            run = await self._context.storage.run(self._ref, run_id)
+        run = await self._context.storage.run(self._ref, run_id)
         if run is None:
             raise NotFound("run", run_id)
         return run
@@ -703,25 +644,21 @@ class Workspace:
         limit: int | None = None,
     ) -> list[Run]:
         """Return runs, newest first, optionally of one rule, status or scope."""
-        with self._using_storage():
-            return await self._context.storage.runs(
-                self._ref, rule=rule, status=status, scope_key=scope_key, limit=limit
-            )
+        return await self._context.storage.runs(
+            self._ref, rule=rule, status=status, scope_key=scope_key, limit=limit
+        )
 
     async def dead_letters(self, *, rule: RuleName | None = None) -> list[EvaluationError]:
         """Return the envelopes rules could not evaluate, oldest first."""
-        with self._using_storage():
-            return await self._context.storage.dead_letters(self._ref, rule=rule)
+        return await self._context.storage.dead_letters(self._ref, rule=rule)
 
     async def schedule_ticks(self) -> dict[str, datetime]:
         """Return when each schedule last ticked in this workspace."""
-        with self._using_storage():
-            return await self._context.storage.schedules(self._ref)
+        return await self._context.storage.schedules(self._ref)
 
     async def rule_progress(self) -> dict[RuleName, RuleProgress]:
         """Return each rule's progress: its cursor, generation and pending deadlines."""
-        with self._using_storage():
-            return await self._context.storage.progress(self._ref)
+        return await self._context.storage.progress(self._ref)
 
     async def rule_statuses(self) -> list[RuleStatus]:
         """Return each registered rule's status: enabled, cursor, lag, generation, dead letters.
@@ -850,7 +787,7 @@ class Workspace:
         with self._span(f"reflexr.{action}_run") as span:
             span.set_attribute(a.RUN_ID, run_id)
             traceparent = current_traceparent()
-            async with self._transaction() as transaction:
+            async with self._context.storage.transaction(self._ref) as transaction:
                 run = await transaction.run(run_id)
                 if run is None:
                     raise NotFound("run", run_id)
@@ -864,18 +801,6 @@ class Workspace:
             RUNS, {a.RULE: run.rule, a.RUN_STATUS: updated.status, a.ACTOR_KIND: self._actor.kind}
         )
         return updated
-
-    @asynccontextmanager
-    async def _transaction(self) -> AsyncGenerator[Transaction]:
-        """Begin a transaction on the workspace, counted if the task counts its storage calls."""
-        with self._using_storage():
-            async with self._context.storage.transaction(self._ref) as transaction:
-                yield transaction
-
-    def _using_storage(self) -> AbstractContextManager[None]:
-        """Count a storage call, if the task counts them (:class:`OpenTransactions`)."""
-        counted = _open_transactions.get()
-        return counted.opening() if counted else nullcontext()
 
     def _span(self, name: str, kind: SpanKind = SpanKind.INTERNAL) -> AbstractContextManager[Span]:
         return self._context.telemetry.tracer.start_as_current_span(

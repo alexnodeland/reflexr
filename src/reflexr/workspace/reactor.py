@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from time import perf_counter
-from typing import Any, Never, overload
+from typing import Any, overload
 
 from reflexr.core import (
     Evaluation,
@@ -44,7 +44,7 @@ from reflexr.telemetry.metrics import (
 )
 from reflexr.telemetry.telemetry import Attributes
 from reflexr.workspace.actions import Action, RunContext
-from reflexr.workspace.executor import Executor, Stopping
+from reflexr.workspace.executor import Executor
 from reflexr.workspace.schedules import SCHEDULER, Schedule, tick_id
 from reflexr.workspace.storage import Entry, Transaction, WorkspaceRef
 from reflexr.workspace.workspace import Workspaces, meet_rules
@@ -211,14 +211,6 @@ class Reactor[D]:
                 return Settled(ticks=ticks, firings=firings, attempts=attempts)
         raise RuntimeError(f"still busy after {max_rounds} rounds")
 
-    @overload
-    async def serve(self, *, poll_interval: timedelta = ...) -> Never: ...
-
-    @overload
-    async def serve(
-        self, *, poll_interval: timedelta = ..., stop: asyncio.Event, grace: timedelta = ...
-    ) -> None: ...
-
     async def serve(
         self,
         *,
@@ -231,34 +223,38 @@ class Reactor[D]:
         A pass that fails, as when the database is briefly unreachable, is logged and the next
         one tries again: leases and transactions leave nothing half done.
 
-        Setting ``stop`` stops the reactor gracefully, never in the middle of a transaction.
-        Evaluation stops after its current batch, and attempts still waiting for a place do not
-        start. Running attempts have ``grace`` to end; then their actions are cancelled, between
-        the storage calls they make, and each attempt is recorded as abandoned, a failed attempt
-        that is retried under the rule's policy. Once every lease it held is released, ``serve``
-        returns.
-
-        Without ``stop``, it runs until cancelled. Cancelling stops it wherever it is, in the
-        middle of a transaction too, which on SQLite can leave this process's connection holding
-        the database's write lock.
+        Setting ``stop`` stops the reactor gracefully. Evaluation stops after its current batch,
+        and attempts still waiting for a place do not start. Running attempts have ``grace`` to
+        end; then their actions are cancelled, and each attempt is recorded as abandoned, a
+        failed attempt that is retried under the rule's policy. Once every lease it held is
+        released, ``serve`` returns. Without ``stop``, it runs until cancelled.
 
         Args:
             poll_interval: How long to wait between passes.
             stop: Set it to stop the reactor, as a FastAPI lifespan does at shutdown.
             grace: How long running attempts have to end once ``stop`` is set.
         """
-        asked = stop if stop is not None else asyncio.Event()
-        stopping = Stopping(asked, grace)
-        while not asked.is_set():
-            try:
-                await self.tick()
-                await self._evaluate(None, asked)
-                await self._executor.execute(limit=100, stop=stopping)
-            except Exception:
-                logger.exception("a reactor pass failed; the next one will try again")
-            with contextlib.suppress(TimeoutError):
-                async with asyncio.timeout(poll_interval.total_seconds()):
-                    await asked.wait()
+        stop = stop or asyncio.Event()
+        grace_over = asyncio.Event()
+
+        async def end_grace() -> None:
+            await stop.wait()
+            await asyncio.sleep(grace.total_seconds())
+            grace_over.set()
+
+        async with asyncio.TaskGroup() as group:
+            timer = group.create_task(end_grace())
+            while not stop.is_set():
+                try:
+                    await self.tick()
+                    await self._evaluate(None, stop)
+                    await self._executor.execute(limit=100, stop=stop, grace_over=grace_over)
+                except Exception:
+                    logger.exception("a reactor pass failed; the next one will try again")
+                with contextlib.suppress(TimeoutError):
+                    async with asyncio.timeout(poll_interval.total_seconds()):
+                        await stop.wait()
+            timer.cancel()
 
     async def tick(self) -> int:
         """Publish the ticks that are due, for every schedule and the workspaces it targets.
