@@ -5,10 +5,11 @@ evalr owns the mapping and pins it with a fixture of what these tests expected b
 
 from typing import Annotated
 
+from evalr.core import MAX_TEXT, ScoreConfig
 from pydantic import Field
 
 from reflexr.core import Feedback
-from reflexr.scores import MAX_TEXT, ScoreConfig, score_configs, score_values
+from reflexr.scores import score_configs, score_values
 from tests.scores.kinds import Accuracy, Helpfulness
 
 

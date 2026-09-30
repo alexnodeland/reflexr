@@ -208,6 +208,7 @@ nav:
           - adr/0042-cancel-safe-storage.md
           - adr/0043-graph-checkpoints.md
           - adr/0044-surfaces.md
+          - adr/0045-scores-on-evalr.md
           - adr/template.md
       - RFCs:
           - rfcs/README.md

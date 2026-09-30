@@ -1,6 +1,6 @@
 # ADR-0029: Metric detail through SDK views, and the OpenTelemetry and Langfuse adapters
 
-**Status:** Accepted
+**Status:** Accepted; its score adapters superseded by [ADR-0045](0045-scores-on-evalr.md)
 **Date:** 2026-09-28
 **Deciders:** Alex Nodeland
 **Amends:** [ADR-0018](0018-opentelemetry-observability-with-langfuse.md)

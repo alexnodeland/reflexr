@@ -17,6 +17,8 @@ def langfuse_client(*, tracer_provider: TracerProvider | None = None, **options:
     pass ``should_export_span=no_spans``: the client then sets trace attributes and sends
     scores, and exports no span a second time.
 
+    Shared verbatim with artifactr's ``src/artifactr/langfuse/client.py``; change both.
+
     Args:
         tracer_provider: The SDK tracer provider whose spans go to Langfuse.
         **options: Passed to ``Langfuse(...)``, such as ``public_key``, ``environment`` or

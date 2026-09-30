@@ -23,16 +23,16 @@ Each record captures one decision: the context that forced it, the options consi
 | [0017](0017-the-cores-evaluation-contract.md) | The core's evaluation contract | Accepted |
 | [0018](0018-opentelemetry-observability-with-langfuse.md) | OpenTelemetry-native observability, with Langfuse primary | Accepted |
 | [0019](0019-typed-feedback-as-events.md) | Typed feedback as events, mirrored to Langfuse | Accepted |
-| [0020](0020-evalr-shared-eval-kit.md) | evalr, a shared eval kit | Accepted |
+| [0020](0020-evalr-shared-eval-kit.md) | evalr, a shared eval kit | Accepted; its last amendment superseded by 0045 |
 | [0021](0021-contributor-compose-and-dev-containers.md) | Contributor Compose and dev containers here, infrastructure in stackr | Accepted |
 | [0022](0022-litellm-proxy-first.md) | LiteLLM, proxy first, for routing and guardrails | Accepted |
 | [0023](0023-libraries-and-the-stackr-template.md) | Libraries, and stackr as the infrastructure template | Accepted |
 | [0024](0024-causal-chains-and-operator-actions.md) | Which chain a firing joins, and operator actions in the log | Accepted |
-| [0025](0025-ports-and-adapters.md) | Ports and adapters | Accepted |
+| [0025](0025-ports-and-adapters.md) | Ports and adapters | Accepted; its amendment superseded by 0045 |
 | [0026](0026-the-reactors-evaluation.md) | The reactor's evaluation: rules on workspaces, the depth of reflexr's facts, and rebuilds | Accepted |
 | [0027](0027-executing-runs.md) | Executing runs | Superseded by 0041 |
 | [0028](0028-schedules-and-cronsim.md) | Schedules, with cronsim for cron expressions | Accepted |
-| [0029](0029-metric-detail-through-sdk-views.md) | Metric detail through SDK views, and the OpenTelemetry and Langfuse adapters | Accepted |
+| [0029](0029-metric-detail-through-sdk-views.md) | Metric detail through SDK views, and the OpenTelemetry and Langfuse adapters | Accepted; its score adapters superseded by 0045 |
 | [0030](0030-sql-storage.md) | SQL storage with one dialect-neutral implementation | Accepted |
 | [0031](0031-the-reference-implementations-events-and-rules.md) | The reference implementation's events and rules | Accepted |
 | [0032](0032-documentation-site.md) | The documentation site, and a brand shared by the family | Accepted |
@@ -46,5 +46,6 @@ Each record captures one decision: the context that forced it, the options consi
 | [0042](0042-cancel-safe-storage.md) | Cancel-safe storage | Accepted |
 | [0043](0043-graph-checkpoints.md) | Graph checkpoints | Accepted |
 | [0044](0044-surfaces.md) | Surfaces | Accepted |
+| [0045](0045-scores-on-evalr.md) | Scores on evalr | Accepted |
 
 To add a record, copy [`template.md`](template.md) to the next number and add a row above.
