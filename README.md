@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> **reflexr has moved to [lattice](https://github.com/alexnodeland/lattice/tree/main/packages/reflexr).** It is developed there now, alongside artifactr, evalr, relayr, grantr, portalr and stackr, and released to PyPI as [`reflexr`](https://pypi.org/project/reflexr/). Docs are at [lattice.alexnodeland.com/reflexr](https://lattice.alexnodeland.com/reflexr/). This repository is archived and kept for its history.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/banner-dark.svg">
   <img alt="reflexr: rules that watch streams of events, and run agents, graphs and functions when they fire." src="docs/assets/brand/banner-light.svg" width="100%">
